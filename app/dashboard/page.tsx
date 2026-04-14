@@ -1,6 +1,10 @@
 import { redirect } from "next/navigation";
 
 import { DashboardClient } from "@/app/dashboard/dashboard-client";
+import {
+  DAILY_FREE_GENERATION_LIMIT,
+  effectiveDailyGenerationsUsed,
+} from "@/lib/daily-generation-limit";
 import { parseStoredGenerationOutput } from "@/lib/generation-output";
 import { isPlatformId, type PlatformId } from "@/lib/platforms";
 import { createClient } from "@/lib/supabase/server";
@@ -33,6 +37,36 @@ export default async function DashboardPage() {
     }
   }
 
+  let dailyGenerationUsage = {
+    used: 0,
+    limit: DAILY_FREE_GENERATION_LIMIT,
+  };
+
+  const { data: profileRow, error: profileError } = await supabase
+    .from("profiles")
+    .select("daily_generations, last_reset_at")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (profileError) {
+    if (profileError.code === "42P01") {
+      console.warn(
+        "[dashboard] public.profiles is missing. Run supabase/migrations/20260416120000_profiles_daily_generations.sql in the Supabase SQL editor.",
+        profileError.message,
+      );
+    } else {
+      console.warn("[dashboard] profiles query failed", profileError.message);
+    }
+  } else if (profileRow) {
+    dailyGenerationUsage = {
+      used: effectiveDailyGenerationsUsed(
+        profileRow.daily_generations as number | null,
+        profileRow.last_reset_at as string | null,
+      ),
+      limit: DAILY_FREE_GENERATION_LIMIT,
+    };
+  }
+
   const initialClipPackages = (clipRows ?? []).map((row) => {
     const output = typeof row.output === "string" ? row.output : "";
     const { displayOutput, platforms: parsedPlatforms } =
@@ -58,6 +92,7 @@ export default async function DashboardPage() {
         email: user.email ?? "(no email on account)",
       }}
       initialClipPackages={initialClipPackages}
+      initialDailyGenerationUsage={dailyGenerationUsage}
     />
   );
 }

@@ -28,9 +28,15 @@ import {
   parseFormatTagsFromCreatorSignals,
   parseLengthHintSeconds,
 } from "@/lib/clip-package";
+import {
+  GENERATION_PRESET_IDS,
+  GENERATION_PRESET_LABELS,
+  type GenerationPresetId,
+} from "@/lib/generation-presets";
 import { isEmptyStoredClipPackageV1 } from "@/lib/generation-output";
 import { extractPlatformSection } from "@/lib/parse-generation-output";
 import { MAX_MEDIA_UPLOAD_BYTES } from "@/lib/source-from-upload";
+import { isYoutubeVideoUrlForTranscript } from "@/lib/youtube-url";
 import {
   isPlatformId,
   PLATFORM_DEFS,
@@ -53,6 +59,7 @@ type ClipPackageHistoryItem = {
 type DashboardClientProps = {
   initialUser: { id: string; email: string };
   initialClipPackages: ClipPackageHistoryItem[];
+  initialDailyGenerationUsage: { used: number; limit: number };
 };
 
 const emptySelection = (): Record<PlatformId, boolean> =>
@@ -77,6 +84,7 @@ function selectionFromPlatforms(
 export function DashboardClient({
   initialUser,
   initialClipPackages,
+  initialDailyGenerationUsage,
 }: DashboardClientProps) {
   const router = useRouter();
   const [inputMode, setInputMode] = useState<InputMode>("text");
@@ -90,6 +98,9 @@ export function DashboardClient({
 
   const [streamedText, setStreamedText] = useState("");
   const [loading, setLoading] = useState(false);
+  const [fetchingYoutubeTranscript, setFetchingYoutubeTranscript] =
+    useState(false);
+  const [preset, setPreset] = useState<GenerationPresetId | null>(null);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -204,31 +215,99 @@ export function DashboardClient({
     setStreamedText("");
 
     try {
-      const res =
-        inputMode === "file" && uploadFile
-          ? await fetch("/api/generate", {
-              method: "POST",
-              credentials: "same-origin",
-              signal,
-              body: (() => {
-                const fd = new FormData();
-                fd.append("file", uploadFile);
-                fd.append("platforms", JSON.stringify(selectedOrdered));
-                return fd;
-              })(),
-            })
-          : await fetch("/api/generate", {
-              method: "POST",
-              credentials: "same-origin",
-              headers: { "Content-Type": "application/json" },
-              signal,
-              body: JSON.stringify({
-                mode: inputMode,
-                text: inputMode === "text" ? text : undefined,
-                url: inputMode === "url" ? url : undefined,
-                platforms: selectedOrdered,
-              }),
-            });
+      let res: Response;
+      const presetPart = preset ? { preset } : {};
+
+      if (inputMode === "file" && uploadFile) {
+        res = await fetch("/api/generate", {
+          method: "POST",
+          credentials: "same-origin",
+          signal,
+          body: (() => {
+            const fd = new FormData();
+            fd.append("file", uploadFile);
+            fd.append("platforms", JSON.stringify(selectedOrdered));
+            if (preset) fd.append("preset", preset);
+            return fd;
+          })(),
+        });
+      } else if (
+        inputMode === "url" &&
+        isYoutubeVideoUrlForTranscript(url.trim())
+      ) {
+        let transcriptFromPrefetch = "";
+        setFetchingYoutubeTranscript(true);
+        setProgress(10);
+        try {
+          const trRes = await fetch("/api/youtube-transcript", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            signal,
+            body: JSON.stringify({ url: url.trim() }),
+          });
+          if (trRes.ok) {
+            const data = (await trRes.json()) as { transcript?: string };
+            transcriptFromPrefetch =
+              typeof data.transcript === "string"
+                ? data.transcript.trim()
+                : "";
+          }
+        } catch (e) {
+          if ((e as Error).name === "AbortError") throw e;
+        } finally {
+          setFetchingYoutubeTranscript(false);
+        }
+
+        setProgress(16);
+        if (transcriptFromPrefetch) {
+          const maxChars = 120_000;
+          const capped =
+            transcriptFromPrefetch.length > maxChars
+              ? `${transcriptFromPrefetch.slice(0, maxChars)}\n\n[Truncated to ${maxChars} characters for generation.]`
+              : transcriptFromPrefetch;
+          res = await fetch("/api/generate", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            signal,
+            body: JSON.stringify({
+              mode: "text",
+              text: capped,
+              sourceUrl: url.trim(),
+              platforms: selectedOrdered,
+              ...presetPart,
+            }),
+          });
+        } else {
+          res = await fetch("/api/generate", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            signal,
+            body: JSON.stringify({
+              mode: "url",
+              url: url.trim(),
+              platforms: selectedOrdered,
+              ...presetPart,
+            }),
+          });
+        }
+      } else {
+        res = await fetch("/api/generate", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          signal,
+          body: JSON.stringify({
+            mode: inputMode,
+            text: inputMode === "text" ? text : undefined,
+            url: inputMode === "url" ? url : undefined,
+            platforms: selectedOrdered,
+            ...presetPart,
+          }),
+        });
+      }
 
       if (!res.ok) {
         const raw = await res.text();
@@ -280,8 +359,8 @@ export function DashboardClient({
             "No text came back from the model stream. Check OPENAI_API_KEY and try Regenerate.",
           );
         }
-        router.refresh();
       }
+      router.refresh();
     } catch (e) {
       if ((e as Error).name === "AbortError") {
         setError("Generation cancelled.");
@@ -289,10 +368,11 @@ export function DashboardClient({
         setError(e instanceof Error ? e.message : "Something went wrong.");
       }
     } finally {
+      setFetchingYoutubeTranscript(false);
       setLoading(false);
       setTimeout(() => setProgress(0), 400);
     }
-  }, [inputMode, router, selectedOrdered, text, url, uploadFile]);
+  }, [inputMode, preset, router, selectedOrdered, text, url, uploadFile]);
 
   const copyText = async (id: string, body: string) => {
     try {
@@ -383,6 +463,18 @@ export function DashboardClient({
           <p className="text-muted-foreground mt-1 text-xs">
             Signed in as {initialUser.email}
           </p>
+          <p
+            className={cn(
+              "mt-2 text-sm font-medium",
+              initialDailyGenerationUsage.used >=
+                initialDailyGenerationUsage.limit
+                ? "text-destructive"
+                : "text-foreground",
+            )}
+          >
+            {initialDailyGenerationUsage.used}/
+            {initialDailyGenerationUsage.limit} generations used today
+          </p>
         </div>
         <Link
           href="/"
@@ -455,6 +547,15 @@ export function DashboardClient({
             ) : inputMode === "url" ? (
               <div className="space-y-2">
                 <Label htmlFor="source-url">Page URL</Label>
+                <p className="text-muted-foreground text-xs">
+                  For{" "}
+                  <span className="font-medium text-foreground">
+                    youtube.com/watch
+                  </span>{" "}
+                  or{" "}
+                  <span className="font-medium text-foreground">youtu.be</span>{" "}
+                  links, captions are fetched first, then the model runs.
+                </p>
                 <input
                   id="source-url"
                   type="url"
@@ -557,19 +658,51 @@ export function DashboardClient({
 
             {loading ? (
               <div className="space-y-2">
-                <Progress value={progress} className="w-full">
+                <Progress
+                  value={fetchingYoutubeTranscript ? 18 : progress}
+                  className="w-full"
+                >
                   <div className="flex w-full items-center justify-between gap-2">
-                    <ProgressLabel>Generating</ProgressLabel>
+                    <ProgressLabel>
+                      {fetchingYoutubeTranscript
+                        ? "YouTube transcript"
+                        : "Generating"}
+                    </ProgressLabel>
                     <ProgressValue />
                   </div>
                 </Progress>
                 <p className="text-muted-foreground text-xs">
-                  {inputMode === "file"
-                    ? "Transcribing your file if needed, then streaming the response…"
-                    : "Streaming response in real-time…"}
+                  {fetchingYoutubeTranscript
+                    ? "Fetching captions from YouTube (this can take a few seconds)…"
+                    : inputMode === "file"
+                      ? "Transcribing your file if needed, then streaming the response…"
+                      : "Streaming response in real-time…"}
                 </p>
               </div>
             ) : null}
+
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Style preset</p>
+              <p className="text-muted-foreground text-xs">
+                Optional. Only one at a time; tap the active preset again to clear.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {GENERATION_PRESET_IDS.map((id) => (
+                  <Button
+                    key={id}
+                    type="button"
+                    size="sm"
+                    variant={preset === id ? "default" : "outline"}
+                    disabled={loading}
+                    onClick={() =>
+                      setPreset((cur) => (cur === id ? null : id))
+                    }
+                  >
+                    {GENERATION_PRESET_LABELS[id]}
+                  </Button>
+                ))}
+              </div>
+            </div>
 
             <div className="flex flex-wrap gap-2">
               <Button
@@ -577,7 +710,11 @@ export function DashboardClient({
                 onClick={() => void runGeneration()}
                 disabled={loading || !canSubmit}
               >
-                {loading ? "Generating..." : "Generate"}
+                {loading
+                  ? fetchingYoutubeTranscript
+                    ? "Fetching transcript…"
+                    : "Generating…"
+                  : "Generate"}
               </Button>
               <Button
                 type="button"

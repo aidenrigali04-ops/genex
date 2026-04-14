@@ -3,6 +3,11 @@ import { streamText } from "ai";
 import { z } from "zod";
 
 import { parseClipPackageSections } from "@/lib/clip-package";
+import {
+  appendPresetToSystemPrompt,
+  isGenerationPresetId,
+  type GenerationPresetId,
+} from "@/lib/generation-presets";
 import { fetchUrlAsPlainText } from "@/lib/fetch-url-text";
 import type { StoredClipPackageOutputV1 } from "@/lib/generation-output";
 import {
@@ -13,6 +18,9 @@ import {
 import { extractPlatformSection } from "@/lib/parse-generation-output";
 import { sourceFromUpload } from "@/lib/source-from-upload";
 import { createClient } from "@/lib/supabase/server";
+import { DAILY_FREE_GENERATION_LIMIT } from "@/lib/daily-generation-limit";
+import { fetchYoutubeTranscriptText } from "@/lib/youtube-transcript-server";
+import { isYoutubeVideoUrlForTranscript } from "@/lib/youtube-url";
 
 export const maxDuration = 300;
 
@@ -51,7 +59,12 @@ const bodySchema = z.object({
   mode: z.enum(["text", "url"]),
   text: z.string().max(120_000).optional(),
   url: z.string().max(2048).optional(),
+  /** When mode is text (e.g. after client-side transcript prefetch), keep original URL in DB. */
+  sourceUrl: z.string().max(2048).optional(),
   platforms: z.array(z.string()).min(1),
+  preset: z
+    .enum(["viral_hook", "storytime", "educational", "contrarian"])
+    .optional(),
 });
 
 function normalizeOrderedPlatforms(raw: string[]): PlatformId[] {
@@ -73,17 +86,25 @@ function streamGenerationResponse(opts: {
   sourceText: string;
   storedInputUrl: string | null;
   orderedPlatforms: PlatformId[];
+  preset: GenerationPresetId | undefined;
 }) {
-  const { supabase, userId, sourceText, storedInputUrl, orderedPlatforms } =
-    opts;
+  const {
+    supabase,
+    userId,
+    sourceText,
+    storedInputUrl,
+    orderedPlatforms,
+    preset,
+  } = opts;
 
   const headerLines = orderedPlatforms
     .map((id) => PLATFORM_BY_ID[id].header)
     .join("\n");
   const includesClipPackage = orderedPlatforms.includes("clip_package");
-  const systemPrompt = includesClipPackage
+  const baseSystem = includesClipPackage
     ? CLIP_PACKAGE_SYSTEM_PROMPT
     : GENERIC_SYSTEM_PROMPT;
+  const systemPrompt = appendPresetToSystemPrompt(baseSystem, preset);
 
   const userPrompt = `Repurpose the source content for ONLY the following platforms, in this exact order.
 
@@ -190,6 +211,7 @@ export async function POST(req: Request) {
   let sourceText = "";
   let storedInputUrl: string | null = null;
   let orderedPlatforms: PlatformId[] = [];
+  let preset: GenerationPresetId | undefined;
 
   const contentType = req.headers.get("content-type") ?? "";
 
@@ -246,6 +268,15 @@ export async function POST(req: Request) {
       );
     }
 
+    const presetField = form.get("preset");
+    if (typeof presetField === "string" && presetField.trim()) {
+      const p = presetField.trim();
+      if (!isGenerationPresetId(p)) {
+        return Response.json({ error: "Invalid preset." }, { status: 400 });
+      }
+      preset = p;
+    }
+
     try {
       const resolved = await sourceFromUpload(file);
       sourceText = resolved.sourceText;
@@ -271,6 +302,7 @@ export async function POST(req: Request) {
     }
 
     const body = parsed.data;
+    preset = body.preset;
     orderedPlatforms = normalizeOrderedPlatforms(body.platforms);
 
     if (orderedPlatforms.length === 0) {
@@ -286,18 +318,34 @@ export async function POST(req: Request) {
         return Response.json({ error: "Text is required." }, { status: 400 });
       }
       sourceText = t;
+      const src = body.sourceUrl?.trim();
+      if (src) storedInputUrl = src;
     } else {
       const u = body.url?.trim() ?? "";
       if (!u) {
         return Response.json({ error: "URL is required." }, { status: 400 });
       }
-      try {
-        sourceText = await fetchUrlAsPlainText(u);
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : "Could not read URL";
-        return Response.json({ error: msg }, { status: 400 });
-      }
       storedInputUrl = u;
+      if (isYoutubeVideoUrlForTranscript(u)) {
+        const fromCaptions = await fetchYoutubeTranscriptText(u);
+        if (fromCaptions?.trim()) {
+          sourceText = fromCaptions;
+        } else {
+          try {
+            sourceText = await fetchUrlAsPlainText(u);
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : "Could not read URL";
+            return Response.json({ error: msg }, { status: 400 });
+          }
+        }
+      } else {
+        try {
+          sourceText = await fetchUrlAsPlainText(u);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : "Could not read URL";
+          return Response.json({ error: msg }, { status: 400 });
+        }
+      }
     }
   }
 
@@ -308,11 +356,59 @@ export async function POST(req: Request) {
     );
   }
 
+  type ConsumeRow = {
+    allowed: boolean;
+    used_count: number;
+    max_free: number;
+  };
+
+  const { data: consumeData, error: consumeError } = await supabase.rpc(
+    "consume_one_daily_generation",
+  );
+
+  if (consumeError) {
+    if (consumeError.code === "42883" || consumeError.message.includes("function")) {
+      console.error(
+        "[generate] consume_one_daily_generation missing — run supabase/migrations/20260416120000_profiles_daily_generations.sql",
+        consumeError.message,
+      );
+    } else {
+      console.error("[generate] daily limit RPC failed", consumeError.message);
+    }
+    return Response.json(
+      {
+        error:
+          "Could not verify your daily generation limit. If this persists, confirm the profiles migration is applied.",
+      },
+      { status: 503 },
+    );
+  }
+
+  const consumeRow = (
+    Array.isArray(consumeData) ? consumeData[0] : consumeData
+  ) as ConsumeRow | undefined;
+
+  if (
+    !consumeRow ||
+    typeof consumeRow.allowed !== "boolean" ||
+    consumeRow.allowed !== true
+  ) {
+    return Response.json(
+      {
+        error: "Daily limit reached. Upgrade for unlimited access.",
+        limit: consumeRow?.max_free ?? DAILY_FREE_GENERATION_LIMIT,
+        used: consumeRow?.used_count,
+      },
+      { status: 403 },
+    );
+  }
+
   return streamGenerationResponse({
     supabase,
     userId,
     sourceText,
     storedInputUrl,
     orderedPlatforms,
+    preset,
   });
 }
