@@ -5,7 +5,8 @@ export type PlatformId =
   | "tiktok"
   | "youtube_shorts"
   | "blog"
-  | "hooks";
+  | "hooks"
+  | "clip_package";
 
 export type PlatformDefinition = {
   id: PlatformId;
@@ -50,6 +51,11 @@ export const PLATFORM_DEFS: readonly PlatformDefinition[] = [
     id: "hooks",
     label: "Hook Variations (10x)",
     header: "### Hook Variations (10x)",
+  },
+  {
+    id: "clip_package",
+    label: "Short-Form Clip Package (TikTok / Reels / Shorts)",
+    header: "### Short-Form Clip Package (TikTok / Reels / Shorts)",
   },
 ] as const;
 
