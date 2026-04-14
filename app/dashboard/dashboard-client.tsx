@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useRef, useState } from "react";
 
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -71,6 +72,7 @@ export function DashboardClient({
   initialUser,
   initialClipPackages,
 }: DashboardClientProps) {
+  const router = useRouter();
   const [inputMode, setInputMode] = useState<InputMode>("text");
   const [text, setText] = useState("");
   const [url, setUrl] = useState("");
@@ -192,6 +194,9 @@ export function DashboardClient({
       accumulated += decoder.decode();
       setStreamedText(accumulated);
       setProgress(100);
+      if (selectedOrdered.includes("clip_package")) {
+        router.refresh();
+      }
     } catch (e) {
       if ((e as Error).name === "AbortError") {
         setError("Generation cancelled.");
@@ -202,7 +207,7 @@ export function DashboardClient({
       setLoading(false);
       setTimeout(() => setProgress(0), 400);
     }
-  }, [inputMode, selectedOrdered, text, url]);
+  }, [inputMode, router, selectedOrdered, text, url]);
 
   const copyText = async (id: string, body: string) => {
     try {

@@ -2,12 +2,15 @@ import { openai } from "@ai-sdk/openai";
 import { streamText } from "ai";
 import { z } from "zod";
 
+import { parseClipPackageSections } from "@/lib/clip-package";
 import { fetchUrlAsPlainText } from "@/lib/fetch-url-text";
+import type { StoredClipPackageOutputV1 } from "@/lib/generation-output";
 import {
   isPlatformId,
   PLATFORM_BY_ID,
   type PlatformId,
 } from "@/lib/platforms";
+import { extractPlatformSection } from "@/lib/parse-generation-output";
 import { createClient } from "@/lib/supabase/server";
 
 export const maxDuration = 300;
@@ -167,12 +170,34 @@ ${sourceText}
     system: systemPrompt,
     prompt: userPrompt,
     onFinish: async ({ text }) => {
+      const fullText = text;
+      let outputToStore: string = fullText;
+      let rowType: "generic" | "clip_package" = "generic";
+
+      if (includesClipPackage) {
+        rowType = "clip_package";
+        const clipMarkdown = extractPlatformSection(
+          fullText,
+          "clip_package",
+          orderedPlatforms,
+        );
+        const payload: StoredClipPackageOutputV1 = {
+          version: 1,
+          full: fullText,
+          clipPackageMarkdown: clipMarkdown,
+          clipSections: parseClipPackageSections(clipMarkdown),
+          platforms: orderedPlatforms,
+        };
+        outputToStore = JSON.stringify(payload);
+      }
+
       const { error } = await supabase.from("generations").insert({
         user_id: userId,
         input_text: sourceText,
         input_url: storedInputUrl,
         platforms: orderedPlatforms,
-        output: text,
+        output: outputToStore,
+        type: rowType,
       });
       if (error) {
         console.error("generations insert failed", error.message);
