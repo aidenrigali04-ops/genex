@@ -5,7 +5,8 @@ export type ClipSection = {
     | "script"
     | "cta"
     | "caption_hashtags"
-    | "broll";
+    | "broll"
+    | "creator_signals";
   label: string;
   patterns: RegExp[];
 };
@@ -24,7 +25,12 @@ export const CLIP_SECTIONS: readonly ClipSection[] = [
   {
     id: "script",
     label: "Clip Script",
-    patterns: [/^\s*(?:\d+\.\s*)?CLIP SCRIPT\s*\(30[^\n]*SECONDS\)\b/im],
+    patterns: [
+      // Prompt asks for: "3. CLIP SCRIPT (30–60 SECONDS)" — allow en-dash, hyphen, ranges
+      /^\s*(?:\d+\.\s*)?CLIP SCRIPT\s*\(\s*30[\s–\-—~]*\d*\s*SECONDS?\s*\)/im,
+      /^\s*(?:\d+\.\s*)?CLIP SCRIPT\s*\([^)\n]*SECONDS?[^)\n]*\)/im,
+      /^\s*(?:\d+\.\s*)?CLIP SCRIPT\b/im,
+    ],
   },
   {
     id: "cta",
@@ -40,6 +46,11 @@ export const CLIP_SECTIONS: readonly ClipSection[] = [
     id: "broll",
     label: "B-roll / Visual Ideas",
     patterns: [/^\s*(?:\d+\.\s*)?B-ROLL \/ VISUAL IDEAS\b/im],
+  },
+  {
+    id: "creator_signals",
+    label: "Format tags & length hint",
+    patterns: [/^\s*(?:7\.\s*)?CREATOR SIGNALS\b/im],
   },
 ] as const;
 
@@ -67,6 +78,7 @@ export function parseClipPackageSections(body: string): ClipSectionMap {
     cta: "",
     caption_hashtags: "",
     broll: "",
+    creator_signals: "",
   };
 
   for (let i = 0; i < sorted.length; i++) {
@@ -80,6 +92,68 @@ export function parseClipPackageSections(body: string): ClipSectionMap {
   }
 
   return out;
+}
+
+/** Strip heading / preamble so metrics only count real script beats. */
+export function extractScriptBodyForMetrics(scriptChunk: string): string {
+  const cueOrLine = scriptChunk.search(/\[VISUAL CUE\]|\[LINE\]/i);
+  if (cueOrLine === -1) return scriptChunk;
+  return scriptChunk.slice(cueOrLine);
+}
+
+/** Count words in [LINE]: spoken parts only (ignores [VISUAL CUE] lines). */
+export function countSpokenWordsInScript(scriptChunk: string): number {
+  const body = extractScriptBodyForMetrics(scriptChunk);
+  const lines = body.split(/\r?\n/);
+  let words = 0;
+  for (const line of lines) {
+    const t = line.trim();
+    if (!t || /^\[VISUAL CUE\]/i.test(t)) continue;
+    const m = t.match(/^\[LINE\]\s*:\s*(.*)$/i);
+    const spoken = m ? m[1]!.trim() : t.replace(/^\[LINE\]\s*/i, "").trim();
+    if (!spoken) continue;
+    words += spoken.split(/\s+/).filter(Boolean).length;
+  }
+  return words;
+}
+
+/** ~140 wpm spoken = ~2.33 words/sec; clamp to realistic Shorts window. */
+export function estimateClipDurationSeconds(scriptChunk: string): {
+  seconds: number;
+  wordCount: number;
+} {
+  const wordCount = countSpokenWordsInScript(scriptChunk);
+  if (wordCount === 0) {
+    return { seconds: 0, wordCount: 0 };
+  }
+  const raw = Math.round(wordCount / 2.33);
+  const seconds = Math.min(70, Math.max(28, raw));
+  return { seconds, wordCount };
+}
+
+export function parseFormatTagsFromCreatorSignals(block: string): string[] {
+  if (!block.trim()) return [];
+  const line = block.split(/\r?\n/).find((l) => /FORMAT_TAGS:/i.test(l));
+  if (!line) return [];
+  const value = line.replace(/^.*FORMAT_TAGS:\s*/i, "").trim();
+  return value
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 6);
+}
+
+export function parseLengthHintSeconds(block: string): number | null {
+  if (!block.trim()) return null;
+  const line = block
+    .split(/\r?\n/)
+    .find((l) => /LENGTH_HINT_SECONDS:/i.test(l));
+  if (!line) return null;
+  const m = line.match(/LENGTH_HINT_SECONDS:\s*(\d+)/i);
+  if (!m?.[1]) return null;
+  const n = Number.parseInt(m[1], 10);
+  if (Number.isNaN(n) || n < 22 || n > 75) return null;
+  return n;
 }
 
 export function deriveClipTitle(clipOutput: string, fallback: string): string {

@@ -23,17 +23,23 @@ import {
 import {
   CLIP_SECTIONS,
   deriveClipTitle,
+  estimateClipDurationSeconds,
   parseClipPackageSections,
+  parseFormatTagsFromCreatorSignals,
+  parseLengthHintSeconds,
 } from "@/lib/clip-package";
+import { isEmptyStoredClipPackageV1 } from "@/lib/generation-output";
 import { extractPlatformSection } from "@/lib/parse-generation-output";
+import { MAX_MEDIA_UPLOAD_BYTES } from "@/lib/source-from-upload";
 import {
+  isPlatformId,
   PLATFORM_DEFS,
   type PlatformDefinition,
   type PlatformId,
 } from "@/lib/platforms";
 import { cn } from "@/lib/utils";
 
-type InputMode = "text" | "url";
+type InputMode = "text" | "url" | "file";
 
 type ClipPackageHistoryItem = {
   id: string;
@@ -76,6 +82,8 @@ export function DashboardClient({
   const [inputMode, setInputMode] = useState<InputMode>("text");
   const [text, setText] = useState("");
   const [url, setUrl] = useState("");
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [selected, setSelected] = useState<Record<PlatformId, boolean>>(
     emptySelection,
   );
@@ -93,16 +101,70 @@ export function DashboardClient({
     [selected],
   );
   const includesClipPackage = selectedOrdered.includes("clip_package");
-  const clipPackageBody = useMemo(
-    () =>
-      includesClipPackage
-        ? extractPlatformSection(streamedText, "clip_package", selectedOrdered)
-        : "",
-    [includesClipPackage, selectedOrdered, streamedText],
-  );
+  const clipPackageBody = useMemo(() => {
+    if (!includesClipPackage) return "";
+    const extracted = extractPlatformSection(
+      streamedText,
+      "clip_package",
+      selectedOrdered,
+    );
+    if (extracted.trim()) return extracted;
+    // Saved rows or older outputs: inner package without outer ### header
+    if (/TOP CLIP MOMENTS/i.test(streamedText)) return streamedText.trim();
+    return "";
+  }, [includesClipPackage, selectedOrdered, streamedText]);
   const parsedClipPackage = useMemo(
     () => parseClipPackageSections(clipPackageBody),
     [clipPackageBody],
+  );
+
+  /** Phone frame: prefer parsed script, then any clip markdown, then partial sections, then raw stream. */
+  const verticalPreviewText = useMemo(() => {
+    const script = parsedClipPackage.script.trim();
+    if (script) return script;
+
+    const pack = clipPackageBody.trim();
+    if (pack) return pack;
+
+    const stitched = [
+      parsedClipPackage.moments,
+      parsedClipPackage.hooks,
+      parsedClipPackage.cta,
+    ]
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .join("\n\n");
+    if (stitched) return stitched;
+
+    if (includesClipPackage) {
+      const raw = streamedText.trim();
+      if (raw && !isEmptyStoredClipPackageV1(raw)) return raw;
+    }
+
+    return "";
+  }, [
+    clipPackageBody,
+    includesClipPackage,
+    parsedClipPackage.cta,
+    parsedClipPackage.hooks,
+    parsedClipPackage.moments,
+    parsedClipPackage.script,
+    streamedText,
+  ]);
+
+  const clipDurationEstimate = useMemo(
+    () => estimateClipDurationSeconds(parsedClipPackage.script),
+    [parsedClipPackage.script],
+  );
+
+  const clipFormatTags = useMemo(
+    () => parseFormatTagsFromCreatorSignals(parsedClipPackage.creator_signals),
+    [parsedClipPackage.creator_signals],
+  );
+
+  const clipLengthHintSeconds = useMemo(
+    () => parseLengthHintSeconds(parsedClipPackage.creator_signals),
+    [parsedClipPackage.creator_signals],
   );
 
   const togglePlatform = useCallback((id: PlatformId, checked: boolean) => {
@@ -128,6 +190,11 @@ export function DashboardClient({
       return;
     }
 
+    if (inputMode === "file" && !uploadFile) {
+      setError("Choose a video, audio, or text file.");
+      return;
+    }
+
     abortRef.current?.abort();
     abortRef.current = new AbortController();
     const { signal } = abortRef.current;
@@ -137,18 +204,31 @@ export function DashboardClient({
     setStreamedText("");
 
     try {
-      const res = await fetch("/api/generate", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        signal,
-        body: JSON.stringify({
-          mode: inputMode,
-          text: inputMode === "text" ? text : undefined,
-          url: inputMode === "url" ? url : undefined,
-          platforms: selectedOrdered,
-        }),
-      });
+      const res =
+        inputMode === "file" && uploadFile
+          ? await fetch("/api/generate", {
+              method: "POST",
+              credentials: "same-origin",
+              signal,
+              body: (() => {
+                const fd = new FormData();
+                fd.append("file", uploadFile);
+                fd.append("platforms", JSON.stringify(selectedOrdered));
+                return fd;
+              })(),
+            })
+          : await fetch("/api/generate", {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              signal,
+              body: JSON.stringify({
+                mode: inputMode,
+                text: inputMode === "text" ? text : undefined,
+                url: inputMode === "url" ? url : undefined,
+                platforms: selectedOrdered,
+              }),
+            });
 
       if (!res.ok) {
         const raw = await res.text();
@@ -195,6 +275,11 @@ export function DashboardClient({
       setStreamedText(accumulated);
       setProgress(100);
       if (selectedOrdered.includes("clip_package")) {
+        if (!accumulated.trim()) {
+          setError(
+            "No text came back from the model stream. Check OPENAI_API_KEY and try Regenerate.",
+          );
+        }
         router.refresh();
       }
     } catch (e) {
@@ -207,7 +292,7 @@ export function DashboardClient({
       setLoading(false);
       setTimeout(() => setProgress(0), 400);
     }
-  }, [inputMode, router, selectedOrdered, text, url]);
+  }, [inputMode, router, selectedOrdered, text, url, uploadFile]);
 
   const copyText = async (id: string, body: string) => {
     try {
@@ -226,7 +311,11 @@ export function DashboardClient({
 
   const canSubmit =
     selectedOrdered.length > 0 &&
-    (inputMode === "text" ? Boolean(text.trim()) : Boolean(url.trim()));
+    (inputMode === "text"
+      ? Boolean(text.trim())
+      : inputMode === "url"
+        ? Boolean(url.trim())
+        : Boolean(uploadFile));
   const genericPlatformCards = platformCards.filter(
     (platform) => platform.id !== "clip_package",
   );
@@ -247,9 +336,25 @@ export function DashboardClient({
   );
 
   const openClip = (clip: ClipPackageHistoryItem) => {
+    const restoredPlatforms = (clip.platforms ?? []).filter(
+      (p): p is PlatformId => isPlatformId(p),
+    );
+    const mergedPlatforms: PlatformId[] = restoredPlatforms.includes(
+      "clip_package",
+    )
+      ? restoredPlatforms
+      : [...restoredPlatforms, "clip_package"];
+
     setStreamedText(clip.output);
-    setSelected(selectionFromPlatforms(clip.platforms));
-    if (clip.inputUrl) {
+    setSelected(selectionFromPlatforms(mergedPlatforms));
+    setUploadFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+
+    if (clip.inputUrl?.startsWith("file:")) {
+      setInputMode("text");
+      setText(clip.inputText ?? "");
+      setUrl("");
+    } else if (clip.inputUrl) {
       setInputMode("url");
       setUrl(clip.inputUrl);
       setText("");
@@ -259,6 +364,12 @@ export function DashboardClient({
       setUrl("");
     }
     setError(null);
+
+    requestAnimationFrame(() => {
+      document
+        .getElementById("clip-viewer-panel")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   };
 
   return (
@@ -286,7 +397,8 @@ export function DashboardClient({
           <CardHeader>
             <CardTitle>Input panel</CardTitle>
             <CardDescription>
-              Paste text or a URL and pick your destination formats.
+              Paste text, fetch a URL, or upload a file. Video and audio are
+              transcribed on the server; text files are read as UTF-8.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -295,7 +407,11 @@ export function DashboardClient({
                 type="button"
                 variant={inputMode === "text" ? "default" : "outline"}
                 size="sm"
-                onClick={() => setInputMode("text")}
+                onClick={() => {
+                  setInputMode("text");
+                  setUploadFile(null);
+                  if (fileInputRef.current) fileInputRef.current.value = "";
+                }}
                 disabled={loading}
               >
                 Paste text
@@ -304,10 +420,23 @@ export function DashboardClient({
                 type="button"
                 variant={inputMode === "url" ? "default" : "outline"}
                 size="sm"
-                onClick={() => setInputMode("url")}
+                onClick={() => {
+                  setInputMode("url");
+                  setUploadFile(null);
+                  if (fileInputRef.current) fileInputRef.current.value = "";
+                }}
                 disabled={loading}
               >
                 From URL
+              </Button>
+              <Button
+                type="button"
+                variant={inputMode === "file" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setInputMode("file")}
+                disabled={loading}
+              >
+                Upload file
               </Button>
             </div>
 
@@ -323,7 +452,7 @@ export function DashboardClient({
                   disabled={loading}
                 />
               </div>
-            ) : (
+            ) : inputMode === "url" ? (
               <div className="space-y-2">
                 <Label htmlFor="source-url">Page URL</Label>
                 <input
@@ -335,6 +464,57 @@ export function DashboardClient({
                   onChange={(e) => setUrl(e.target.value)}
                   disabled={loading}
                 />
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Label htmlFor="source-file">Video, audio, or text file</Label>
+                <p className="text-muted-foreground text-xs leading-relaxed">
+                  Supported: common video/audio (transcribed with Whisper, max{" "}
+                  {Math.round(MAX_MEDIA_UPLOAD_BYTES / (1024 * 1024))} MB), or
+                  plain text formats (.txt, .md, .srt, .vtt, .csv). Large
+                  transcripts may be truncated for generation.
+                </p>
+                <input
+                  ref={fileInputRef}
+                  id="source-file"
+                  type="file"
+                  className="sr-only"
+                  accept="audio/*,video/*,.txt,.md,.markdown,.csv,.srt,.vtt,.json,.mp3,.mp4,.m4a,.wav,.webm,.mov,.mpeg,.mpga,.ogg,.flac"
+                  disabled={loading}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0] ?? null;
+                    setUploadFile(f);
+                  }}
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={loading}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    Choose file
+                  </Button>
+                  <span className="text-muted-foreground max-w-[min(100%,280px)] truncate text-sm">
+                    {uploadFile ? uploadFile.name : "No file selected"}
+                  </span>
+                  {uploadFile ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={loading}
+                      onClick={() => {
+                        setUploadFile(null);
+                        if (fileInputRef.current)
+                          fileInputRef.current.value = "";
+                      }}
+                    >
+                      Clear
+                    </Button>
+                  ) : null}
+                </div>
               </div>
             )}
 
@@ -384,7 +564,9 @@ export function DashboardClient({
                   </div>
                 </Progress>
                 <p className="text-muted-foreground text-xs">
-                  Streaming response in real-time...
+                  {inputMode === "file"
+                    ? "Transcribing your file if needed, then streaming the response…"
+                    : "Streaming response in real-time…"}
                 </p>
               </div>
             ) : null}
@@ -409,7 +591,7 @@ export function DashboardClient({
           </CardContent>
         </Card>
 
-        <section className="space-y-4">
+        <section id="clip-viewer-panel" className="scroll-mt-8 space-y-4">
           <Card>
             <CardHeader>
               <CardTitle>Output / Clip Viewer</CardTitle>
@@ -426,15 +608,53 @@ export function DashboardClient({
 
               {includesClipPackage ? (
                 <div className="space-y-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
+                    <span className="inline-flex w-fit items-center rounded-full border border-primary/35 bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
+                      Optimized for TikTok · Reels · Shorts
+                    </span>
+                    <div className="flex min-w-0 flex-1 flex-col gap-2 text-xs text-muted-foreground sm:items-end">
+                      {clipDurationEstimate.wordCount > 0 ? (
+                        <span className="text-right">
+                          ~{clipDurationEstimate.seconds}s est. read-aloud (
+                          {clipDurationEstimate.wordCount} spoken words tagged{" "}
+                          <span className="font-mono">[LINE]</span>)
+                        </span>
+                      ) : streamedText.trim() && !loading ? (
+                        <span className="text-right">
+                          Length estimate appears once the script includes{" "}
+                          <span className="font-mono">[LINE]</span> beats.
+                        </span>
+                      ) : null}
+                      {clipLengthHintSeconds != null ? (
+                        <span className="rounded-md bg-muted px-2 py-1 text-right font-medium text-foreground">
+                          Model length hint: ~{clipLengthHintSeconds}s
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+                  {clipFormatTags.length > 0 ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {clipFormatTags.map((tag) => (
+                        <span
+                          key={tag}
+                          className="bg-secondary text-secondary-foreground rounded-full px-2.5 py-0.5 text-xs font-medium"
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
                   <div className="mx-auto w-[220px] max-w-full rounded-[2.1rem] border-4 border-zinc-900 bg-zinc-950 p-2 shadow-lg dark:border-zinc-700">
-                    <div className="aspect-[9/16] overflow-y-auto rounded-[1.5rem] bg-black p-3 text-[11px] text-white">
-                      <p className="mb-2 text-[10px] tracking-wide text-zinc-300 uppercase">
+                    <div className="aspect-[9/16] min-h-[200px] overflow-y-auto rounded-[1.5rem] bg-zinc-950 p-3 text-[12px] leading-snug text-zinc-100">
+                      <p className="mb-2 text-[10px] tracking-wide text-zinc-400 uppercase">
                         Vertical Preview
                       </p>
-                      <pre className="font-sans whitespace-pre-wrap wrap-break-word">
-                        {parsedClipPackage.script ||
-                          clipPackageBody ||
-                          "Clip script will stream here..."}
+                      <pre className="font-sans wrap-break-word whitespace-pre-wrap text-zinc-100">
+                        {verticalPreviewText.trim()
+                          ? verticalPreviewText
+                          : loading
+                            ? "Streaming clip package…"
+                            : "Clip script will appear here once the model emits the clip section. If a saved clip shows this message, that row has no stored text—generate again (older empty saves cannot be recovered)."}
                       </pre>
                     </div>
                   </div>
