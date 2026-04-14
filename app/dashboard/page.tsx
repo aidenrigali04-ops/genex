@@ -1,3 +1,5 @@
+import { redirect } from "next/navigation";
+
 import { DashboardClient } from "@/app/dashboard/dashboard-client";
 import { createClient } from "@/lib/supabase/server";
 
@@ -7,13 +9,17 @@ export default async function DashboardPage() {
     data: { user },
   } = await supabase.auth.getUser();
 
+  if (!user) {
+    redirect("/login?next=%2Fdashboard");
+  }
+
   return (
     <DashboardClient
-      initialUser={
-        user
-          ? { id: user.id, email: user.email ?? "(no email on account)" }
-          : null
-      }
+      initialUser={{
+        id: user.id,
+        email: user.email ?? "(no email on account)",
+      }}
+      initialClipPackages={[]}
     />
   );
 }
