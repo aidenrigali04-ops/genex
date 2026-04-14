@@ -1,18 +1,34 @@
 "use server";
 
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { createClient } from "@/lib/supabase/server";
+
+const OAUTH_RETURN_COOKIE = "auth_return_path";
 
 function getBaseUrl(origin: string | null) {
   return origin ?? process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
 }
 
-export async function signInWithGoogle() {
+export async function signInWithGoogle(formData: FormData) {
   const supabase = await createClient();
   const headerStore = await headers();
   const baseUrl = getBaseUrl(headerStore.get("origin"));
+
+  const nextField = formData.get("next");
+  const nextRaw = typeof nextField === "string" ? nextField : "";
+  const next =
+    nextRaw.startsWith("/") && !nextRaw.startsWith("//") ? nextRaw : "/";
+
+  const cookieStore = await cookies();
+  cookieStore.set(OAUTH_RETURN_COOKIE, next, {
+    path: "/",
+    maxAge: 600,
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+  });
 
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
@@ -22,7 +38,9 @@ export async function signInWithGoogle() {
   });
 
   if (error || !data.url) {
-    redirect(`/?authError=${encodeURIComponent(error?.message ?? "OAuth failed")}`);
+    redirect(
+      `/login?authError=${encodeURIComponent(error?.message ?? "OAuth failed")}`,
+    );
   }
 
   redirect(data.url);
@@ -70,5 +88,5 @@ export async function signUpWithEmail(formData: FormData) {
 export async function signOut() {
   const supabase = await createClient();
   await supabase.auth.signOut();
-  redirect("/");
+  redirect("/login");
 }

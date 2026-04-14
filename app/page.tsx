@@ -30,10 +30,17 @@ export default async function Home({ searchParams }: HomeProps) {
         <h1 className="text-2xl font-semibold tracking-tight">genex</h1>
         <p className="mt-2 text-muted-foreground text-sm">
           <Link
-            href="/dashboard"
+            href={user ? "/dashboard" : "/login?next=%2Fdashboard"}
             className="text-foreground font-medium underline-offset-4 hover:underline"
           >
             Content repurposing dashboard
+          </Link>
+          {" · "}
+          <Link
+            href="/login"
+            className="text-foreground font-medium underline-offset-4 hover:underline"
+          >
+            Sign in
           </Link>
           {" · "}
           Next.js with shadcn/ui, Supabase client helpers, and the Vercel AI SDK
@@ -74,6 +81,7 @@ export default async function Home({ searchParams }: HomeProps) {
           <div className="space-y-4">
             <h2 className="text-sm font-medium">Supabase Auth</h2>
             <form action={signInWithGoogle}>
+              <input type="hidden" name="next" value="/" />
               <Button type="submit" className="w-full">
                 Continue with Google
               </Button>

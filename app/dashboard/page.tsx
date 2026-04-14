@@ -23,7 +23,14 @@ export default async function DashboardPage() {
     .limit(20);
 
   if (clipError) {
-    console.error("clip generations query failed", clipError.message);
+    if (clipError.code === "42703") {
+      console.warn(
+        "[dashboard] generations table is missing columns (e.g. input_text). Run the migrations in supabase/migrations/, especially 20260414120000_generations.sql and 20260415101000_generations_add_app_columns.sql, in the Supabase SQL editor.",
+        clipError.message,
+      );
+    } else {
+      console.error("clip generations query failed", clipError.message);
+    }
   }
 
   const initialClipPackages = (clipRows ?? []).map((row) => {
