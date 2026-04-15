@@ -49,7 +49,10 @@ const WHISPER_MIME_TYPES = new Set([
 ]);
 
 const WHISPER_FORMATS_HUMAN =
-  "FLAC, M4A, MP3, MP4, MPEG, MPGA, OGA, OGG, WAV, or WebM";
+  "FLAC, M4A, MP3, MP4, MPEG, MPGA, OGA, OGG, WAV, WebM, MOV, or M4V (QuickTime-style uploads are sent to the API as MP4)";
+
+/** Apple / iOS “Files” often uses these; Whisper rejects the `.mov` filename but many clips work as `.mp4`. */
+const APPLE_MOV_STYLE_EXTENSIONS = new Set([".mov", ".m4v"]);
 
 function extFromFilename(name: string): string {
   const i = name.lastIndexOf(".");
@@ -73,11 +76,44 @@ function isProbablyTextFile(file: File, ext: string): boolean {
   );
 }
 
+function isAppleMovStyleContainer(file: File, ext: string): boolean {
+  if (APPLE_MOV_STYLE_EXTENSIONS.has(ext)) return true;
+  const t = file.type.toLowerCase();
+  if (t !== "video/quicktime" && t !== "video/x-m4v") return false;
+  if (TEXT_EXTENSIONS.has(ext)) return false;
+  if (WHISPER_EXTENSIONS.has(ext)) return false;
+  return true;
+}
+
 function isWhisperSupportedFile(file: File, ext: string): boolean {
   if (WHISPER_EXTENSIONS.has(ext)) return true;
   const t = file.type.toLowerCase();
-  if (!t) return false;
-  return WHISPER_MIME_TYPES.has(t);
+  if (t && WHISPER_MIME_TYPES.has(t)) return true;
+  return isAppleMovStyleContainer(file, ext);
+}
+
+function stripExtension(filename: string): string {
+  const i = filename.lastIndexOf(".");
+  return i > 0 ? filename.slice(0, i) : filename;
+}
+
+/** Whisper’s HTTP API is picky about extensions; QuickTime-style clips are aliased to `.mp4`. */
+function whisperUploadFilenameAndMime(
+  safeName: string,
+  ext: string,
+  file: File,
+): { filename: string; mimeType: string } {
+  if (isAppleMovStyleContainer(file, ext)) {
+    const base = stripExtension(safeName);
+    return {
+      filename: `${base || "upload"}.mp4`,
+      mimeType: "video/mp4",
+    };
+  }
+  return {
+    filename: safeName,
+    mimeType: file.type || "application/octet-stream",
+  };
 }
 
 /**
@@ -106,7 +142,7 @@ export async function sourceFromUpload(file: File): Promise<{
 
   if (!isWhisperSupportedFile(file, ext)) {
     throw new Error(
-      `Unsupported file type for transcription. Use ${WHISPER_FORMATS_HUMAN}, or a text file (.txt, .md, .srt, .vtt, etc.). QuickTime (.mov) is not supported — export as MP4 or M4A.`,
+      `Unsupported file type for transcription. Use ${WHISPER_FORMATS_HUMAN}, or a text file (.txt, .md, .srt, .vtt, etc.).`,
     );
   }
 
@@ -122,9 +158,10 @@ export async function sourceFromUpload(file: File): Promise<{
   }
 
   const client = new OpenAI({ apiKey: key });
-  const upload = new File([await file.arrayBuffer()], safeName, {
-    type: file.type || "application/octet-stream",
-  });
+  const buf = await file.arrayBuffer();
+  const { filename: apiFilename, mimeType: apiMimeType } =
+    whisperUploadFilenameAndMime(safeName, ext, file);
+  const upload = new File([buf], apiFilename, { type: apiMimeType });
 
   let transcription: OpenAI.Audio.Transcriptions.Transcription;
   try {
@@ -139,7 +176,7 @@ export async function sourceFromUpload(file: File): Promise<{
       msg.toLowerCase().includes("unsupported")
     ) {
       throw new Error(
-        `That file format is not supported for transcription. Use ${WHISPER_FORMATS_HUMAN}.`,
+        "That file could not be transcribed — the codec may be unsupported (e.g. ProRes). Export as H.264 + AAC in MP4 or M4A, then try again.",
       );
     }
     throw e;
