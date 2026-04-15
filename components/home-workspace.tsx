@@ -572,7 +572,7 @@ export function HomeWorkspace({
                 ref={fileInputRef}
                 type="file"
                 className="sr-only"
-                accept="audio/*,video/*,.txt,.md,.markdown,.csv,.srt,.vtt,.json,.mp3,.mp4,.m4a,.wav,.webm,.mov,.mpeg,.mpga,.ogg,.flac"
+                accept=".flac,.m4a,.mp3,.mp4,.mpeg,.mpga,.oga,.ogg,.wav,.webm,.txt,.md,.markdown,.csv,.srt,.vtt,.json"
                 disabled={loading}
                 onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
               />

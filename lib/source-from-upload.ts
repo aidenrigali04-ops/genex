@@ -15,19 +15,41 @@ const TEXT_EXTENSIONS = new Set([
   ".json",
 ]);
 
-const MEDIA_EXTENSIONS = new Set([
+/** Must match OpenAI Whisper `audio.transcriptions` supported inputs. */
+const WHISPER_EXTENSIONS = new Set([
   ".flac",
   ".m4a",
   ".mp3",
   ".mp4",
   ".mpeg",
   ".mpga",
-  ".mov",
   ".oga",
   ".ogg",
   ".wav",
   ".webm",
 ]);
+
+/** MIME types Whisper accepts when extension is missing or unreliable. */
+const WHISPER_MIME_TYPES = new Set([
+  "audio/flac",
+  "audio/m4a",
+  "audio/mpeg",
+  "audio/mp3",
+  "audio/mp4",
+  "audio/x-m4a",
+  "audio/webm",
+  "audio/wav",
+  "audio/wave",
+  "audio/x-wav",
+  "audio/ogg",
+  "video/mp4",
+  "video/webm",
+  "video/ogg",
+  "application/ogg",
+]);
+
+const WHISPER_FORMATS_HUMAN =
+  "FLAC, M4A, MP3, MP4, MPEG, MPGA, OGA, OGG, WAV, or WebM";
 
 function extFromFilename(name: string): string {
   const i = name.lastIndexOf(".");
@@ -51,10 +73,11 @@ function isProbablyTextFile(file: File, ext: string): boolean {
   );
 }
 
-function isProbablyMediaFile(file: File, ext: string): boolean {
-  if (MEDIA_EXTENSIONS.has(ext)) return true;
+function isWhisperSupportedFile(file: File, ext: string): boolean {
+  if (WHISPER_EXTENSIONS.has(ext)) return true;
   const t = file.type.toLowerCase();
-  return t.startsWith("audio/") || t.startsWith("video/");
+  if (!t) return false;
+  return WHISPER_MIME_TYPES.has(t);
 }
 
 /**
@@ -81,9 +104,9 @@ export async function sourceFromUpload(file: File): Promise<{
     return { sourceText, storedInputUrl };
   }
 
-  if (!isProbablyMediaFile(file, ext)) {
+  if (!isWhisperSupportedFile(file, ext)) {
     throw new Error(
-      "Unsupported file type. Use video or audio (e.g. MP4, MOV, WebM, MP3, WAV) for transcription, or .txt / .md / .srt / .vtt for text.",
+      `Unsupported file type for transcription. Use ${WHISPER_FORMATS_HUMAN}, or a text file (.txt, .md, .srt, .vtt, etc.). QuickTime (.mov) is not supported — export as MP4 or M4A.`,
     );
   }
 
@@ -103,10 +126,24 @@ export async function sourceFromUpload(file: File): Promise<{
     type: file.type || "application/octet-stream",
   });
 
-  const transcription = await client.audio.transcriptions.create({
-    file: upload,
-    model: "whisper-1",
-  });
+  let transcription: OpenAI.Audio.Transcriptions.Transcription;
+  try {
+    transcription = await client.audio.transcriptions.create({
+      file: upload,
+      model: "whisper-1",
+    });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (
+      msg.includes("Invalid file format") ||
+      msg.toLowerCase().includes("unsupported")
+    ) {
+      throw new Error(
+        `That file format is not supported for transcription. Use ${WHISPER_FORMATS_HUMAN}.`,
+      );
+    }
+    throw e;
+  }
 
   const text = transcription.text?.trim() ?? "";
   if (!text) {
