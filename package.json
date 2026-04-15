@@ -17,6 +17,7 @@
     "ai": "^6.0.159",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "ffmpeg-static": "^5.2.0",
     "lucide-react": "^1.8.0",
     "next": "16.2.3",
     "openai": "^6.34.0",

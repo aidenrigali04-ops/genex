@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 
-/** OpenAI Whisper / transcriptions limit (bytes). */
-export const MAX_MEDIA_UPLOAD_BYTES = 25 * 1024 * 1024;
+import { MAX_MEDIA_UPLOAD_BYTES } from "@/lib/media-upload-limits";
+import { transcodeToMp3 } from "@/lib/transcode-for-whisper";
 
 const MAX_TEXT_CHARS = 120_000;
 
@@ -49,9 +49,9 @@ const WHISPER_MIME_TYPES = new Set([
 ]);
 
 const WHISPER_FORMATS_HUMAN =
-  "FLAC, M4A, MP3, MP4, MPEG, MPGA, OGA, OGG, WAV, WebM, MOV, or M4V (QuickTime-style uploads are sent to the API as MP4)";
+  "FLAC, M4A, MP3, MP4, MPEG, MPGA, OGA, OGG, WAV, WebM, MOV, or M4V";
 
-/** Apple / iOS “Files” often uses these; Whisper rejects the `.mov` filename but many clips work as `.mp4`. */
+/** Apple / iOS “Files” — transcoded server-side to MP3 before Whisper. */
 const APPLE_MOV_STYLE_EXTENSIONS = new Set([".mov", ".m4v"]);
 
 function extFromFilename(name: string): string {
@@ -97,23 +97,28 @@ function stripExtension(filename: string): string {
   return i > 0 ? filename.slice(0, i) : filename;
 }
 
-/** Whisper’s HTTP API is picky about extensions; QuickTime-style clips are aliased to `.mp4`. */
-function whisperUploadFilenameAndMime(
-  safeName: string,
-  ext: string,
-  file: File,
-): { filename: string; mimeType: string } {
-  if (isAppleMovStyleContainer(file, ext)) {
-    const base = stripExtension(safeName);
-    return {
-      filename: `${base || "upload"}.mp4`,
-      mimeType: "video/mp4",
-    };
+/** File extension hint for FFmpeg’s demuxer (`-i` input path). */
+function ffmpegInputSuffix(ext: string, mimeType: string): string {
+  if (APPLE_MOV_STYLE_EXTENSIONS.has(ext)) return ext;
+  const t = mimeType.toLowerCase();
+  if (
+    (t === "video/quicktime" || t === "video/x-m4v") &&
+    !WHISPER_EXTENSIONS.has(ext)
+  ) {
+    return ".mov";
   }
-  return {
-    filename: safeName,
-    mimeType: file.type || "application/octet-stream",
-  };
+  if (ext) return ext;
+  return ".mp4";
+}
+
+function isWhisperFormatOrCodecError(e: unknown): boolean {
+  const msg = (e instanceof Error ? e.message : String(e)).toLowerCase();
+  return (
+    msg.includes("invalid file format") ||
+    msg.includes("unsupported") ||
+    msg.includes("codec") ||
+    msg.includes("could not find codec")
+  );
 }
 
 /**
@@ -158,10 +163,23 @@ export async function sourceFromUpload(file: File): Promise<{
   }
 
   const client = new OpenAI({ apiKey: key });
-  const buf = await file.arrayBuffer();
-  const { filename: apiFilename, mimeType: apiMimeType } =
-    whisperUploadFilenameAndMime(safeName, ext, file);
-  const upload = new File([buf], apiFilename, { type: apiMimeType });
+  const buf = new Uint8Array(await file.arrayBuffer());
+  const bufNode = Buffer.from(buf);
+
+  let convertedWithFfmpeg = false;
+  let upload: File;
+
+  if (isAppleMovStyleContainer(file, ext)) {
+    const mp3 = await transcodeToMp3(bufNode, ffmpegInputSuffix(ext, file.type));
+    convertedWithFfmpeg = true;
+    upload = new File([new Uint8Array(mp3)], `${stripExtension(safeName) || "audio"}.mp3`, {
+      type: "audio/mpeg",
+    });
+  } else {
+    upload = new File([buf], safeName, {
+      type: file.type || "application/octet-stream",
+    });
+  }
 
   let transcription: OpenAI.Audio.Transcriptions.Transcription;
   try {
@@ -170,16 +188,29 @@ export async function sourceFromUpload(file: File): Promise<{
       model: "whisper-1",
     });
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (
-      msg.includes("Invalid file format") ||
-      msg.toLowerCase().includes("unsupported")
-    ) {
+    if (!isWhisperFormatOrCodecError(e)) throw e;
+    if (convertedWithFfmpeg) {
       throw new Error(
-        "That file could not be transcribed — the codec may be unsupported (e.g. ProRes). Export as H.264 + AAC in MP4 or M4A, then try again.",
+        "That file could not be transcribed after conversion. Try a shorter clip, or export audio as MP3 or M4A and upload again.",
       );
     }
-    throw e;
+    try {
+      const mp3 = await transcodeToMp3(
+        bufNode,
+        ffmpegInputSuffix(ext, file.type),
+      );
+      convertedWithFfmpeg = true;
+      transcription = await client.audio.transcriptions.create({
+        file: new File([new Uint8Array(mp3)], "audio.mp3", { type: "audio/mpeg" }),
+        model: "whisper-1",
+      });
+    } catch (convErr: unknown) {
+      const convMsg =
+        convErr instanceof Error ? convErr.message : String(convErr);
+      throw new Error(
+        `That file uses a video or audio codec Whisper cannot read directly. We tried converting it with FFmpeg but that failed (${convMsg.slice(0, 280)}). Export as MP3 or AAC in M4A/MP4 and try again.`,
+      );
+    }
   }
 
   const text = transcription.text?.trim() ?? "";

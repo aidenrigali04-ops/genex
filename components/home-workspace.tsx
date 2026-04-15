@@ -47,7 +47,7 @@ import { type GenerationPresetId } from "@/lib/generation-presets";
 import { isEmptyStoredClipPackageV1 } from "@/lib/generation-output";
 import { decrementGuestCredit, readGuestCreditsRemaining } from "@/lib/guest-credits";
 import { extractPlatformSection } from "@/lib/parse-generation-output";
-import { MAX_MEDIA_UPLOAD_BYTES } from "@/lib/source-from-upload";
+import { MAX_MEDIA_UPLOAD_BYTES } from "@/lib/media-upload-limits";
 import { isYoutubeVideoUrlForTranscript } from "@/lib/youtube-url";
 import { isPlatformId, type PlatformId } from "@/lib/platforms";
 import { cn } from "@/lib/utils";
