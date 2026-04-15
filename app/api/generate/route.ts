@@ -17,6 +17,7 @@ import {
 } from "@/lib/platforms";
 import { extractPlatformSection } from "@/lib/parse-generation-output";
 import { sourceFromUpload } from "@/lib/source-from-upload";
+import { streamTextToPlainTextResponse } from "@/lib/stream-text-plain-response";
 import { createClient } from "@/lib/supabase/server";
 import { fetchYoutubeTranscriptText } from "@/lib/youtube-transcript-server";
 import { isYoutubeVideoUrlForTranscript } from "@/lib/youtube-url";
@@ -129,6 +130,9 @@ ${sourceText}
     model: openai("gpt-4o"),
     system: systemPrompt,
     prompt: userPrompt,
+    onError({ error }) {
+      console.error("[generate] streamText error:", error);
+    },
     onChunk({ chunk }) {
       if (chunk.type === "text-delta" && chunk.text) {
         streamedTextBuffer += chunk.text;
@@ -185,9 +189,7 @@ ${sourceText}
     },
   });
 
-  return result.toTextStreamResponse({
-    headers: { "Content-Type": "text/plain; charset=utf-8" },
-  });
+  return streamTextToPlainTextResponse(result);
 }
 
 export async function POST(req: Request) {
@@ -360,6 +362,21 @@ export async function POST(req: Request) {
       remaining: number;
     };
 
+    const { error: profileBootstrapErr } = await supabase
+      .from("profiles")
+      .insert({ id: userId });
+    if (
+      profileBootstrapErr &&
+      profileBootstrapErr.code !== "23505" &&
+      !profileBootstrapErr.message.toLowerCase().includes("duplicate")
+    ) {
+      console.warn(
+        "[generate] profiles bootstrap insert:",
+        profileBootstrapErr.code,
+        profileBootstrapErr.message,
+      );
+    }
+
     const { data: creditData, error: creditError } = await supabase.rpc(
       "consume_one_credit",
       { p_user_id: userId },
@@ -398,6 +415,16 @@ export async function POST(req: Request) {
     ) {
       if (creditRow?.reason === "no_credits") {
         return Response.json({ error: "no_credits" }, { status: 403 });
+      }
+      if (creditRow?.reason === "no_profile") {
+        return Response.json(
+          {
+            error: "profile_setup",
+            message:
+              "Could not load your profile for credits. Apply the latest Supabase migration (profiles insert policy + consume_one_credit fix), then try again.",
+          },
+          { status: 503 },
+        );
       }
       return Response.json(
         {

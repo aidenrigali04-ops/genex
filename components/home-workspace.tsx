@@ -356,7 +356,9 @@ export function HomeWorkspace({
       }
 
       if (!accumulated.trim()) {
-        setError("No text came back from the model. Check OPENAI_API_KEY and try again.");
+        setError(
+          "No text came back from the model. Check the browser Network tab for /api/generate, confirm OPENAI_API_KEY on the server, and try again.",
+        );
       }
 
       router.refresh();
