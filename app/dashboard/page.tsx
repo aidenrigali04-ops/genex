@@ -51,7 +51,7 @@ export default async function DashboardPage() {
   if (profileError) {
     if (profileError.code === "42P01") {
       console.warn(
-        "[dashboard] public.profiles is missing. Run supabase/migrations/20260416120000_profiles_daily_generations.sql in the Supabase SQL editor.",
+        "[dashboard] public.profiles is missing. Run supabase/migrations/20260416120000_profiles_daily_generations.sql (and 20260416120100_profiles_add_daily_limit_columns.sql if you already had a profiles table) in the Supabase SQL editor.",
         profileError.message,
       );
     } else {
