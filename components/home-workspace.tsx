@@ -42,7 +42,12 @@ import {
   parseFormatTagsFromCreatorSignals,
   parseLengthHintSeconds,
 } from "@/lib/clip-package";
-import { FREE_DAILY_CREDITS } from "@/lib/credits-config";
+import { MAX_CLIP_SOURCE_CHARS } from "@/lib/clip-model-input";
+import {
+  FREE_DAILY_CREDITS,
+  isUnlimitedCreditsModeClient,
+  UNLIMITED_CREDITS_SENTINEL,
+} from "@/lib/credits-config";
 import { type GenerationPresetId } from "@/lib/generation-presets";
 import { isEmptyStoredClipPackageV1 } from "@/lib/generation-output";
 import { decrementGuestCredit, readGuestCreditsRemaining } from "@/lib/guest-credits";
@@ -79,6 +84,8 @@ type HomeWorkspaceProps = {
   initialCreditsRemaining: number | null;
   initialClipPackages: ClipPackageHistoryItem[];
   totalClipCount: number;
+  /** Server GENEX_UNLIMITED_CREDITS — skips RPC; use with NEXT_PUBLIC for guests. */
+  unlimitedCredits?: boolean;
   authError?: string | null;
 };
 
@@ -87,11 +94,15 @@ export function HomeWorkspace({
   initialCreditsRemaining,
   initialClipPackages,
   totalClipCount,
+  unlimitedCredits = false,
   authError,
 }: HomeWorkspaceProps) {
   const router = useRouter();
+  const creditsUnlimited =
+    unlimitedCredits || isUnlimitedCreditsModeClient();
   const [user, setUser] = useState(initialUser);
   const [creditsRemaining, setCreditsRemaining] = useState<number>(() => {
+    if (creditsUnlimited) return UNLIMITED_CREDITS_SENTINEL;
     if (initialCreditsRemaining != null) return initialCreditsRemaining;
     return FREE_DAILY_CREDITS;
   });
@@ -117,13 +128,22 @@ export function HomeWorkspace({
 
   useEffect(() => {
     setUser(initialUser);
-    if (initialCreditsRemaining != null) {
+    const unlimited =
+      unlimitedCredits || isUnlimitedCreditsModeClient();
+    if (unlimited) {
+      setCreditsRemaining(UNLIMITED_CREDITS_SENTINEL);
+    } else if (initialCreditsRemaining != null) {
       setCreditsRemaining(initialCreditsRemaining);
     } else {
       setCreditsRemaining(readGuestCreditsRemaining());
     }
     setClips(initialClipPackages);
-  }, [initialUser, initialCreditsRemaining, initialClipPackages]);
+  }, [
+    initialUser,
+    initialCreditsRemaining,
+    initialClipPackages,
+    unlimitedCredits,
+  ]);
 
   useEffect(() => {
     if (user) setSignInOpen(false);
@@ -191,7 +211,7 @@ export function HomeWorkspace({
       return;
     }
 
-    if (!user) {
+    if (!user && !creditsUnlimited) {
       const g = readGuestCreditsRemaining();
       if (g <= 0) {
         setBuyOpen(true);
@@ -252,10 +272,10 @@ export function HomeWorkspace({
 
         setProgress(16);
         if (transcriptFromPrefetch) {
-          const maxChars = 120_000;
+          const maxChars = MAX_CLIP_SOURCE_CHARS;
           const capped =
             transcriptFromPrefetch.length > maxChars
-              ? `${transcriptFromPrefetch.slice(0, maxChars)}\n\n[Truncated to ${maxChars} characters for generation.]`
+              ? `${transcriptFromPrefetch.slice(0, maxChars)}\n\n[Truncated to ${maxChars.toLocaleString()} characters for generation.]`
               : transcriptFromPrefetch;
           res = await fetch("/api/generate", {
             method: "POST",
@@ -350,7 +370,7 @@ export function HomeWorkspace({
       setStreamedText(accumulated);
       setProgress(100);
 
-      if (!user) {
+      if (!user && !creditsUnlimited) {
         decrementGuestCredit();
         setCreditsRemaining(readGuestCreditsRemaining());
       }
@@ -373,7 +393,16 @@ export function HomeWorkspace({
       setLoading(false);
       setTimeout(() => setProgress(0), 400);
     }
-  }, [inputMode, preset, router, text, url, uploadFile, user]);
+  }, [
+    creditsUnlimited,
+    inputMode,
+    preset,
+    router,
+    text,
+    url,
+    uploadFile,
+    user,
+  ]);
 
   const copyText = async (id: string, body: string) => {
     try {
@@ -446,10 +475,14 @@ export function HomeWorkspace({
               onClick={() => setBuyOpen(true)}
               className={cn(
                 "border-border bg-muted/60 hover:bg-muted rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
-                creditsRemaining <= 0 && "border-destructive/50 text-destructive",
+                !creditsUnlimited &&
+                  creditsRemaining <= 0 &&
+                  "border-destructive/50 text-destructive",
               )}
             >
-              ⚡ {creditsRemaining} credits remaining
+              {creditsUnlimited
+                ? "⚡ Unlimited (test)"
+                : `⚡ ${creditsRemaining} credits remaining`}
             </button>
             {user ? (
               <DropdownMenu>
@@ -821,6 +854,7 @@ export function HomeWorkspace({
         open={buyOpen}
         onOpenChange={setBuyOpen}
         creditsRemaining={creditsRemaining}
+        creditsUnlimited={creditsUnlimited}
       />
     </div>
   );
@@ -830,10 +864,12 @@ function BuyCreditsDialog({
   open,
   onOpenChange,
   creditsRemaining,
+  creditsUnlimited,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   creditsRemaining: number;
+  creditsUnlimited: boolean;
 }) {
   const [email, setEmail] = useState("");
   const [waitStatus, setWaitStatus] = useState<string | null>(null);
@@ -872,8 +908,17 @@ function BuyCreditsDialog({
         <DialogHeader>
           <DialogTitle>Upgrade & credits</DialogTitle>
           <DialogDescription>
-            You have <strong>{creditsRemaining}</strong> free credits left today.
-            Stripe integration coming soon — join the waitlist below.
+            {creditsUnlimited ? (
+              <>
+                Test mode: <strong>unlimited</strong> credits. Stripe
+                integration coming soon — join the waitlist below.
+              </>
+            ) : (
+              <>
+                You have <strong>{creditsRemaining}</strong> free credits left
+                today. Stripe integration coming soon — join the waitlist below.
+              </>
+            )}
           </DialogDescription>
         </DialogHeader>
 

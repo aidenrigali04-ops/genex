@@ -1,4 +1,8 @@
 import { HomeWorkspace } from "@/components/home-workspace";
+import {
+  isUnlimitedCreditsModeServer,
+  UNLIMITED_CREDITS_SENTINEL,
+} from "@/lib/credits-config";
 import { parseStoredGenerationOutput } from "@/lib/generation-output";
 import { remainingCreditsForDisplay } from "@/lib/profile-credits-display";
 import { isPlatformId, type PlatformId } from "@/lib/platforms";
@@ -15,6 +19,7 @@ type PageProps = {
 
 export default async function Home({ searchParams }: PageProps) {
   const params = await searchParams;
+  const unlimitedCredits = isUnlimitedCreditsModeServer();
   const supabase = await createClient();
   const {
     data: { user },
@@ -31,7 +36,9 @@ export default async function Home({ searchParams }: PageProps) {
       .eq("id", user.id)
       .maybeSingle();
 
-    if (profile) {
+    if (unlimitedCredits) {
+      initialCreditsRemaining = UNLIMITED_CREDITS_SENTINEL;
+    } else if (profile) {
       initialCreditsRemaining = remainingCreditsForDisplay({
         credits: profile.credits as number | null,
         last_reset_at: profile.last_reset_at as string | null,
@@ -89,6 +96,7 @@ export default async function Home({ searchParams }: PageProps) {
       initialCreditsRemaining={initialCreditsRemaining}
       initialClipPackages={initialClipPackages}
       totalClipCount={totalClipCount}
+      unlimitedCredits={unlimitedCredits}
       authError={params.authError ?? null}
     />
   );

@@ -2,6 +2,8 @@ import {
   FREE_DAILY_CREDITS,
   GUEST_CREDITS_KEY,
   GUEST_RESET_DATE_KEY,
+  isUnlimitedCreditsModeClient,
+  UNLIMITED_CREDITS_SENTINEL,
 } from "@/lib/credits-config";
 
 function todayLocalDate(): string {
@@ -10,6 +12,7 @@ function todayLocalDate(): string {
 
 /** Remaining guest credits after applying calendar-day reset (browser local timezone). */
 export function readGuestCreditsRemaining(): number {
+  if (isUnlimitedCreditsModeClient()) return UNLIMITED_CREDITS_SENTINEL;
   if (typeof window === "undefined") return FREE_DAILY_CREDITS;
   const storedDate = window.localStorage.getItem(GUEST_RESET_DATE_KEY);
   const today = todayLocalDate();
@@ -28,6 +31,7 @@ export function readGuestCreditsRemaining(): number {
 }
 
 export function decrementGuestCredit(): void {
+  if (isUnlimitedCreditsModeClient()) return;
   if (typeof window === "undefined") return;
   const remaining = readGuestCreditsRemaining();
   const next = Math.max(0, remaining - 1);

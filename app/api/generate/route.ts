@@ -2,6 +2,7 @@ import { openai } from "@ai-sdk/openai";
 import { streamText } from "ai";
 import { z } from "zod";
 
+import { capSourceTextForClipModel } from "@/lib/clip-model-input";
 import { parseClipPackageSections } from "@/lib/clip-package";
 import {
   appendPresetToSystemPrompt,
@@ -17,6 +18,7 @@ import {
 } from "@/lib/platforms";
 import { extractPlatformSection } from "@/lib/parse-generation-output";
 import { sourceFromUpload } from "@/lib/source-from-upload";
+import { isUnlimitedCreditsModeServer } from "@/lib/credits-config";
 import { streamTextToPlainTextResponse } from "@/lib/stream-text-plain-response";
 import { createClient } from "@/lib/supabase/server";
 import { fetchYoutubeTranscriptText } from "@/lib/youtube-transcript-server";
@@ -83,7 +85,10 @@ type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
 function streamGenerationResponse(opts: {
   supabase: SupabaseServerClient;
   userId: string | null;
-  sourceText: string;
+  /** Text embedded in the model prompt (may be truncated for TPM). */
+  sourceTextForModel: string;
+  /** Full source persisted on `generations.input_text`. */
+  sourceTextForStorage: string;
   storedInputUrl: string | null;
   orderedPlatforms: PlatformId[];
   preset: GenerationPresetId | undefined;
@@ -91,7 +96,8 @@ function streamGenerationResponse(opts: {
   const {
     supabase,
     userId,
-    sourceText,
+    sourceTextForModel,
+    sourceTextForStorage,
     storedInputUrl,
     orderedPlatforms,
     preset,
@@ -120,7 +126,7 @@ ${headerLines}
 
 Source content:
 ---
-${sourceText}
+${sourceTextForModel}
 ---`;
 
   /** `onFinish` `text` can be empty in edge cases; deltas are authoritative. */
@@ -128,6 +134,7 @@ ${sourceText}
 
   const result = streamText({
     model: openai("gpt-4o"),
+    maxOutputTokens: 8192,
     system: systemPrompt,
     prompt: userPrompt,
     onError({ error }) {
@@ -176,7 +183,7 @@ ${sourceText}
       if (userId) {
         const { error } = await supabase.from("generations").insert({
           user_id: userId,
-          input_text: sourceText,
+          input_text: sourceTextForStorage,
           input_url: storedInputUrl,
           platforms: orderedPlatforms,
           output: outputToStore,
@@ -355,7 +362,7 @@ export async function POST(req: Request) {
     );
   }
 
-  if (userId) {
+  if (userId && !isUnlimitedCreditsModeServer()) {
     type CreditRow = {
       success: boolean;
       reason: string | null;
@@ -436,10 +443,19 @@ export async function POST(req: Request) {
     }
   }
 
+  const { forModel, wasTruncated } = capSourceTextForClipModel(sourceText);
+  if (wasTruncated) {
+    console.info("[generate] clipped source for model TPM", {
+      storedChars: sourceText.length,
+      modelChars: forModel.length,
+    });
+  }
+
   return streamGenerationResponse({
     supabase,
     userId,
-    sourceText,
+    sourceTextForModel: forModel,
+    sourceTextForStorage: sourceText,
     storedInputUrl,
     orderedPlatforms,
     preset,
