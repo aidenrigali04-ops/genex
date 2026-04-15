@@ -28,7 +28,7 @@ export async function GET(request: Request) {
 
   return NextResponse.redirect(
     new URL(
-      `/login?authError=${encodeURIComponent("Could not authenticate user")}`,
+      `/?authError=${encodeURIComponent("Could not authenticate user")}`,
       requestUrl.origin,
     ),
   );

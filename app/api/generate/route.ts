@@ -18,7 +18,6 @@ import {
 import { extractPlatformSection } from "@/lib/parse-generation-output";
 import { sourceFromUpload } from "@/lib/source-from-upload";
 import { createClient } from "@/lib/supabase/server";
-import { DAILY_FREE_GENERATION_LIMIT } from "@/lib/daily-generation-limit";
 import { fetchYoutubeTranscriptText } from "@/lib/youtube-transcript-server";
 import { isYoutubeVideoUrlForTranscript } from "@/lib/youtube-url";
 
@@ -82,7 +81,7 @@ type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
 
 function streamGenerationResponse(opts: {
   supabase: SupabaseServerClient;
-  userId: string;
+  userId: string | null;
   sourceText: string;
   storedInputUrl: string | null;
   orderedPlatforms: PlatformId[];
@@ -170,16 +169,18 @@ ${sourceText}
         }
       }
 
-      const { error } = await supabase.from("generations").insert({
-        user_id: userId,
-        input_text: sourceText,
-        input_url: storedInputUrl,
-        platforms: orderedPlatforms,
-        output: outputToStore,
-        type: rowType,
-      });
-      if (error) {
-        console.error("generations insert failed", error.message);
+      if (userId) {
+        const { error } = await supabase.from("generations").insert({
+          user_id: userId,
+          input_text: sourceText,
+          input_url: storedInputUrl,
+          platforms: orderedPlatforms,
+          output: outputToStore,
+          type: rowType,
+        });
+        if (error) {
+          console.error("generations insert failed", error.message);
+        }
       }
     },
   });
@@ -202,11 +203,7 @@ export async function POST(req: Request) {
     data: { session },
   } = await supabase.auth.getSession();
 
-  if (!session?.user) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const userId = session.user.id;
+  const userId = session?.user?.id ?? null;
 
   let sourceText = "";
   let storedInputUrl: string | null = null;
@@ -356,51 +353,60 @@ export async function POST(req: Request) {
     );
   }
 
-  type ConsumeRow = {
-    allowed: boolean;
-    used_count: number;
-    max_free: number;
-  };
+  if (userId) {
+    type CreditRow = {
+      success: boolean;
+      reason: string | null;
+      remaining: number;
+    };
 
-  const { data: consumeData, error: consumeError } = await supabase.rpc(
-    "consume_one_daily_generation",
-  );
+    const { data: creditData, error: creditError } = await supabase.rpc(
+      "consume_one_credit",
+      { p_user_id: userId },
+    );
 
-  if (consumeError) {
-    if (consumeError.code === "42883" || consumeError.message.includes("function")) {
-      console.error(
-        "[generate] consume_one_daily_generation missing — run supabase/migrations/20260416120000_profiles_daily_generations.sql",
-        consumeError.message,
+    if (creditError) {
+      if (
+        creditError.code === "42883" ||
+        creditError.message.includes("function")
+      ) {
+        console.error(
+          "[generate] consume_one_credit(uuid) missing — apply supabase/migrations/20260416150000_consume_one_credit_user_param.sql",
+          creditError.message,
+        );
+      } else {
+        console.error("[generate] consume_one_credit failed", creditError.message);
+      }
+      return Response.json(
+        {
+          error: "credit_check_failed",
+          message:
+            "Could not verify your credits. Confirm the latest Supabase migration is applied.",
+        },
+        { status: 503 },
       );
-    } else {
-      console.error("[generate] daily limit RPC failed", consumeError.message);
     }
-    return Response.json(
-      {
-        error:
-          "Could not verify your daily generation limit. If this persists, confirm the profiles migration is applied.",
-      },
-      { status: 503 },
-    );
-  }
 
-  const consumeRow = (
-    Array.isArray(consumeData) ? consumeData[0] : consumeData
-  ) as ConsumeRow | undefined;
+    const creditRow = (
+      Array.isArray(creditData) ? creditData[0] : creditData
+    ) as CreditRow | undefined;
 
-  if (
-    !consumeRow ||
-    typeof consumeRow.allowed !== "boolean" ||
-    consumeRow.allowed !== true
-  ) {
-    return Response.json(
-      {
-        error: "Daily limit reached. Upgrade for unlimited access.",
-        limit: consumeRow?.max_free ?? DAILY_FREE_GENERATION_LIMIT,
-        used: consumeRow?.used_count,
-      },
-      { status: 403 },
-    );
+    if (
+      !creditRow ||
+      typeof creditRow.success !== "boolean" ||
+      creditRow.success !== true
+    ) {
+      if (creditRow?.reason === "no_credits") {
+        return Response.json({ error: "no_credits" }, { status: 403 });
+      }
+      return Response.json(
+        {
+          error: "credit_denied",
+          message: creditRow?.reason ?? "Could not use a credit.",
+        },
+        { status: 403 },
+      );
+    }
   }
 
   return streamGenerationResponse({

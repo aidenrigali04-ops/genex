@@ -1,6 +1,5 @@
 import { z } from "zod";
 
-import { createClient } from "@/lib/supabase/server";
 import { fetchYoutubeTranscriptText } from "@/lib/youtube-transcript-server";
 import { isYoutubeVideoUrlForTranscript } from "@/lib/youtube-url";
 
@@ -9,15 +8,6 @@ const bodySchema = z.object({
 });
 
 export async function POST(req: Request) {
-  const supabase = await createClient();
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-
-  if (!session?.user) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   let json: unknown;
   try {
     json = await req.json();

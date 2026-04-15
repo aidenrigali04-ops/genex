@@ -1,138 +1,95 @@
-import Link from "next/link";
-
-import { ChatPanel } from "@/components/chat-panel";
-import {
-  signInWithEmail,
-  signInWithGoogle,
-  signOut,
-  signUpWithEmail,
-} from "@/app/auth/actions";
-import { Button } from "@/components/ui/button";
+import { HomeWorkspace } from "@/components/home-workspace";
+import { parseStoredGenerationOutput } from "@/lib/generation-output";
+import { remainingCreditsForDisplay } from "@/lib/profile-credits-display";
+import { isPlatformId, type PlatformId } from "@/lib/platforms";
 import { createClient } from "@/lib/supabase/server";
 
-type HomeProps = {
-  searchParams: Promise<{
-    authError?: string;
-    authSuccess?: string;
-  }>;
+type SearchParams = {
+  authError?: string;
+  authSuccess?: string;
 };
 
-export default async function Home({ searchParams }: HomeProps) {
+type PageProps = {
+  searchParams: Promise<SearchParams>;
+};
+
+export default async function Home({ searchParams }: PageProps) {
   const params = await searchParams;
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
+  let initialCreditsRemaining: number | null = null;
+  let clipRows: Record<string, unknown>[] = [];
+  let totalClipCount = 0;
+
+  if (user) {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("credits, last_reset_at")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (profile) {
+      initialCreditsRemaining = remainingCreditsForDisplay({
+        credits: profile.credits as number | null,
+        last_reset_at: profile.last_reset_at as string | null,
+      });
+    } else {
+      initialCreditsRemaining = 3;
+    }
+
+    const { data: rows, error: clipError } = await supabase
+      .from("generations")
+      .select("id, created_at, input_text, input_url, platforms, output")
+      .eq("type", "clip_package")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false })
+      .limit(5);
+
+    if (!clipError && rows) {
+      clipRows = rows as Record<string, unknown>[];
+    }
+
+    const { count } = await supabase
+      .from("generations")
+      .select("id", { count: "exact", head: true })
+      .eq("type", "clip_package")
+      .eq("user_id", user.id);
+
+    totalClipCount = count ?? 0;
+  }
+
+  const initialClipPackages = clipRows.map((row) => {
+    const output = typeof row.output === "string" ? row.output : "";
+    const { displayOutput, platforms: parsedPlatforms } =
+      parseStoredGenerationOutput(output);
+    const rawPlatforms = Array.isArray(row.platforms) ? row.platforms : [];
+    const platforms: PlatformId[] =
+      parsedPlatforms ?? rawPlatforms.filter(isPlatformId);
+
+    return {
+      id: String(row.id),
+      createdAt: String(row.created_at),
+      inputText: (row.input_text as string | null) ?? null,
+      inputUrl: (row.input_url as string | null) ?? null,
+      output: displayOutput,
+      platforms,
+    };
+  });
+
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-8 p-8">
-      <div className="max-w-lg text-center space-y-2">
-        <h1 className="text-2xl font-semibold tracking-tight">genex</h1>
-        <p className="mt-2 text-muted-foreground text-sm">
-          <Link
-            href={user ? "/dashboard" : "/login?next=%2Fdashboard"}
-            className="text-foreground font-medium underline-offset-4 hover:underline"
-          >
-            Content repurposing dashboard
-          </Link>
-          {" · "}
-          <Link
-            href="/login"
-            className="text-foreground font-medium underline-offset-4 hover:underline"
-          >
-            Sign in
-          </Link>
-          {" · "}
-          Next.js with shadcn/ui, Supabase client helpers, and the Vercel AI SDK
-          (OpenAI). Copy{" "}
-          <code className="rounded bg-muted px-1 py-0.5 text-xs">
-            .env.example
-          </code>{" "}
-          to{" "}
-          <code className="rounded bg-muted px-1 py-0.5 text-xs">
-            .env.local
-          </code>
-          .
-        </p>
-        {params.authError ? (
-          <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-left text-sm text-destructive">
-            {params.authError}
-          </p>
-        ) : null}
-        {params.authSuccess ? (
-          <p className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2 text-left text-sm text-green-700 dark:text-green-400">
-            {params.authSuccess}
-          </p>
-        ) : null}
-      </div>
-      <div className="w-full max-w-lg rounded-xl border border-border bg-card p-4 text-card-foreground shadow-sm">
-        {user ? (
-          <div className="space-y-3">
-            <p className="text-sm">
-              Signed in as <span className="font-medium">{user.email}</span>
-            </p>
-            <form action={signOut}>
-              <Button type="submit" variant="secondary">
-                Sign out
-              </Button>
-            </form>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <h2 className="text-sm font-medium">Supabase Auth</h2>
-            <form action={signInWithGoogle}>
-              <input type="hidden" name="next" value="/" />
-              <Button type="submit" className="w-full">
-                Continue with Google
-              </Button>
-            </form>
-            <div className="text-xs text-muted-foreground">or email + password</div>
-            <form action={signInWithEmail} className="space-y-2">
-              <input
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-ring/50 focus-visible:ring-[3px]"
-                type="email"
-                name="email"
-                placeholder="you@example.com"
-                required
-              />
-              <input
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-ring/50 focus-visible:ring-[3px]"
-                type="password"
-                name="password"
-                placeholder="Password"
-                minLength={6}
-                required
-              />
-              <Button type="submit" className="w-full">
-                Sign in
-              </Button>
-            </form>
-            <form action={signUpWithEmail}>
-              <div className="grid gap-2">
-                <input
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-ring/50 focus-visible:ring-[3px]"
-                  type="email"
-                  name="email"
-                  placeholder="New account email"
-                  required
-                />
-                <input
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-ring/50 focus-visible:ring-[3px]"
-                  type="password"
-                  name="password"
-                  placeholder="Create password (min 6)"
-                  minLength={6}
-                  required
-                />
-                <Button type="submit" variant="outline" className="w-full">
-                  Create account
-                </Button>
-              </div>
-            </form>
-          </div>
-        )}
-      </div>
-      <ChatPanel />
-    </div>
+    <HomeWorkspace
+      initialUser={
+        user
+          ? { id: user.id, email: user.email ?? "(no email)" }
+          : null
+      }
+      initialCreditsRemaining={initialCreditsRemaining}
+      initialClipPackages={initialClipPackages}
+      totalClipCount={totalClipCount}
+      authError={params.authError ?? null}
+    />
   );
 }

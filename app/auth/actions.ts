@@ -39,7 +39,7 @@ export async function signInWithGoogle(formData: FormData) {
 
   if (error || !data.url) {
     redirect(
-      `/login?authError=${encodeURIComponent(error?.message ?? "OAuth failed")}`,
+      `/?authError=${encodeURIComponent(error?.message ?? "OAuth failed")}`,
     );
   }
 
@@ -88,5 +88,5 @@ export async function signUpWithEmail(formData: FormData) {
 export async function signOut() {
   const supabase = await createClient();
   await supabase.auth.signOut();
-  redirect("/login");
+  redirect("/");
 }
