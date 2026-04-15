@@ -3,6 +3,7 @@
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 
+import { normalizeInternalReturnPath } from "@/lib/normalize-internal-return-path";
 import { createClient } from "@/lib/supabase/server";
 
 const OAUTH_RETURN_COOKIE = "auth_return_path";
@@ -18,8 +19,9 @@ export async function signInWithGoogle(formData: FormData) {
 
   const nextField = formData.get("next");
   const nextRaw = typeof nextField === "string" ? nextField : "";
-  const next =
-    nextRaw.startsWith("/") && !nextRaw.startsWith("//") ? nextRaw : "/";
+  const next = normalizeInternalReturnPath(
+    nextRaw.startsWith("/") && !nextRaw.startsWith("//") ? nextRaw : "/",
+  );
 
   const cookieStore = await cookies();
   cookieStore.set(OAUTH_RETURN_COOKIE, next, {

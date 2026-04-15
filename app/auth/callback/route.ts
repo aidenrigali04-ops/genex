@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
+import { normalizeInternalReturnPath } from "@/lib/normalize-internal-return-path";
 import { createClient } from "@/lib/supabase/server";
 
 const OAUTH_RETURN_COOKIE = "auth_return_path";
@@ -13,8 +14,9 @@ export async function GET(request: Request) {
   const fromCookie = cookieStore.get(OAUTH_RETURN_COOKIE)?.value;
   const fromQuery = requestUrl.searchParams.get("next");
   const nextRaw = fromCookie ?? fromQuery ?? "/";
-  const safeNext =
-    nextRaw.startsWith("/") && !nextRaw.startsWith("//") ? nextRaw : "/";
+  const safeNext = normalizeInternalReturnPath(
+    nextRaw.startsWith("/") && !nextRaw.startsWith("//") ? nextRaw : "/",
+  );
 
   if (code) {
     const supabase = await createClient();
