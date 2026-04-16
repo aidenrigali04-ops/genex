@@ -1,6 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import type { ReactNode } from "react";
 import { toast } from "sonner";
 
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -241,6 +250,166 @@ function parseVariations(raw: unknown): VideoVariationItem[] {
     const u = rec.url;
     return typeof u === "string" && u.length > 0;
   });
+}
+
+type VariationPreviewRegistry = {
+  register: (id: string, pause: () => void) => void;
+  unregister: (id: string) => void;
+  /** Pause every registered preview except `id`, then caller may play `id`. */
+  activateExclusive: (id: string) => void;
+};
+
+const VariationPreviewRegistryContext =
+  createContext<VariationPreviewRegistry | null>(null);
+
+function VariationPreviewRegistryProvider({ children }: { children: ReactNode }) {
+  const pausersRef = useRef(new Map<string, () => void>());
+
+  const registry = useMemo<VariationPreviewRegistry>(
+    () => ({
+      register(id, pause) {
+        pausersRef.current.set(id, pause);
+      },
+      unregister(id) {
+        pausersRef.current.delete(id);
+      },
+      activateExclusive(id) {
+        pausersRef.current.forEach((pause, key) => {
+          if (key !== id) pause();
+        });
+      },
+    }),
+    [],
+  );
+
+  return (
+    <VariationPreviewRegistryContext.Provider value={registry}>
+      {children}
+    </VariationPreviewRegistryContext.Provider>
+  );
+}
+
+/** One live decode at a time (exclusive hover), poster still when idle; `preload=metadata` until play. */
+function VariationHoverVideo({ src, instanceId }: { src: string; instanceId: string }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  const preview = useContext(VariationPreviewRegistryContext);
+  const [posterUrl, setPosterUrl] = useState<string | null>(null);
+  const posterDoneRef = useRef(false);
+
+  const pauseStill = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.pause();
+    el.currentTime = 0;
+  }, []);
+
+  useEffect(() => {
+    preview?.register(instanceId, pauseStill);
+    return () => preview?.unregister(instanceId);
+  }, [preview, instanceId, pauseStill]);
+
+  useEffect(() => {
+    posterDoneRef.current = false;
+    setPosterUrl(null);
+    const el = ref.current;
+    if (!el) return;
+
+    const captureStill = () => {
+      if (posterDoneRef.current) return;
+      try {
+        const w = el.videoWidth;
+        const h = el.videoHeight;
+        if (!w || !h) return;
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+        ctx.drawImage(el, 0, 0, w, h);
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+        posterDoneRef.current = true;
+        setPosterUrl(dataUrl);
+      } catch {
+        /* CORS-tainted canvas or decode guard */
+      }
+    };
+
+    const onLoadedData = () => {
+      if (posterDoneRef.current) return;
+      const dur = Number.isFinite(el.duration) ? el.duration : 0;
+      const t = dur > 0 ? Math.min(0.08, Math.max(0.001, dur * 0.02)) : 0.05;
+      el.currentTime = t;
+    };
+
+    const onSeeked = () => {
+      el.removeEventListener("seeked", onSeeked);
+      captureStill();
+      el.currentTime = 0;
+    };
+
+    el.addEventListener("loadeddata", onLoadedData, { once: true });
+    el.addEventListener("seeked", onSeeked);
+
+    if (el.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      onLoadedData();
+    }
+
+    return () => {
+      el.removeEventListener("loadeddata", onLoadedData);
+      el.removeEventListener("seeked", onSeeked);
+    };
+  }, [src]);
+
+  const play = () => {
+    const el = ref.current;
+    if (!el) return;
+    preview?.activateExclusive(instanceId);
+    el.muted = true;
+    void el.play().catch(() => {});
+  };
+
+  return (
+    <div
+      className="group relative isolate overflow-hidden bg-black"
+      style={{ contain: "layout style" }}
+      onMouseEnter={play}
+      onMouseLeave={pauseStill}
+      onClick={() => {
+        if (typeof window === "undefined" || !window.matchMedia) return;
+        if (window.matchMedia("(hover: hover) and (pointer: fine)").matches) return;
+        const el = ref.current;
+        if (!el) return;
+        if (el.paused) {
+          preview?.activateExclusive(instanceId);
+          el.muted = true;
+          void el.play().catch(() => {});
+        } else {
+          pauseStill();
+        }
+      }}
+    >
+      <video
+        ref={ref}
+        src={src}
+        poster={posterUrl ?? undefined}
+        crossOrigin="anonymous"
+        className="aspect-9/16 max-h-[min(560px,70vh)] w-full transform-gpu bg-black object-cover"
+        muted
+        playsInline
+        loop
+        controls
+        preload="metadata"
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center transition-opacity duration-300 group-hover:opacity-0"
+      >
+        <span className="rounded-full bg-black/65 px-3 py-1 text-[11px] text-white/95 shadow-sm backdrop-blur-sm">
+          Hover to preview
+        </span>
+      </div>
+    </div>
+  );
 }
 
 export function VideoVariationWorkspace({
@@ -685,90 +854,91 @@ export function VideoVariationWorkspace({
               )}
 
               {variations.length > 0 && jobStatus === "complete" ? (
-                <div className="space-y-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h3 className="text-lg font-semibold">Your variations</h3>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        resetJobUi();
-                        setPrompt("");
-                        setYoutubeUrl("");
-                        setVideoFile(null);
-                        if (fileRef.current) fileRef.current.value = "";
-                      }}
-                    >
-                      Regenerate with different style
-                    </Button>
+                <VariationPreviewRegistryProvider>
+                  <div className="space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h3 className="text-lg font-semibold">Your variations</h3>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          resetJobUi();
+                          setPrompt("");
+                          setYoutubeUrl("");
+                          setVideoFile(null);
+                          if (fileRef.current) fileRef.current.value = "";
+                        }}
+                      >
+                        Regenerate with different style
+                      </Button>
+                    </div>
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      {variations.map((v, idx) => {
+                        const num = v.variation_number ?? idx + 1;
+                        const previewInstanceId = `${jobId}-var-${idx}`;
+                        return (
+                          <Card
+                            key={v.url ? `${v.url}::${num}` : `${jobId}-var-${idx}-${num}`}
+                            className="overflow-hidden"
+                          >
+                            <CardHeader className="pb-2">
+                              <CardTitle className="text-base">{v.label}</CardTitle>
+                              <CardDescription>
+                                Variation {num}
+                                {v.style_note ? ` — ${v.style_note}` : ""}
+                              </CardDescription>
+                            </CardHeader>
+                            <CardContent className="space-y-2 px-0">
+                              {v.error ? (
+                                <div className="bg-destructive/10 text-destructive flex min-h-[200px] flex-col justify-center gap-2 rounded-lg border border-destructive/30 px-4 py-6 text-sm">
+                                  <p className="font-medium">This variation failed to render.</p>
+                                  <p className="text-muted-foreground font-mono text-xs wrap-break-word">
+                                    {v.error}
+                                  </p>
+                                </div>
+                              ) : (
+                                <VariationHoverVideo
+                                  src={v.url}
+                                  instanceId={previewInstanceId}
+                                />
+                              )}
+                            </CardContent>
+                            <CardFooter className="flex flex-wrap gap-2">
+                              {!v.error ? (
+                                <>
+                                  <a
+                                    href={v.url}
+                                    download
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className={cn(
+                                      buttonVariants({ variant: "secondary", size: "sm" }),
+                                      "inline-flex",
+                                    )}
+                                  >
+                                    Download
+                                  </a>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => {
+                                      void navigator.clipboard.writeText(v.url);
+                                      toast.success("Link copied");
+                                    }}
+                                  >
+                                    Copy link
+                                  </Button>
+                                </>
+                              ) : null}
+                            </CardFooter>
+                          </Card>
+                        );
+                      })}
+                    </div>
                   </div>
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    {variations.map((v, idx) => {
-                      const num = v.variation_number ?? idx + 1;
-                      return (
-                        <Card key={`${v.label}-${num}`} className="overflow-hidden">
-                          <CardHeader className="pb-2">
-                            <CardTitle className="text-base">{v.label}</CardTitle>
-                            <CardDescription>
-                              Variation {num}
-                              {v.style_note ? ` — ${v.style_note}` : ""}
-                            </CardDescription>
-                          </CardHeader>
-                          <CardContent className="space-y-2 px-0">
-                            {v.error ? (
-                              <div className="bg-destructive/10 text-destructive flex min-h-[200px] flex-col justify-center gap-2 rounded-lg border border-destructive/30 px-4 py-6 text-sm">
-                                <p className="font-medium">This variation failed to render.</p>
-                                <p className="text-muted-foreground font-mono text-xs wrap-break-word">
-                                  {v.error}
-                                </p>
-                              </div>
-                            ) : (
-                              <video
-                                className="aspect-9/16 max-h-[min(560px,70vh)] w-full bg-black object-cover"
-                                src={v.url}
-                                autoPlay
-                                muted
-                                loop
-                                playsInline
-                                controls
-                              />
-                            )}
-                          </CardContent>
-                          <CardFooter className="flex flex-wrap gap-2">
-                            {!v.error ? (
-                              <>
-                                <a
-                                  href={v.url}
-                                  download
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className={cn(
-                                    buttonVariants({ variant: "secondary", size: "sm" }),
-                                    "inline-flex",
-                                  )}
-                                >
-                                  Download
-                                </a>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => {
-                                    void navigator.clipboard.writeText(v.url);
-                                    toast.success("Link copied");
-                                  }}
-                                >
-                                  Copy link
-                                </Button>
-                              </>
-                            ) : null}
-                          </CardFooter>
-                        </Card>
-                      );
-                    })}
-                  </div>
-                </div>
+                </VariationPreviewRegistryProvider>
               ) : null}
             </section>
           ) : null}
