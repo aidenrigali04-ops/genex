@@ -1,4 +1,5 @@
 import { isUnlimitedCreditsModeServer } from "@/lib/credits-config";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { createClient } from "@/lib/supabase/server";
 import { VIDEO_JOB_CREDIT_COST } from "@/lib/video-job-cost";
 
@@ -158,7 +159,10 @@ export async function POST(req: Request) {
     }
     const storagePath = `inputs/${userId}/${Date.now()}-${fileSeg}`;
     const buf = Buffer.from(await file.arrayBuffer());
-    const { error: upErr } = await supabase.storage
+    // Prefer service role when configured: avoids false "Bucket not found" when
+    // storage.buckets RLS hides rows from the end-user JWT (upload still uses inputs/{userId}/...).
+    const storageClient = createServiceRoleClient() ?? supabase;
+    const { error: upErr } = await storageClient.storage
       .from("videos")
       .upload(storagePath, buf, {
         contentType: file.type || "video/mp4",
@@ -166,24 +170,32 @@ export async function POST(req: Request) {
       });
 
     if (upErr) {
-      console.error("[video-jobs] storage upload", upErr.message);
-      const bucketMissing = /bucket not found/i.test(upErr.message);
+      const status =
+        typeof (upErr as { status?: unknown }).status === "number"
+          ? (upErr as { status: number }).status
+          : undefined;
+      const msg = upErr.message ?? "";
+      console.error("[video-jobs] storage upload", { status, message: msg });
+      // 404 "Bucket not found" is returned both when the bucket row is missing and when
+      // RLS on storage.buckets hides the row from the JWT (authenticated) role.
+      const bucketNotFoundMsg =
+        status === 404 && /bucket not found/i.test(msg);
       await supabase
         .from("video_jobs")
         .update({
           status: "failed",
-          error_message: upErr.message,
+          error_message: msg,
           updated_at: new Date().toISOString(),
         })
         .eq("id", jobId);
       return Response.json(
         {
           error: "upload_failed",
-          message: bucketMissing
-            ? 'Supabase Storage bucket "videos" is missing. Create a private bucket named exactly `videos` in the Supabase Dashboard (Storage → New bucket), or apply migrations that insert into storage.buckets (e.g. 20260417140000 and 20260419120000_ensure_videos_bucket_outputs_rls.sql).'
-            : upErr.message,
+          message: bucketNotFoundMsg
+            ? 'Storage returned "Bucket not found" for bucket `videos`. If the bucket exists, common fixes: (1) apply migration 20260420100000_storage_buckets_select_videos.sql (SELECT on storage.buckets for authenticated), (2) set SUPABASE_SERVICE_ROLE_KEY on the server so uploads use the admin client, or (3) create bucket `videos` / run storage.buckets inserts from 20260417140000 and 20260419120000_ensure_videos_bucket_outputs_rls.sql.'
+            : msg,
         },
-        { status: bucketMissing ? 503 : 500 },
+        { status: bucketNotFoundMsg ? 503 : 500 },
       );
     }
 
