@@ -13,6 +13,8 @@ export type VideoVariationItem = {
   label: string;
   variation_number?: number;
   style_note?: string;
+  /** Present when this variation failed in the worker; `url` may be empty. */
+  error?: string;
 };
 
 export function videoJobStatusLabel(status: string): string {

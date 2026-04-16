@@ -68,6 +68,10 @@ function requiredEnv(name) {
   return v;
 }
 
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 function log(jobId, msg) {
   console.log(`[${jobId}] ${msg}`);
 }
@@ -163,16 +167,31 @@ async function claimNextJob() {
   return rows[0] ?? null;
 }
 
-function downloadUrlWithYtDlp(jobId, inputUrl, outPath) {
-  log(jobId, "Downloading URL with yt-dlp…");
+async function downloadUrlWithYtDlp(jobId, inputUrl, outPath, maxAttempts = 3) {
   const cmd =
     `yt-dlp -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" ` +
     `--merge-output-format mp4 -o ${posixQuote(outPath)} ${posixQuote(inputUrl)}`;
-  execSync(cmd, {
-    stdio: "inherit",
-    maxBuffer: 1024 * 1024 * 200,
-    env: process.env,
-  });
+  let lastErr;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      log(jobId, `Downloading URL with yt-dlp (attempt ${attempt}/${maxAttempts})…`);
+      execSync(cmd, {
+        stdio: "inherit",
+        maxBuffer: 1024 * 1024 * 200,
+        env: process.env,
+      });
+      return;
+    } catch (e) {
+      lastErr = e;
+      const msg = e instanceof Error ? e.message : String(e);
+      log(jobId, `yt-dlp attempt ${attempt} failed: ${msg}`);
+      if (attempt < maxAttempts) {
+        const delayMs = 2000 * attempt;
+        await sleep(delayMs);
+      }
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 async function downloadUploadToInputMp4(jobId, storagePath, destInputMp4) {
@@ -399,6 +418,9 @@ async function planVariationsWithGpt(jobId, prompt, transcriptSegments, duration
 function pickCaptionFontfile() {
   const candidates = [
     process.env.CAPTION_FONT,
+    process.env.GENEX_CAPTION_FONT_ARABIC,
+    "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf",
     "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
     "/usr/share/fonts/truetype/noto/NotoSans[wdth,wght].ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -507,6 +529,91 @@ async function renderVariationWithFfmpeg(jobId, inputMp4, outPath, plan, duratio
   });
 }
 
+/**
+ * Optional bed track under the rendered clip (env-driven; use royalty-free audio only).
+ * Expects GENEX_BGM_LOCAL_PATH to a readable .mp3/.m4a on the worker filesystem.
+ */
+async function mixBackgroundMusicIfConfigured(jobId, videoPath, clipDurationSec, hasOriginalAudio) {
+  const bgmPath = process.env.GENEX_BGM_LOCAL_PATH?.trim();
+  if (!bgmPath) return videoPath;
+  if (!fs.existsSync(bgmPath)) {
+    log(jobId, `GENEX_BGM_LOCAL_PATH set but file missing: ${bgmPath} — skipping BGM mix.`);
+    return videoPath;
+  }
+  const rawVol = parseFloat(process.env.GENEX_BGM_VOLUME ?? "0.22", 10);
+  const vol = Number.isFinite(rawVol) ? Math.min(1, Math.max(0, rawVol)) : 0.22;
+  const d = Math.max(0.5, clipDurationSec);
+  const outPath = `${videoPath}.bgm.mp4`;
+  log(jobId, `Mixing background music (volume ${vol})…`);
+  try {
+    if (hasOriginalAudio) {
+      const filter = `[1:a]aloop=loop=-1:size=2e+09,atrim=0:${d},volume=${vol}[bg];[0:a][bg]amix=inputs=2:duration=first:dropout_transition=2[aout]`;
+      await runSpawn("ffmpeg", [
+        "-y",
+        "-i",
+        videoPath,
+        "-i",
+        bgmPath,
+        "-filter_complex",
+        filter,
+        "-map",
+        "0:v",
+        "-map",
+        "[aout]",
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-t",
+        String(d),
+        "-movflags",
+        "+faststart",
+        outPath,
+      ]);
+    } else {
+      const filter = `[1:a]aloop=loop=-1:size=2e+09,atrim=0:${d},volume=${vol}[aout]`;
+      await runSpawn("ffmpeg", [
+        "-y",
+        "-i",
+        videoPath,
+        "-i",
+        bgmPath,
+        "-filter_complex",
+        filter,
+        "-map",
+        "0:v",
+        "-map",
+        "[aout]",
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-t",
+        String(d),
+        "-movflags",
+        "+faststart",
+        outPath,
+      ]);
+    }
+    fs.unlinkSync(videoPath);
+    fs.renameSync(outPath, videoPath);
+    return videoPath;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log(jobId, `BGM mix failed (using variation without bed): ${msg}`);
+    try {
+      fs.rmSync(outPath, { force: true });
+    } catch {
+      /* ignore */
+    }
+    return videoPath;
+  }
+}
+
 async function uploadVariationMp4(userId, jobId, variationNumber, localPath) {
   const storagePath = `outputs/${userId}/${jobId}/variation_${variationNumber}.mp4`;
   const body = fs.readFileSync(localPath);
@@ -529,7 +636,7 @@ async function processJob(job) {
 
     if (job.input_type === "url") {
       if (!job.input_url) throw new Error("Missing input_url for url job");
-      downloadUrlWithYtDlp(jobId, job.input_url, inputMp4);
+      await downloadUrlWithYtDlp(jobId, job.input_url, inputMp4);
     } else if (job.input_type === "upload") {
       if (!job.storage_path) throw new Error("Missing storage_path for upload job");
       await downloadUploadToInputMp4(jobId, job.storage_path, inputMp4);
@@ -573,19 +680,50 @@ async function processJob(job) {
 
     const hasAudio = await ffprobeHasAudio(inputMp4);
     const variations = [];
+    let failedCount = 0;
 
     for (const p of planned) {
       const n = p.variation_number;
       const outLocal = path.join(tmpDir, `variation_${n}.mp4`);
-      await renderVariationWithFfmpeg(jobId, inputMp4, outLocal, p, durationSec, hasAudio);
-      const storagePath = await uploadVariationMp4(userId, jobId, n, outLocal);
-      variations.push({
-        variation_number: n,
-        label: p.label,
-        url: storagePath,
-        style_note: p.style_note,
-      });
+      try {
+        await renderVariationWithFfmpeg(jobId, inputMp4, outLocal, p, durationSec, hasAudio);
+        const clipDur = await ffprobeDurationSeconds(outLocal);
+        await mixBackgroundMusicIfConfigured(jobId, outLocal, clipDur, hasAudio);
+        const storagePath = await uploadVariationMp4(userId, jobId, n, outLocal);
+        variations.push({
+          variation_number: n,
+          label: p.label,
+          url: storagePath,
+          style_note: p.style_note,
+        });
+      } catch (e) {
+        failedCount += 1;
+        const msg = truncateErr(e?.message ?? e);
+        log(jobId, `Variation ${n} failed: ${msg}`);
+        variations.push({
+          variation_number: n,
+          label: p.label,
+          url: "",
+          style_note: p.style_note,
+          error: msg,
+        });
+      }
     }
+
+    const successes = variations.filter((v) => typeof v.url === "string" && v.url.length > 0);
+    if (successes.length === 0) {
+      throw new Error(
+        `All ${planned.length} variation(s) failed. Last errors: ${variations
+          .map((v) => v.error)
+          .filter(Boolean)
+          .join("; ")}`,
+      );
+    }
+
+    const partialNote =
+      failedCount > 0
+        ? `${failedCount} of ${planned.length} variations failed; ${successes.length} ready to download.`
+        : null;
 
     log(jobId, "Complete.");
     const { error: finErr } = await supabaseAdmin
@@ -593,6 +731,7 @@ async function processJob(job) {
       .update({
         status: "complete",
         variations,
+        error_message: partialNote,
         updated_at: new Date().toISOString(),
       })
       .eq("id", jobId);

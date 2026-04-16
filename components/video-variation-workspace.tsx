@@ -236,7 +236,9 @@ function parseVariations(raw: unknown): VideoVariationItem[] {
   if (!Array.isArray(raw)) return [];
   return raw.filter((x): x is VideoVariationItem => {
     if (typeof x !== "object" || x === null || !("url" in x)) return false;
-    const u = (x as VideoVariationItem).url;
+    const rec = x as VideoVariationItem;
+    if (typeof rec.error === "string" && rec.error.length > 0) return true;
+    const u = rec.url;
     return typeof u === "string" && u.length > 0;
   });
 }
@@ -265,6 +267,8 @@ export function VideoVariationWorkspace({
   const [jobStatus, setJobStatus] = useState<VideoJobStatus | null>(null);
   const [jobUpdatedAt, setJobUpdatedAt] = useState<string | null>(null);
   const [variations, setVariations] = useState<VideoVariationItem[]>([]);
+  /** Server `error_message` when status is complete but some variations failed. */
+  const [jobPartialNotice, setJobPartialNotice] = useState<string | null>(null);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const failedToastJobIdRef = useRef<string | null>(null);
@@ -312,6 +316,11 @@ export function VideoVariationWorkspace({
         typeof row.updated_at === "string" ? row.updated_at : null,
       );
       setVariations(parseVariations(row.variations));
+      setJobPartialNotice(
+        row.status === "complete" && row.error_message?.trim()
+          ? row.error_message.trim()
+          : null,
+      );
 
       if (row.status === "failed") {
         stopPoll();
@@ -324,6 +333,9 @@ export function VideoVariationWorkspace({
 
       if (row.status === "complete") {
         stopPoll();
+        if (row.error_message?.trim()) {
+          toast.info(row.error_message.trim());
+        }
         onJobFinished();
       }
     },
@@ -343,6 +355,7 @@ export function VideoVariationWorkspace({
     setJobStatus(null);
     setJobUpdatedAt(null);
     setVariations([]);
+    setJobPartialNotice(null);
     setUploadPct(0);
     failedToastJobIdRef.current = null;
   };
@@ -593,6 +606,17 @@ export function VideoVariationWorkspace({
                       </div>
                     </Progress>
                   </div>
+                  {jobStatus === "complete" && jobPartialNotice ? (
+                    <div
+                      className="max-w-2xl rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100"
+                      role="status"
+                    >
+                      <p className="font-medium">Some variations did not finish</p>
+                      <p className="mt-1 text-amber-900/90 dark:text-amber-50/90">
+                        {jobPartialNotice}
+                      </p>
+                    </div>
+                  ) : null}
                   {staleQueued ? (
                     <div
                       className="max-w-2xl rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100"
@@ -692,40 +716,53 @@ export function VideoVariationWorkspace({
                             </CardDescription>
                           </CardHeader>
                           <CardContent className="space-y-2 px-0">
-                            <video
-                              className="aspect-9/16 max-h-[min(560px,70vh)] w-full bg-black object-cover"
-                              src={v.url}
-                              autoPlay
-                              muted
-                              loop
-                              playsInline
-                              controls
-                            />
+                            {v.error ? (
+                              <div className="bg-destructive/10 text-destructive flex min-h-[200px] flex-col justify-center gap-2 rounded-lg border border-destructive/30 px-4 py-6 text-sm">
+                                <p className="font-medium">This variation failed to render.</p>
+                                <p className="text-muted-foreground font-mono text-xs wrap-break-word">
+                                  {v.error}
+                                </p>
+                              </div>
+                            ) : (
+                              <video
+                                className="aspect-9/16 max-h-[min(560px,70vh)] w-full bg-black object-cover"
+                                src={v.url}
+                                autoPlay
+                                muted
+                                loop
+                                playsInline
+                                controls
+                              />
+                            )}
                           </CardContent>
                           <CardFooter className="flex flex-wrap gap-2">
-                            <a
-                              href={v.url}
-                              download
-                              target="_blank"
-                              rel="noreferrer"
-                              className={cn(
-                                buttonVariants({ variant: "secondary", size: "sm" }),
-                                "inline-flex",
-                              )}
-                            >
-                              Download
-                            </a>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              onClick={() => {
-                                void navigator.clipboard.writeText(v.url);
-                                toast.success("Link copied");
-                              }}
-                            >
-                              Copy link
-                            </Button>
+                            {!v.error ? (
+                              <>
+                                <a
+                                  href={v.url}
+                                  download
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className={cn(
+                                    buttonVariants({ variant: "secondary", size: "sm" }),
+                                    "inline-flex",
+                                  )}
+                                >
+                                  Download
+                                </a>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    void navigator.clipboard.writeText(v.url);
+                                    toast.success("Link copied");
+                                  }}
+                                >
+                                  Copy link
+                                </Button>
+                              </>
+                            ) : null}
                           </CardFooter>
                         </Card>
                       );

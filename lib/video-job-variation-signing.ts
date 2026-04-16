@@ -1,6 +1,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-const SIGNED_URL_SECONDS = 3600;
+const SIGNED_URL_SECONDS = Math.min(
+  604_800,
+  Math.max(
+    60,
+    Number(process.env.VIDEO_SIGNED_URL_SECONDS) || 7200,
+  ),
+);
 
 function isHttpUrl(s: string): boolean {
   return /^https?:\/\//i.test(s.trim());
