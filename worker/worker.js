@@ -332,19 +332,86 @@ function normalizeWhisperSegments(transcription) {
   }));
 }
 
-const GPT_SYSTEM = `You are a short-form video editor AI. Given a video transcript with timestamps and a user's creative prompt, plan exactly 5 distinct video variations for TikTok/Reels/Shorts. Each variation must be 15–60 seconds. Return ONLY a valid JSON object with key 'variations' containing an array of 5 objects, each with: variation_number (1-5), label (string), segments (array of {start, end} in seconds), caption_overlay (string or null), style_note (string)`;
+const GPT_SYSTEM = `You are a short-form video editor AI. Given a video transcript with timestamps and a user's creative prompt, plan exactly 5 distinct video variations for TikTok/Reels/Shorts.
+Rules for total runtime of each variation (sum of segment lengths after clipping to 0…video_duration_sec):
+- If video_duration_sec >= 15: each variation should total about 15–60 seconds (prefer 20–45s when the source allows).
+- If video_duration_sec < 15: use as much strong footage as fits—each variation should total roughly 70–100% of the source length (still use multiple segments when it helps).
+Return ONLY a valid JSON object (no markdown fences) with key "variations": an array of exactly 5 objects. Each object: variation_number (1-5), label (string), segments (non-empty array of {start, end} in seconds, within the video), caption_overlay (string or null), style_note (string).`;
 
-async function planVariationsWithGpt(jobId, prompt, transcriptSegments, durationSec) {
-  log(jobId, "Planning variations with GPT-4o…");
+/**
+ * Models sometimes wrap JSON in ```json fences or prepend text despite response_format.
+ */
+function extractJsonObjectFromModelContent(raw) {
+  if (raw == null) return null;
+  let s = typeof raw === "string" ? raw : String(raw);
+  s = s.replace(/^\uFEFF/, "").trim();
+  if (!s) return null;
+
+  const tryParseObject = (str) => {
+    try {
+      const v = JSON.parse(str);
+      return v && typeof v === "object" ? v : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const fence = /```(?:json)?\s*\r?\n?([\s\S]*?)\r?\n?```/i.exec(s);
+  if (fence) {
+    const inner = fence[1].trim();
+    const fromFence = tryParseObject(inner);
+    if (fromFence) return fromFence;
+    s = inner;
+  }
+
+  let parsed = tryParseObject(s);
+  if (parsed) return parsed;
+
+  const i = s.indexOf("{");
+  const j = s.lastIndexOf("}");
+  if (i >= 0 && j > i) {
+    parsed = tryParseObject(s.slice(i, j + 1));
+    if (parsed) return parsed;
+  }
+
+  return null;
+}
+
+/** Min/max total segment length (seconds) after clipping to the real media duration. */
+function variationTotalDurationBounds(durationSec) {
+  const d = Number(durationSec);
+  const cap = Number.isFinite(d) && d > 0 ? d : 60;
+  const maxTotal = Math.min(60.5, cap + 0.75);
+  const minTotal =
+    cap >= 15
+      ? 14.5
+      : Math.max(0.25, Math.min(14.5, cap * 0.65));
+  return { minTotal, maxTotal };
+}
+
+async function planVariationsWithGptOnce(
+  prompt,
+  transcriptSegments,
+  durationSec,
+  attemptIndex,
+  priorHint,
+) {
+  const { minTotal, maxTotal } = variationTotalDurationBounds(durationSec);
   const userPayload = {
     job_prompt: prompt,
     video_duration_sec: durationSec,
     transcript_segments: transcriptSegments.slice(0, 400),
+    planner_constraints: {
+      variation_count: 5,
+      total_segment_seconds_min: minTotal,
+      total_segment_seconds_max: maxTotal,
+    },
+    ...(priorHint ? { fix_request: priorHint } : {}),
   };
 
   const completion = await openai.chat.completions.create({
     model: "gpt-4o",
-    temperature: 0.35,
+    temperature: attemptIndex > 0 ? 0.2 : 0.35,
     response_format: { type: "json_object" },
     messages: [
       { role: "system", content: GPT_SYSTEM },
@@ -353,20 +420,21 @@ async function planVariationsWithGpt(jobId, prompt, transcriptSegments, duration
   });
 
   const raw = completion.choices[0]?.message?.content;
-  let parsed;
-  try {
-    parsed = raw ? JSON.parse(raw) : null;
-  } catch {
-    throw new Error("GPT-4o returned invalid JSON for variations plan");
-  }
+  const parsed = extractJsonObjectFromModelContent(raw);
 
-  if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.variations)) {
-    throw new Error("GPT-4o returned invalid JSON for variations plan");
+  let list;
+  if (parsed && Array.isArray(parsed.variations)) {
+    list = parsed.variations;
+  } else if (Array.isArray(parsed) && parsed.length > 0) {
+    list = parsed;
+  } else {
+    throw new Error("Variations plan: missing or non-array 'variations' (could not parse JSON).");
   }
-
-  const list = parsed.variations;
+  if (list.length > 5) list = list.slice(0, 5);
   if (list.length !== 5) {
-    throw new Error("GPT-4o returned invalid JSON for variations plan");
+    throw new Error(
+      `Variations plan: expected 5 variations, got ${list.length} (after trimming to max 5).`,
+    );
   }
 
   const out = [];
@@ -383,7 +451,7 @@ async function planVariationsWithGpt(jobId, prompt, transcriptSegments, duration
       .filter((s) => Number.isFinite(s.start) && Number.isFinite(s.end) && s.end > s.start);
 
     if (segments.length === 0) {
-      throw new Error("GPT-4o returned invalid JSON for variations plan");
+      throw new Error(`Variations plan: variation ${idx + 1} has no valid segments.`);
     }
 
     let total = 0;
@@ -393,8 +461,10 @@ async function planVariationsWithGpt(jobId, prompt, transcriptSegments, duration
       total += ee - ss;
     }
 
-    if (total < 14.5 || total > 60.5) {
-      throw new Error("GPT-4o returned invalid JSON for variations plan");
+    if (total < minTotal || total > maxTotal) {
+      throw new Error(
+        `Variations plan: variation ${idx + 1} total clip length ${total.toFixed(1)}s is outside allowed ${minTotal.toFixed(1)}–${maxTotal.toFixed(1)}s for this video.`,
+      );
     }
 
     const capOverlay =
@@ -413,6 +483,31 @@ async function planVariationsWithGpt(jobId, prompt, transcriptSegments, duration
   }
 
   return out;
+}
+
+async function planVariationsWithGpt(jobId, prompt, transcriptSegments, durationSec) {
+  const { minTotal, maxTotal } = variationTotalDurationBounds(durationSec);
+  let lastErr = new Error("Variations plan failed after retries.");
+  for (let attempt = 0; attempt < 3; attempt++) {
+    log(jobId, attempt === 0 ? "Planning variations with GPT-4o…" : `Planning variations retry ${attempt + 1}/3…`);
+    let priorHint = null;
+    if (attempt > 0) {
+      priorHint = `Previous reply was invalid (${String(lastErr.message)}). Reply with a single JSON object only. "variations" must be an array of length exactly 5. Each item needs a non-empty "segments" array of {start,end} in seconds within 0..${Number(durationSec).toFixed(2)}. Each variation's summed segment length (after clipping to the video) must be between ${minTotal.toFixed(2)} and ${maxTotal.toFixed(2)} seconds.`;
+    }
+    try {
+      return await planVariationsWithGptOnce(
+        prompt,
+        transcriptSegments,
+        durationSec,
+        attempt,
+        priorHint,
+      );
+    } catch (e) {
+      lastErr = e instanceof Error ? e : new Error(String(e));
+      log(jobId, `Variations plan attempt ${attempt + 1} failed: ${lastErr.message}`);
+    }
+  }
+  throw lastErr;
 }
 
 function pickCaptionFontfile() {
