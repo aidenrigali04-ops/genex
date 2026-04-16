@@ -332,9 +332,12 @@ function normalizeWhisperSegments(transcription) {
   }));
 }
 
+/** Max sum of segment lengths (seconds) per variation after clipping to the source. */
+const VARIATION_PLAN_MAX_TOTAL_SEC = 100;
+
 const GPT_SYSTEM = `You are a short-form video editor AI. Given a video transcript with timestamps and a user's creative prompt, plan exactly 5 distinct video variations for TikTok/Reels/Shorts.
 Rules for total runtime of each variation (sum of segment lengths after clipping to 0…video_duration_sec):
-- If video_duration_sec >= 15: each variation should total about 15–60 seconds (prefer 20–45s when the source allows).
+- If video_duration_sec >= 15: each variation should total about 15–100 seconds (prefer 20–60s when the source allows; use up to ~100s for longer sources when it serves the edit).
 - If video_duration_sec < 15: use as much strong footage as fits—each variation should total roughly 70–100% of the source length (still use multiple segments when it helps).
 Return ONLY a valid JSON object (no markdown fences) with key "variations": an array of exactly 5 objects. Each object: variation_number (1-5), label (string), segments (non-empty array of {start, end} in seconds, within the video), caption_overlay (string or null), style_note (string).`;
 
@@ -380,8 +383,8 @@ function extractJsonObjectFromModelContent(raw) {
 /** Min/max total segment length (seconds) after clipping to the real media duration. */
 function variationTotalDurationBounds(durationSec) {
   const d = Number(durationSec);
-  const cap = Number.isFinite(d) && d > 0 ? d : 60;
-  const maxTotal = Math.min(60.5, cap + 0.75);
+  const cap = Number.isFinite(d) && d > 0 ? d : VARIATION_PLAN_MAX_TOTAL_SEC;
+  const maxTotal = Math.min(VARIATION_PLAN_MAX_TOTAL_SEC + 0.5, cap + 0.75);
   const minTotal =
     cap >= 15
       ? 14.5
