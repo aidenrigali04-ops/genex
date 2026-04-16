@@ -106,22 +106,48 @@ async function failJob(jobId, err) {
   }
 }
 
+async function logQueueDiagnostics() {
+  const { count: queuedCount, error: cErr } = await supabaseAdmin
+    .from("video_jobs")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "queued");
+  if (cErr) {
+    console.error("[worker] diagnostics count(queued) error:", cErr.message);
+    return;
+  }
+  const { data: recent, error: rErr } = await supabaseAdmin
+    .from("video_jobs")
+    .select("id, status, created_at")
+    .order("created_at", { ascending: false })
+    .limit(8);
+  if (rErr) {
+    console.error("[worker] diagnostics recent error:", rErr.message);
+    return;
+  }
+  console.log(
+    "[worker] diagnostics: queued_count=",
+    queuedCount ?? 0,
+    "recent=",
+    JSON.stringify((recent ?? []).map((r) => ({ id: r.id, status: r.status }))),
+  );
+}
+
 /**
  * Poll for queued jobs; claim with atomic queued → processing.
  */
 async function claimNextJob() {
-  const { data: row, error } = await supabaseAdmin
+  const { data: rows, error } = await supabaseAdmin
     .from("video_jobs")
     .select("*")
     .eq("status", "queued")
     .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
+    .limit(1);
 
   if (error) {
     console.error("[worker] claim select error", error.message);
     return null;
   }
+  const row = rows && rows.length > 0 ? rows[0] : null;
   if (!row) return null;
 
   const { data: updated, error: uerr } = await supabaseAdmin
@@ -135,7 +161,15 @@ async function claimNextJob() {
     .select()
     .single();
 
-  if (uerr || !updated) return null;
+  if (uerr || !updated) {
+    console.warn(
+      "[worker] claim update failed (another worker won the race, or DB rejected update):",
+      uerr?.message ?? "no row returned",
+      "job_id=",
+      row.id,
+    );
+    return null;
+  }
   return updated;
 }
 
@@ -606,8 +640,9 @@ async function main() {
         idleTicks += 1;
         if (idleTicks >= 12) {
           console.log(
-            "[worker] idle ~60s: no `queued` jobs visible — confirm same Supabase project as Vercel/Railway web, service_role key, and `video_jobs` migration applied.",
+            "[worker] idle ~60s: no claimable `queued` row (submit a job from the app while this log runs, or check Table Editor → video_jobs).",
           );
+          await logQueueDiagnostics();
           idleTicks = 0;
         }
       }
