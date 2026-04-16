@@ -49,6 +49,9 @@ type Props = {
 type JobRow = {
   id: string;
   status: VideoJobStatus;
+  input_type?: string;
+  storage_path?: string | null;
+  pending_storage_path?: string | null;
   variations: unknown;
   error_message?: string | null;
   updated_at?: string;
@@ -200,6 +203,7 @@ async function submitUploadJobViaDirectStorage(params: {
   const finRes = await fetch(`/api/video-jobs/${prep.id}`, {
     method: "PATCH",
     credentials: "same-origin",
+    cache: "no-store",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ finalizeDirectUpload: true }),
   });
@@ -467,7 +471,6 @@ export function VideoVariationWorkspace({
 
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<VideoJobStatus | null>(null);
-  const [jobUpdatedAt, setJobUpdatedAt] = useState<string | null>(null);
   const [variations, setVariations] = useState<VideoVariationItem[]>([]);
   /** Server `error_message` when status is complete but some variations failed. */
   const [jobPartialNotice, setJobPartialNotice] = useState<string | null>(null);
@@ -477,19 +480,8 @@ export function VideoVariationWorkspace({
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const failedToastJobIdRef = useRef<string | null>(null);
-  /** Re-render while queued so “stale” detection can flip without waiting on poll payload changes. */
-  const [nowTick, setNowTick] = useState(() => Date.now());
-
-  useEffect(() => {
-    if (jobStatus !== "queued" || !jobId) return;
-    const t = setInterval(() => setNowTick(Date.now()), 4000);
-    return () => clearInterval(t);
-  }, [jobStatus, jobId]);
-
-  const staleQueued =
-    jobStatus === "queued" &&
-    jobUpdatedAt != null &&
-    nowTick - new Date(jobUpdatedAt).getTime() > 12_000;
+  /** True while a direct-upload job is queued but `storage_path` is not linked yet (worker cannot claim). */
+  const [jobAwaitingUploadLink, setJobAwaitingUploadLink] = useState(false);
 
   const stopPoll = () => {
     if (pollRef.current) {
@@ -500,7 +492,10 @@ export function VideoVariationWorkspace({
 
   const fetchJob = useCallback(
     async (id: string) => {
-      const res = await fetch(`/api/video-jobs/${id}`, { credentials: "same-origin" });
+      const res = await fetch(`/api/video-jobs/${id}`, {
+        credentials: "same-origin",
+        cache: "no-store",
+      });
       if (!res.ok) {
         const raw = await res.text();
         let msg = raw || res.statusText;
@@ -517,9 +512,12 @@ export function VideoVariationWorkspace({
       setError(null);
       const row = (await res.json()) as JobRow;
       setJobStatus(row.status);
-      setJobUpdatedAt(
-        typeof row.updated_at === "string" ? row.updated_at : null,
-      );
+      const awaitingLink =
+        row.status === "queued" &&
+        row.input_type === "upload" &&
+        !(typeof row.storage_path === "string" && row.storage_path.trim()) &&
+        !!(typeof row.pending_storage_path === "string" && row.pending_storage_path.trim());
+      setJobAwaitingUploadLink(awaitingLink);
       setVariations(parseVariations(row.variations));
       setJobPartialNotice(
         row.status === "complete" && row.error_message?.trim()
@@ -560,10 +558,10 @@ export function VideoVariationWorkspace({
     stopPoll();
     setJobId(null);
     setJobStatus(null);
-    setJobUpdatedAt(null);
     setVariations([]);
     setJobPartialNotice(null);
     setJobGenerationContext(null);
+    setJobAwaitingUploadLink(false);
     setUploadPct(0);
     failedToastJobIdRef.current = null;
   };
@@ -840,44 +838,12 @@ export function VideoVariationWorkspace({
                       </p>
                     </div>
                   ) : null}
-                  {staleQueued ? (
-                    <div
-                      className="max-w-2xl rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100"
-                      role="status"
-                    >
-                      <p className="font-medium">Still queued — the worker may be down, wrong Supabase project, or using the anon key instead of service_role.</p>
-                      <p className="mt-2 text-amber-900/90 dark:text-amber-50/90">
-                        Jobs only move past <strong>Queued</strong> when{" "}
-                        <code className="rounded bg-black/10 px-1 py-0.5 text-xs dark:bg-white/10">
-                          worker/worker.js
-                        </code>{" "}
-                        is running (ffmpeg, yt-dlp on PATH, OpenAI). From the repo root:{" "}
-                        <code className="rounded bg-black/10 px-1 py-0.5 text-xs dark:bg-white/10">
-                          {"cd worker && npm install && npm start"}
-                        </code>
-                        , or{" "}
-                        <code className="rounded bg-black/10 px-1 py-0.5 text-xs dark:bg-white/10">
-                          npm run worker
-                        </code>{" "}
-                        from the app root after{" "}
-                        <code className="rounded bg-black/10 px-1 py-0.5 text-xs dark:bg-white/10">
-                          cd worker && npm install
-                        </code>
-                        . Use{" "}
-                        <code className="rounded bg-black/10 px-1 py-0.5 text-xs dark:bg-white/10">
-                          SUPABASE_SERVICE_ROLE_KEY
-                        </code>{" "}
-                        and the same project URL as the app (
-                        <code className="rounded bg-black/10 px-1 py-0.5 text-xs dark:bg-white/10">
-                          SUPABASE_URL
-                        </code>{" "}
-                        or{" "}
-                        <code className="rounded bg-black/10 px-1 py-0.5 text-xs dark:bg-white/10">
-                          NEXT_PUBLIC_SUPABASE_URL
-                        </code>
-                        ).
-                      </p>
-                    </div>
+                  {jobStatus === "queued" && jobAwaitingUploadLink ? (
+                    <p className="text-muted-foreground max-w-2xl text-sm" role="status">
+                      Linking your upload to this job… The worker starts only after the file is
+                      attached. If this stays here, check that the finalize step completed (Network
+                      tab) or try submitting again.
+                    </p>
                   ) : null}
                   <ol className="text-muted-foreground flex flex-wrap gap-x-3 gap-y-2 text-sm">
                     {PIPELINE_STEPS.map((label, i) => (

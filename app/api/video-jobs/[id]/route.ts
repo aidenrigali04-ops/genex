@@ -3,6 +3,9 @@ import { logVideoJob } from "@/lib/video-jobs-log";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { createClient } from "@/lib/supabase/server";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export async function GET(
   _req: Request,
   ctx: { params: Promise<{ id: string }> },
@@ -20,7 +23,7 @@ export async function GET(
   const { data: job, error } = await supabase
     .from("video_jobs")
     .select(
-      "id, user_id, input_type, input_url, storage_path, prompt, status, variations, error_message, created_at, updated_at, generation_context",
+      "id, user_id, input_type, input_url, storage_path, pending_storage_path, prompt, status, variations, error_message, created_at, updated_at, generation_context",
     )
     .eq("id", id)
     .eq("user_id", session.user.id)
@@ -40,7 +43,15 @@ export async function GET(
       ? await signVideoJobVariationsForResponse(supabase, job.variations)
       : job.variations;
 
-  return Response.json({ ...job, variations: variationsSigned });
+  return Response.json(
+    { ...job, variations: variationsSigned },
+    {
+      headers: {
+        "Cache-Control": "private, no-store, max-age=0, must-revalidate",
+        Pragma: "no-cache",
+      },
+    },
+  );
 }
 
 /** After client PUTs the file to the signed upload URL, attach `storage_path` so the worker can claim the job. */

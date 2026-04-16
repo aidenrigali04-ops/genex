@@ -116,9 +116,36 @@ async function logQueueDiagnostics() {
     console.error("[worker] diagnostics count(queued) error:", cErr.message);
     return;
   }
+
+  const { count: urlQueued, error: uErr } = await supabaseAdmin
+    .from("video_jobs")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "queued")
+    .eq("input_type", "url");
+
+  const { count: uploadClaimable, error: ucErr } = await supabaseAdmin
+    .from("video_jobs")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "queued")
+    .eq("input_type", "upload")
+    .not("storage_path", "is", null);
+
+  const { count: uploadWaitingPath, error: uwErr } = await supabaseAdmin
+    .from("video_jobs")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "queued")
+    .eq("input_type", "upload")
+    .is("storage_path", null);
+
+  if (uErr) console.error("[worker] diagnostics url_queued error:", uErr.message);
+  if (ucErr) console.error("[worker] diagnostics upload_ready error:", ucErr.message);
+  if (uwErr) console.error("[worker] diagnostics upload_waiting error:", uwErr.message);
+
+  const claimableApprox = (urlQueued ?? 0) + (uploadClaimable ?? 0);
+
   const { data: recent, error: rErr } = await supabaseAdmin
     .from("video_jobs")
-    .select("id, status, created_at")
+    .select("id, status, input_type, created_at")
     .order("created_at", { ascending: false })
     .limit(8);
   if (rErr) {
@@ -126,10 +153,20 @@ async function logQueueDiagnostics() {
     return;
   }
   console.log(
-    "[worker] diagnostics: queued_count=",
+    "[worker] diagnostics: queued_total=",
     queuedCount ?? 0,
+    "claimable_approx(url+upload_with_path)=",
+    claimableApprox,
+    "upload_queued_no_storage_path=",
+    uploadWaitingPath ?? 0,
     "recent=",
-    JSON.stringify((recent ?? []).map((r) => ({ id: r.id, status: r.status }))),
+    JSON.stringify(
+      (recent ?? []).map((r) => ({
+        id: r.id,
+        status: r.status,
+        input_type: r.input_type,
+      })),
+    ),
   );
 }
 
@@ -150,11 +187,16 @@ async function claimNextJob() {
       /function public\.worker_claim_next_video_job/i.test(error.message ?? "")
     ) {
       console.error(
-        "[worker] RPC worker_claim_next_video_job missing — apply supabase/migrations/20260421100000_worker_claim_next_video_job.sql",
+        "[worker] RPC worker_claim_next_video_job missing — apply supabase/migrations/20260424120000_worker_claim_next_video_job_repair.sql (or 20260421100000 + 20260422120000).",
         error.message,
       );
     } else {
-      console.error("[worker] claim RPC error", error.message);
+      console.error("[worker] claim RPC error", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+      });
     }
     return null;
   }
