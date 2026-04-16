@@ -6,7 +6,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import fs from "node:fs";
-import { execSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
@@ -88,10 +88,6 @@ function rmDir(p) {
   }
 }
 
-function posixQuote(s) {
-  return `'${String(s).replace(/'/g, "'\\''")}'`;
-}
-
 function truncateErr(msg) {
   const t = String(msg ?? "error").slice(0, ERR_MSG_MAX);
   return t;
@@ -167,19 +163,47 @@ async function claimNextJob() {
   return rows[0] ?? null;
 }
 
+/**
+ * YouTube often has no separate mp4 video + m4a audio; forcing
+ * `bestvideo[ext=mp4]+bestaudio[ext=m4a]` yields "Requested format is not available".
+ * Prefer best video + best audio (any codec), merge to mp4; retry with alternate
+ * player clients when the default extractor path fails.
+ */
 async function downloadUrlWithYtDlp(jobId, inputUrl, outPath, maxAttempts = 3) {
-  const cmd =
-    `yt-dlp -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" ` +
-    `--merge-output-format mp4 -o ${posixQuote(outPath)} ${posixQuote(inputUrl)}`;
+  const strategies = [
+    { label: "default extractor", extractorArgs: null },
+    {
+      label: "youtube player_client=android",
+      extractorArgs: "youtube:player_client=android",
+    },
+    {
+      label: "youtube player_client=tv_embedded",
+      extractorArgs: "youtube:player_client=tv_embedded",
+    },
+  ];
+
   let lastErr;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const spec = strategies[(attempt - 1) % strategies.length];
+    const args = ["--no-playlist"];
+    if (spec.extractorArgs) {
+      args.push("--extractor-args", spec.extractorArgs);
+    }
+    args.push(
+      "-f",
+      "bv*+ba/b",
+      "--merge-output-format",
+      "mp4",
+      "-o",
+      outPath,
+      inputUrl,
+    );
     try {
-      log(jobId, `Downloading URL with yt-dlp (attempt ${attempt}/${maxAttempts})…`);
-      execSync(cmd, {
-        stdio: "inherit",
-        maxBuffer: 1024 * 1024 * 200,
-        env: process.env,
-      });
+      log(
+        jobId,
+        `Downloading URL with yt-dlp (${spec.label}, attempt ${attempt}/${maxAttempts})…`,
+      );
+      await runSpawn("yt-dlp", args, { stdio: "inherit" });
       return;
     } catch (e) {
       lastErr = e;
@@ -488,6 +512,29 @@ async function planVariationsWithGptOnce(
   return out;
 }
 
+function formatGenerationContextWorker(gc) {
+  if (gc == null || typeof gc !== "object") return "";
+  if (gc.version === 1 && gc.answers && typeof gc.answers === "object") {
+    const lines = [];
+    if (Array.isArray(gc.platforms) && gc.platforms.length) {
+      lines.push(`Platforms: ${gc.platforms.join(", ")}`);
+    }
+    for (const [k, v] of Object.entries(gc.answers)) {
+      const t = String(v ?? "").trim();
+      if (t) lines.push(`${k}: ${t}`);
+    }
+    if (gc.forkedFromJobId) {
+      lines.push("Follow-up refinement job (prioritize latest instructions).");
+    }
+    return lines.join(". ");
+  }
+  try {
+    return `User context: ${JSON.stringify(gc)}`;
+  } catch {
+    return "";
+  }
+}
+
 async function planVariationsWithGpt(jobId, prompt, transcriptSegments, durationSec) {
   const { minTotal, maxTotal } = variationTotalDurationBounds(durationSec);
   let lastErr = new Error("Variations plan failed after retries.");
@@ -761,9 +808,14 @@ async function processJob(job) {
       .eq("id", jobId);
     if (st2) throw new Error(st2.message);
 
+    const gcBlock = formatGenerationContextWorker(job.generation_context);
+    const planningPrompt = gcBlock
+      ? `${gcBlock}\n\n---\nEditor brief (required):\n${job.prompt}`
+      : job.prompt;
+
     let planned = await planVariationsWithGpt(
       jobId,
-      job.prompt,
+      planningPrompt,
       transcriptSegments,
       durationSec,
     );
