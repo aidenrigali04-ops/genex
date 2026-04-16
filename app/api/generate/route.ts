@@ -385,8 +385,8 @@ export async function POST(req: Request) {
     }
 
     const { data: creditData, error: creditError } = await supabase.rpc(
-      "consume_one_credit",
-      { p_user_id: userId },
+      "consume_credits",
+      { p_user_id: userId, p_cost: 1 },
     );
 
     if (creditError) {
@@ -395,11 +395,11 @@ export async function POST(req: Request) {
         creditError.message.includes("function")
       ) {
         console.error(
-          "[generate] consume_one_credit(uuid) missing — apply supabase/migrations/20260416150000_consume_one_credit_user_param.sql",
+          "[generate] consume_credits(uuid,int) missing — apply supabase/migrations/20260417140000_video_jobs_storage_consume_credits.sql",
           creditError.message,
         );
       } else {
-        console.error("[generate] consume_one_credit failed", creditError.message);
+        console.error("[generate] consume_credits failed", creditError.message);
       }
       return Response.json(
         {

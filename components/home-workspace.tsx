@@ -55,6 +55,7 @@ import { extractPlatformSection } from "@/lib/parse-generation-output";
 import { MAX_MEDIA_UPLOAD_BYTES } from "@/lib/media-upload-limits";
 import { isYoutubeVideoUrlForTranscript } from "@/lib/youtube-url";
 import { isPlatformId, type PlatformId } from "@/lib/platforms";
+import { VideoVariationWorkspace } from "@/components/video-variation-workspace";
 import { cn } from "@/lib/utils";
 
 const CLIP_PLATFORMS: PlatformId[] = ["clip_package"];
@@ -109,6 +110,7 @@ export function HomeWorkspace({
 
   const [signInOpen, setSignInOpen] = useState(false);
   const [buyOpen, setBuyOpen] = useState(false);
+  const [workspaceTab, setWorkspaceTab] = useState<"video" | "clip">("video");
   const [inputMode, setInputMode] = useState<"text" | "url" | "file">("text");
   const [text, setText] = useState("");
   const [url, setUrl] = useState("");
@@ -524,7 +526,43 @@ export function HomeWorkspace({
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-3xl flex-1 space-y-12 px-4 py-10 pb-20">
+      <main
+        className={cn(
+          "mx-auto w-full flex-1 px-4 py-10 pb-20",
+          workspaceTab === "video" ? "max-w-6xl space-y-8" : "max-w-3xl space-y-12",
+        )}
+      >
+        <div className="border-border/80 flex flex-wrap gap-2 border-b pb-4">
+          <Button
+            type="button"
+            variant={workspaceTab === "video" ? "default" : "ghost"}
+            size="sm"
+            onClick={() => setWorkspaceTab("video")}
+          >
+            Video AI editor
+          </Button>
+          <Button
+            type="button"
+            variant={workspaceTab === "clip" ? "default" : "ghost"}
+            size="sm"
+            onClick={() => setWorkspaceTab("clip")}
+          >
+            Clip package (text)
+          </Button>
+        </div>
+
+        {workspaceTab === "video" ? (
+          <VideoVariationWorkspace
+            user={user}
+            creditsRemaining={creditsRemaining}
+            creditsUnlimited={creditsUnlimited}
+            setCreditsRemaining={setCreditsRemaining}
+            onOpenBuy={() => setBuyOpen(true)}
+            onOpenSignIn={() => setSignInOpen(true)}
+            onJobFinished={() => void router.refresh()}
+          />
+        ) : (
+          <>
         <section className="space-y-6">
           <div className="space-y-3 text-center sm:text-left">
             <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
@@ -831,6 +869,8 @@ export function HomeWorkspace({
             </div>
           )}
         </section>
+          </>
+        )}
       </main>
 
       <Dialog open={signInOpen} onOpenChange={setSignInOpen}>

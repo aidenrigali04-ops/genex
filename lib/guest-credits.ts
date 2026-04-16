@@ -30,10 +30,16 @@ export function readGuestCreditsRemaining(): number {
   return n;
 }
 
-export function decrementGuestCredit(): void {
+export function decrementGuestCreditsBy(amount: number): void {
   if (isUnlimitedCreditsModeClient()) return;
   if (typeof window === "undefined") return;
+  const n = Math.max(0, Math.floor(amount));
+  if (n === 0) return;
   const remaining = readGuestCreditsRemaining();
-  const next = Math.max(0, remaining - 1);
+  const next = Math.max(0, remaining - n);
   window.localStorage.setItem(GUEST_CREDITS_KEY, String(next));
+}
+
+export function decrementGuestCredit(): void {
+  decrementGuestCreditsBy(1);
 }
