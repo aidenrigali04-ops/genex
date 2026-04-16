@@ -1,0 +1,4 @@
+# Pins the start process so Railway does not rely on a custom dashboard command
+# like `npm run start:api` (which breaks if an older commit is deployed).
+[deploy]
+startCommand = "npm start"
