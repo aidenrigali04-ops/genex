@@ -134,43 +134,32 @@ async function logQueueDiagnostics() {
 
 /**
  * Poll for queued jobs; claim with atomic queued → processing.
+ * Uses RPC (SECURITY DEFINER) so claims work even when PostgREST table reads
+ * do not return rows for the service client while SQL Editor still shows `queued`.
  */
 async function claimNextJob() {
-  const { data: rows, error } = await supabaseAdmin
-    .from("video_jobs")
-    .select("*")
-    .eq("status", "queued")
-    .order("created_at", { ascending: true })
-    .limit(1);
+  const { data, error } = await supabaseAdmin.rpc(
+    "worker_claim_next_video_job",
+    {},
+  );
 
   if (error) {
-    console.error("[worker] claim select error", error.message);
+    if (
+      error.code === "42883" ||
+      /function public\.worker_claim_next_video_job/i.test(error.message ?? "")
+    ) {
+      console.error(
+        "[worker] RPC worker_claim_next_video_job missing — apply supabase/migrations/20260421100000_worker_claim_next_video_job.sql",
+        error.message,
+      );
+    } else {
+      console.error("[worker] claim RPC error", error.message);
+    }
     return null;
   }
-  const row = rows && rows.length > 0 ? rows[0] : null;
-  if (!row) return null;
 
-  const { data: updated, error: uerr } = await supabaseAdmin
-    .from("video_jobs")
-    .update({
-      status: "processing",
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", row.id)
-    .eq("status", "queued")
-    .select()
-    .single();
-
-  if (uerr || !updated) {
-    console.warn(
-      "[worker] claim update failed (another worker won the race, or DB rejected update):",
-      uerr?.message ?? "no row returned",
-      "job_id=",
-      row.id,
-    );
-    return null;
-  }
-  return updated;
+  const rows = Array.isArray(data) ? data : data ? [data] : [];
+  return rows[0] ?? null;
 }
 
 function downloadUrlWithYtDlp(jobId, inputUrl, outPath) {
