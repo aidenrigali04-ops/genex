@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "start:api": "next start",
     "lint": "eslint",
     "worker": "npm run start --prefix worker"
   },
