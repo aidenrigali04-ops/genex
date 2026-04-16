@@ -5,11 +5,18 @@ import { VIDEO_JOB_CREDIT_COST } from "@/lib/video-job-cost";
 export const maxDuration = 300;
 
 const MAX_VIDEO_BYTES = 500 * 1024 * 1024;
-const ALLOWED_VIDEO_EXT = new Set([".mp4", ".mov", ".webm"]);
+const ALLOWED_VIDEO_EXT = new Set([".mp4", ".mov"]);
 
 function extFromFilename(name: string): string {
   const i = name.lastIndexOf(".");
   return i >= 0 ? name.slice(i).toLowerCase() : "";
+}
+
+/** Safe basename for Storage object keys: inputs/{userId}/{timestamp}-{name} */
+function safeStorageFileSegment(originalName: string): string {
+  const base = (originalName.split(/[/\\]/).pop() ?? "video.mp4").trim();
+  const cleaned = base.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 180);
+  return cleaned.length > 0 ? cleaned : "video.mp4";
 }
 
 export async function POST(req: Request) {
@@ -66,7 +73,7 @@ export async function POST(req: Request) {
     const ext = extFromFilename(file.name);
     if (!ALLOWED_VIDEO_EXT.has(ext)) {
       return Response.json(
-        { error: "Unsupported video format. Use MP4, MOV, or WebM." },
+        { error: "Unsupported video format. Use MP4 or MOV." },
         { status: 400 },
       );
     }
@@ -145,7 +152,11 @@ export async function POST(req: Request) {
   if (inputType === "upload" && file) {
     const ext = extFromFilename(file.name) || ".mp4";
     const safeExt = ALLOWED_VIDEO_EXT.has(ext) ? ext : ".mp4";
-    const storagePath = `${userId}/${jobId}/source${safeExt}`;
+    let fileSeg = safeStorageFileSegment(file.name);
+    if (!/\.(mp4|mov)$/i.test(fileSeg)) {
+      fileSeg = `${fileSeg.replace(/\.+$/, "")}${safeExt}`;
+    }
+    const storagePath = `inputs/${userId}/${Date.now()}-${fileSeg}`;
     const buf = Buffer.from(await file.arrayBuffer());
     const { error: upErr } = await supabase.storage
       .from("videos")
@@ -160,6 +171,7 @@ export async function POST(req: Request) {
         .from("video_jobs")
         .update({
           status: "failed",
+          error_message: upErr.message,
           updated_at: new Date().toISOString(),
         })
         .eq("id", jobId);

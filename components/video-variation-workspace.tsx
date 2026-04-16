@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
@@ -34,8 +35,17 @@ type Props = {
 type JobRow = {
   id: string;
   status: VideoJobStatus;
-  variations: VideoVariationItem[] | null;
+  variations: unknown;
+  error_message?: string | null;
 };
+
+const PIPELINE_STEPS = [
+  "Queued",
+  "Transcribing",
+  "Planning",
+  "Generating",
+  "Done",
+] as const;
 
 function postVideoJobMultipart(
   form: FormData,
@@ -76,6 +86,53 @@ function postVideoJobMultipart(
   });
 }
 
+function statusToStep(status: VideoJobStatus): number {
+  switch (status) {
+    case "queued":
+    case "processing":
+      return 0;
+    case "transcribing":
+    case "analyzing":
+      return 1;
+    case "planning":
+      return 2;
+    case "generating":
+      return 3;
+    case "complete":
+      return 4;
+    default:
+      return 0;
+  }
+}
+
+function statusToPipelineProgress(status: VideoJobStatus): number {
+  switch (status) {
+    case "queued":
+    case "processing":
+      return 8;
+    case "transcribing":
+    case "analyzing":
+      return 32;
+    case "planning":
+      return 55;
+    case "generating":
+      return 78;
+    case "complete":
+      return 100;
+    default:
+      return 0;
+  }
+}
+
+function parseVariations(raw: unknown): VideoVariationItem[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((x): x is VideoVariationItem => {
+    if (typeof x !== "object" || x === null || !("url" in x)) return false;
+    const u = (x as VideoVariationItem).url;
+    return typeof u === "string" && u.length > 0;
+  });
+}
+
 export function VideoVariationWorkspace({
   user,
   creditsRemaining,
@@ -100,6 +157,7 @@ export function VideoVariationWorkspace({
   const [variations, setVariations] = useState<VideoVariationItem[]>([]);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const failedToastJobIdRef = useRef<string | null>(null);
 
   const stopPoll = () => {
     if (pollRef.current) {
@@ -108,27 +166,30 @@ export function VideoVariationWorkspace({
     }
   };
 
-  const fetchJob = useCallback(async (id: string) => {
-    const res = await fetch(`/api/video-jobs/${id}`, { credentials: "same-origin" });
-    if (!res.ok) return;
-    const row = (await res.json()) as JobRow;
-    setJobStatus(row.status);
-    const raw = row.variations;
-    const list: VideoVariationItem[] = Array.isArray(raw)
-      ? raw.filter(
-          (x): x is VideoVariationItem =>
-            typeof x === "object" &&
-            x !== null &&
-            "url" in x &&
-            typeof (x as VideoVariationItem).url === "string",
-        )
-      : [];
-    setVariations(list);
-    if (row.status === "complete" || row.status === "failed") {
-      stopPoll();
-      if (row.status === "complete") onJobFinished();
-    }
-  }, [onJobFinished]);
+  const fetchJob = useCallback(
+    async (id: string) => {
+      const res = await fetch(`/api/video-jobs/${id}`, { credentials: "same-origin" });
+      if (!res.ok) return;
+      const row = (await res.json()) as JobRow;
+      setJobStatus(row.status);
+      setVariations(parseVariations(row.variations));
+
+      if (row.status === "failed") {
+        stopPoll();
+        if (failedToastJobIdRef.current !== id) {
+          failedToastJobIdRef.current = id;
+          toast.error(row.error_message?.trim() || "Video job failed.");
+        }
+        return;
+      }
+
+      if (row.status === "complete") {
+        stopPoll();
+        onJobFinished();
+      }
+    },
+    [onJobFinished],
+  );
 
   useEffect(() => {
     if (!jobId) return;
@@ -143,6 +204,7 @@ export function VideoVariationWorkspace({
     setJobStatus(null);
     setVariations([]);
     setUploadPct(0);
+    failedToastJobIdRef.current = null;
   };
 
   const handleSubmit = async () => {
@@ -161,13 +223,21 @@ export function VideoVariationWorkspace({
       return;
     }
     if (sourceMode === "upload" && !videoFile) {
-      setError("Choose a video file (MP4, MOV, or WebM).");
+      setError("Choose a video file (MP4 or MOV).");
       return;
     }
     if (sourceMode === "url" && !youtubeUrl.trim()) {
       setError("Paste a YouTube URL.");
       return;
     }
+
+    const creditNote = creditsUnlimited
+      ? "Unlimited credits are enabled."
+      : `This will use ${VIDEO_JOB_CREDIT_COST} credits (${creditsRemaining} remaining).`;
+    const ok = window.confirm(
+      `Generate 5 variations?\n\n${creditNote}\n\nUsually 2–4 minutes once processing starts.`,
+    );
+    if (!ok) return;
 
     setSubmitting(true);
     setUploadPct(0);
@@ -186,15 +256,6 @@ export function VideoVariationWorkspace({
       }
       setJobId(id);
       setJobStatus("queued");
-      const pr = await fetch(`/api/video-jobs/${id}/process`, {
-        method: "POST",
-        credentials: "same-origin",
-      });
-      if (!pr.ok) {
-        const j = (await pr.json().catch(() => ({}))) as { error?: string };
-        throw new Error(j.error ?? "Processing failed to start.");
-      }
-      void fetchJob(id);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Request failed.";
       setError(msg);
@@ -205,25 +266,15 @@ export function VideoVariationWorkspace({
     }
   };
 
-  const pipelineSteps = [
-    "Queued",
-    "Analyzing video",
-    "Generating variations",
-    "Done",
-  ] as const;
-
   const activeStepIndex =
-    jobStatus === "queued"
-      ? 0
-      : jobStatus === "analyzing"
-        ? 1
-        : jobStatus === "generating"
-          ? 2
-          : jobStatus === "complete"
-            ? 3
-            : jobStatus === "failed"
-              ? -1
-              : -1;
+    jobStatus && jobStatus !== "failed"
+      ? statusToStep(jobStatus)
+      : -1;
+
+  const pipelineProgressValue =
+    jobStatus && jobStatus !== "failed"
+      ? statusToPipelineProgress(jobStatus)
+      : 0;
 
   return (
     <div className="space-y-10">
@@ -236,163 +287,176 @@ export function VideoVariationWorkspace({
           and get five short-form variations for TikTok and Reels.
         </p>
         <p className="text-muted-foreground text-sm">
-          Usually <strong>2–4 minutes</strong> end-to-end (stub pipeline for now).
+          Usually <strong>2–4 minutes</strong> end-to-end.
         </p>
       </section>
 
-      {!user ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Sign in required</CardTitle>
-            <CardDescription>
-              Video jobs are saved to your account and stored in Supabase. Sign
-              in with Google to continue.
-            </CardDescription>
-          </CardHeader>
-          <CardFooter>
-            <Button type="button" onClick={onOpenSignIn}>
-              Sign in
-            </Button>
-          </CardFooter>
-        </Card>
-      ) : (
-        <>
-          <section className="space-y-6">
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant={sourceMode === "upload" ? "default" : "outline"}
-                onClick={() => setSourceMode("upload")}
-                disabled={submitting}
-              >
-                Upload video
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant={sourceMode === "url" ? "default" : "outline"}
-                onClick={() => setSourceMode("url")}
-                disabled={submitting}
-              >
-                YouTube URL
-              </Button>
-            </div>
+      <>
+        <section className="space-y-6">
+          {!user ? (
+            <p className="bg-muted/40 text-foreground rounded-xl border border-border px-4 py-3 text-sm font-medium">
+              Sign in to generate video variations
+            </p>
+          ) : null}
 
-            {sourceMode === "upload" ? (
-              <div className="space-y-2">
-                <Label>Video file (MP4, MOV, WebM — max 500 MB)</Label>
-                <input
-                  ref={fileRef}
-                  type="file"
-                  accept=".mp4,.mov,.webm,video/mp4,video/quicktime,video/webm"
-                  className="sr-only"
-                  disabled={submitting}
-                  onChange={(e) => setVideoFile(e.target.files?.[0] ?? null)}
-                />
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={submitting}
-                    onClick={() => fileRef.current?.click()}
-                  >
-                    Choose file
-                  </Button>
-                  <span className="text-muted-foreground text-sm">
-                    {videoFile?.name ?? "No file selected"}
-                  </span>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <Label htmlFor="yt-url">YouTube URL</Label>
-                <input
-                  id="yt-url"
-                  type="url"
-                  className="border-input bg-background ring-ring/50 focus-visible:ring-[3px] h-12 w-full max-w-xl rounded-xl border px-4 text-base outline-none"
-                  placeholder="https://www.youtube.com/watch?v=…"
-                  value={youtubeUrl}
-                  onChange={(e) => setYoutubeUrl(e.target.value)}
-                  disabled={submitting}
-                />
-              </div>
-            )}
-
-            <div className="space-y-2">
-              <Label htmlFor="video-prompt">What do you want?</Label>
-              <textarea
-                id="video-prompt"
-                className="border-input bg-background ring-ring/50 focus-visible:ring-[3px] min-h-[160px] w-full max-w-3xl resize-y rounded-xl border px-4 py-3 text-base outline-none"
-                placeholder="Describe what you want: e.g. 'Grab the 5 most climactic moments from this vlog and create short clips I can post on TikTok to promote my YouTube'"
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                disabled={submitting}
-              />
-            </div>
-
-            {!creditsUnlimited ? (
-              <p className="text-amber-600/90 text-sm dark:text-amber-400/90">
-                This will use <strong>{VIDEO_JOB_CREDIT_COST} credits</strong>{" "}
-                ({creditsRemaining} remaining).
-              </p>
-            ) : null}
-
-            {submitting && uploadPct > 0 && uploadPct < 100 ? (
-              <div className="max-w-md space-y-1">
-                <Progress value={uploadPct}>
-                  <div className="flex justify-between text-xs">
-                    <ProgressLabel>Uploading</ProgressLabel>
-                    <ProgressValue />
-                  </div>
-                </Progress>
-              </div>
-            ) : null}
-
-            {error ? (
-              <p className="text-destructive text-sm" role="alert">
-                {error}
-              </p>
-            ) : null}
-
+          <div className="flex flex-wrap gap-2">
             <Button
               type="button"
-              size="lg"
-              className="w-full max-w-md sm:w-auto"
-              disabled={submitting}
-              onClick={() => void handleSubmit()}
+              size="sm"
+              variant={sourceMode === "upload" ? "default" : "outline"}
+              onClick={() => setSourceMode("upload")}
+              disabled={!user || submitting}
             >
-              {submitting ? "Working…" : "Generate 5 variations"}
+              Upload video
             </Button>
-          </section>
+            <Button
+              type="button"
+              size="sm"
+              variant={sourceMode === "url" ? "default" : "outline"}
+              onClick={() => setSourceMode("url")}
+              disabled={!user || submitting}
+            >
+              YouTube URL
+            </Button>
+          </div>
 
-          {jobId && jobStatus ? (
-            <section className="space-y-4 border-t border-border pt-10">
+          {sourceMode === "upload" ? (
+            <div className="space-y-2">
+              <Label>Video file (MP4 or MOV — max 500 MB)</Label>
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".mp4,.mov,video/mp4,video/quicktime"
+                className="sr-only"
+                disabled={!user || submitting}
+                onChange={(e) => setVideoFile(e.target.files?.[0] ?? null)}
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={!user || submitting}
+                  onClick={() => fileRef.current?.click()}
+                >
+                  Choose file
+                </Button>
+                <span className="text-muted-foreground text-sm">
+                  {videoFile?.name ?? "No file selected"}
+                </span>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <Label htmlFor="yt-url">YouTube URL</Label>
+              <input
+                id="yt-url"
+                type="url"
+                className="border-input bg-background ring-ring/50 focus-visible:ring-[3px] h-12 w-full max-w-xl rounded-xl border px-4 text-base outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                placeholder="https://www.youtube.com/watch?v=…"
+                value={youtubeUrl}
+                onChange={(e) => setYoutubeUrl(e.target.value)}
+                disabled={!user || submitting}
+              />
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <Label htmlFor="video-prompt">What do you want?</Label>
+            <textarea
+              id="video-prompt"
+              className="border-input bg-background ring-ring/50 focus-visible:ring-[3px] min-h-[160px] w-full max-w-3xl resize-y rounded-xl border px-4 py-3 text-base outline-none disabled:cursor-not-allowed disabled:opacity-50"
+              placeholder="Describe what you want: e.g. 'Grab the 5 most climactic moments from this vlog and create short clips I can post on TikTok to promote my YouTube'"
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              disabled={!user || submitting}
+            />
+          </div>
+
+          {user && !creditsUnlimited ? (
+            <p className="text-amber-600/90 text-sm dark:text-amber-400/90">
+              This will use <strong>{VIDEO_JOB_CREDIT_COST} credits</strong>{" "}
+              ({creditsRemaining} remaining). You will confirm before submit.
+            </p>
+          ) : null}
+
+          {submitting && uploadPct > 0 && uploadPct < 100 ? (
+            <div className="max-w-md space-y-1">
+              <Progress value={uploadPct}>
+                <div className="flex w-full justify-between text-xs">
+                  <ProgressLabel>Uploading</ProgressLabel>
+                  <ProgressValue />
+                </div>
+              </Progress>
+            </div>
+          ) : null}
+
+          {error ? (
+            <p className="text-destructive text-sm" role="alert">
+              {error}
+            </p>
+          ) : null}
+
+          <Button
+            type="button"
+            size="lg"
+            className="w-full max-w-md sm:w-auto"
+            disabled={submitting}
+            onClick={() => void handleSubmit()}
+          >
+            {submitting ? "Working…" : "Generate 5 variations"}
+          </Button>
+        </section>
+
+        {user && jobId && jobStatus ? (
+            <section className="border-border space-y-4 border-t pt-10">
               <h2 className="text-xl font-semibold">Status</h2>
-              {jobStatus === "failed" ? (
-                <p className="text-destructive text-sm">Something went wrong.</p>
-              ) : (
-                <ol className="text-muted-foreground flex flex-wrap gap-x-4 gap-y-2 text-sm">
-                  {pipelineSteps.map((label, i) => (
-                    <li
-                      key={label}
-                      className={cn(
-                        "flex items-center gap-1.5",
-                        activeStepIndex >= i && "text-foreground font-medium",
-                      )}
-                    >
-                      <span
+
+              {jobStatus !== "failed" ? (
+                <>
+                  <p className="text-muted-foreground text-sm">
+                    {PIPELINE_STEPS.join(" → ")}
+                  </p>
+                  <div className="max-w-xl space-y-2">
+                    <Progress value={pipelineProgressValue}>
+                      <div className="flex w-full justify-between text-xs">
+                        <ProgressLabel>
+                          {jobStatus === "complete"
+                            ? "Done"
+                            : PIPELINE_STEPS[Math.min(activeStepIndex, 4)]}
+                        </ProgressLabel>
+                        <ProgressValue />
+                      </div>
+                    </Progress>
+                  </div>
+                  <ol className="text-muted-foreground flex flex-wrap gap-x-3 gap-y-2 text-sm">
+                    {PIPELINE_STEPS.map((label, i) => (
+                      <li
+                        key={label}
                         className={cn(
-                          "size-2 rounded-full",
-                          activeStepIndex >= i ? "bg-primary" : "bg-muted-foreground/30",
+                          "flex items-center gap-1.5",
+                          activeStepIndex >= i && "text-foreground font-medium",
                         )}
-                      />
-                      {label}
-                    </li>
-                  ))}
-                </ol>
+                      >
+                        <span
+                          className={cn(
+                            "size-2 rounded-full",
+                            activeStepIndex >= i
+                              ? "bg-primary"
+                              : "bg-muted-foreground/30",
+                          )}
+                        />
+                        {label}
+                      </li>
+                    ))}
+                  </ol>
+                </>
+              ) : (
+                <p className="text-destructive text-sm">
+                  This job failed. Check the toast for details.
+                </p>
               )}
+
               {variations.length > 0 && jobStatus === "complete" ? (
                 <div className="space-y-4">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -413,72 +477,62 @@ export function VideoVariationWorkspace({
                     </Button>
                   </div>
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    {variations.map((v, idx) => (
-                      <Card key={`${v.label}-${idx}`} className="overflow-hidden">
-                        <CardHeader className="pb-2">
-                          <CardTitle className="text-base">
-                            {v.label}
-                          </CardTitle>
-                          <CardDescription>Variation {idx + 1}</CardDescription>
-                        </CardHeader>
-                        <CardContent className="space-y-2 px-0">
-                          <video
-                            className="aspect-video w-full bg-black object-cover"
-                            src={v.url}
-                            autoPlay
-                            muted
-                            loop
-                            playsInline
-                            controls
-                          />
-                        </CardContent>
-                        <CardFooter className="flex flex-wrap gap-2">
-                          <a
-                            href={v.url}
-                            download
-                            target="_blank"
-                            rel="noreferrer"
-                            className={cn(
-                              buttonVariants({ variant: "secondary", size: "sm" }),
-                              "inline-flex",
-                            )}
-                          >
-                            Download
-                          </a>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() =>
-                              void navigator.clipboard.writeText(
-                                `${v.label}\n${v.url}\n\n#TikTok #Shorts`,
-                              )
-                            }
-                          >
-                            Copy for TikTok
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() =>
-                              void navigator.clipboard.writeText(
-                                `${v.label}\n${v.url}\n\n#Reels #Instagram`,
-                              )
-                            }
-                          >
-                            Copy for Reels
-                          </Button>
-                        </CardFooter>
-                      </Card>
-                    ))}
+                    {variations.map((v, idx) => {
+                      const num = v.variation_number ?? idx + 1;
+                      return (
+                        <Card key={`${v.label}-${num}`} className="overflow-hidden">
+                          <CardHeader className="pb-2">
+                            <CardTitle className="text-base">{v.label}</CardTitle>
+                            <CardDescription>
+                              Variation {num}
+                              {v.style_note ? ` — ${v.style_note}` : ""}
+                            </CardDescription>
+                          </CardHeader>
+                          <CardContent className="space-y-2 px-0">
+                            <video
+                              className="aspect-9/16 max-h-[min(560px,70vh)] w-full bg-black object-cover"
+                              src={v.url}
+                              autoPlay
+                              muted
+                              loop
+                              playsInline
+                              controls
+                            />
+                          </CardContent>
+                          <CardFooter className="flex flex-wrap gap-2">
+                            <a
+                              href={v.url}
+                              download
+                              target="_blank"
+                              rel="noreferrer"
+                              className={cn(
+                                buttonVariants({ variant: "secondary", size: "sm" }),
+                                "inline-flex",
+                              )}
+                            >
+                              Download
+                            </a>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                void navigator.clipboard.writeText(v.url);
+                                toast.success("Link copied");
+                              }}
+                            >
+                              Copy link
+                            </Button>
+                          </CardFooter>
+                        </Card>
+                      );
+                    })}
                   </div>
                 </div>
               ) : null}
             </section>
           ) : null}
-        </>
-      )}
+      </>
     </div>
   );
 }

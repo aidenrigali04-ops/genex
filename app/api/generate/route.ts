@@ -428,7 +428,7 @@ export async function POST(req: Request) {
           {
             error: "profile_setup",
             message:
-              "Could not load your profile for credits. Apply the latest Supabase migration (profiles insert policy + consume_one_credit fix), then try again.",
+              "Could not load your profile for credits. Apply the latest Supabase migration (profiles insert policy + consume_credits), then try again.",
           },
           { status: 503 },
         );

@@ -1,3 +1,4 @@
+import { signVideoJobVariationsForResponse } from "@/lib/video-job-variation-signing";
 import { createClient } from "@/lib/supabase/server";
 
 export async function GET(
@@ -17,7 +18,7 @@ export async function GET(
   const { data: job, error } = await supabase
     .from("video_jobs")
     .select(
-      "id, user_id, input_type, input_url, storage_path, prompt, status, variations, created_at, updated_at",
+      "id, user_id, input_type, input_url, storage_path, prompt, status, variations, error_message, created_at, updated_at",
     )
     .eq("id", id)
     .eq("user_id", session.user.id)
@@ -32,5 +33,10 @@ export async function GET(
     return Response.json({ error: "not_found" }, { status: 404 });
   }
 
-  return Response.json(job);
+  const variationsSigned =
+    job.status === "complete"
+      ? await signVideoJobVariationsForResponse(supabase, job.variations)
+      : job.variations;
+
+  return Response.json({ ...job, variations: variationsSigned });
 }
