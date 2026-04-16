@@ -5,10 +5,11 @@
  * Uses SUPABASE_SERVICE_ROLE_KEY (admin) for Storage and video_jobs updates.
  */
 
+const path = require("path");
+require("dotenv").config({ path: path.join(__dirname, ".env") });
 require("dotenv").config();
 
 const fs = require("fs");
-const path = require("path");
 const { execSync, spawn } = require("child_process");
 
 const { createClient } = require("@supabase/supabase-js");
@@ -32,6 +33,31 @@ const openaiKey = requiredEnv("OPENAI_API_KEY");
 const supabaseAdmin = createClient(supabaseUrl, serviceKey, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
+
+/**
+ * Anon key + RLS → `video_jobs` looks empty and jobs never leave `queued`.
+ * Service role can call Auth Admin API; anon cannot.
+ */
+async function verifySupabaseServiceRole() {
+  const { error } = await supabaseAdmin.auth.admin.listUsers({
+    page: 1,
+    perPage: 1,
+  });
+  if (error) {
+    console.error("[worker] service_role check failed:", error.message);
+    console.error(
+      "[worker] Set SUPABASE_SERVICE_ROLE_KEY to the service_role JWT (Supabase → Project Settings → API), not the anon key. URL must match the web app project.",
+    );
+    throw error;
+  }
+  let host = supabaseUrl;
+  try {
+    host = new URL(supabaseUrl).hostname;
+  } catch {
+    /* ignore */
+  }
+  console.log("[worker] Supabase Admin API OK, host:", host);
+}
 
 const openai = new OpenAI({ apiKey: openaiKey });
 
@@ -559,18 +585,32 @@ async function processJob(job) {
 
 async function tick() {
   const job = await claimNextJob();
-  if (!job) return;
+  if (!job) return false;
   log(job.id, "claimed (queued → processing).");
   await processJob(job);
+  return true;
 }
 
 async function main() {
   ensureDir(TMP_ROOT);
   console.log("[worker] starting", { pollMs: POLL_MS, bucket: VIDEOS_BUCKET });
+  await verifySupabaseServiceRole();
 
+  let idleTicks = 0;
   for (;;) {
     try {
-      await tick();
+      const ran = await tick();
+      if (ran) {
+        idleTicks = 0;
+      } else {
+        idleTicks += 1;
+        if (idleTicks >= 12) {
+          console.log(
+            "[worker] idle ~60s: no `queued` jobs visible — confirm same Supabase project as Vercel/Railway web, service_role key, and `video_jobs` migration applied.",
+          );
+          idleTicks = 0;
+        }
+      }
     } catch (e) {
       console.error("[worker] tick error", e);
     }

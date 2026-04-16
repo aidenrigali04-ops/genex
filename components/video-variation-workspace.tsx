@@ -457,7 +457,7 @@ export function VideoVariationWorkspace({
                       className="max-w-2xl rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100"
                       role="status"
                     >
-                      <p className="font-medium">Still queued — the video worker is probably not running.</p>
+                      <p className="font-medium">Still queued — the worker may be down, wrong Supabase project, or using the anon key instead of service_role.</p>
                       <p className="mt-2 text-amber-900/90 dark:text-amber-50/90">
                         Jobs only move past <strong>Queued</strong> when{" "}
                         <code className="rounded bg-black/10 px-1 py-0.5 text-xs dark:bg-white/10">

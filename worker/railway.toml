@@ -1,0 +1,8 @@
+# Worker service: use Docker image (ffmpeg + yt-dlp), not Nixpacks `npm start`.
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "node worker.js"
+restartPolicyType = "ALWAYS"
