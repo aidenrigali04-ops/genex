@@ -882,6 +882,11 @@ async function processJob(job) {
         const clipDur = await ffprobeDurationSeconds(outLocal);
         await mixBackgroundMusicIfConfigured(jobId, outLocal, clipDur, hasAudio);
         const storagePath = await uploadVariationMp4(userId, jobId, n, outLocal);
+        try {
+          fs.unlinkSync(outLocal);
+        } catch {
+          /* already gone */
+        }
         variations.push({
           variation_number: n,
           label: p.label,
