@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "worker": "npm run start --prefix worker"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.52",

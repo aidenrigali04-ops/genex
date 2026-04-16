@@ -37,6 +37,7 @@ type JobRow = {
   status: VideoJobStatus;
   variations: unknown;
   error_message?: string | null;
+  updated_at?: string;
 };
 
 const PIPELINE_STEPS = [
@@ -108,8 +109,9 @@ function statusToStep(status: VideoJobStatus): number {
 function statusToPipelineProgress(status: VideoJobStatus): number {
   switch (status) {
     case "queued":
-    case "processing":
       return 8;
+    case "processing":
+      return 14;
     case "transcribing":
     case "analyzing":
       return 32;
@@ -154,10 +156,24 @@ export function VideoVariationWorkspace({
 
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<VideoJobStatus | null>(null);
+  const [jobUpdatedAt, setJobUpdatedAt] = useState<string | null>(null);
   const [variations, setVariations] = useState<VideoVariationItem[]>([]);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const failedToastJobIdRef = useRef<string | null>(null);
+  /** Re-render while queued so “stale” detection can flip without waiting on poll payload changes. */
+  const [nowTick, setNowTick] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (jobStatus !== "queued" || !jobId) return;
+    const t = setInterval(() => setNowTick(Date.now()), 4000);
+    return () => clearInterval(t);
+  }, [jobStatus, jobId]);
+
+  const staleQueued =
+    jobStatus === "queued" &&
+    jobUpdatedAt != null &&
+    nowTick - new Date(jobUpdatedAt).getTime() > 12_000;
 
   const stopPoll = () => {
     if (pollRef.current) {
@@ -172,6 +188,9 @@ export function VideoVariationWorkspace({
       if (!res.ok) return;
       const row = (await res.json()) as JobRow;
       setJobStatus(row.status);
+      setJobUpdatedAt(
+        typeof row.updated_at === "string" ? row.updated_at : null,
+      );
       setVariations(parseVariations(row.variations));
 
       if (row.status === "failed") {
@@ -202,6 +221,7 @@ export function VideoVariationWorkspace({
     stopPoll();
     setJobId(null);
     setJobStatus(null);
+    setJobUpdatedAt(null);
     setVariations([]);
     setUploadPct(0);
     failedToastJobIdRef.current = null;
@@ -275,6 +295,13 @@ export function VideoVariationWorkspace({
     jobStatus && jobStatus !== "failed"
       ? statusToPipelineProgress(jobStatus)
       : 0;
+
+  const pipelineHeadline =
+    jobStatus === "processing"
+      ? "Starting"
+      : jobStatus === "complete"
+        ? "Done"
+        : PIPELINE_STEPS[Math.min(activeStepIndex, 4)];
 
   return (
     <div className="space-y-10">
@@ -420,15 +447,50 @@ export function VideoVariationWorkspace({
                   <div className="max-w-xl space-y-2">
                     <Progress value={pipelineProgressValue}>
                       <div className="flex w-full justify-between text-xs">
-                        <ProgressLabel>
-                          {jobStatus === "complete"
-                            ? "Done"
-                            : PIPELINE_STEPS[Math.min(activeStepIndex, 4)]}
-                        </ProgressLabel>
+                        <ProgressLabel>{pipelineHeadline}</ProgressLabel>
                         <ProgressValue />
                       </div>
                     </Progress>
                   </div>
+                  {staleQueued ? (
+                    <div
+                      className="max-w-2xl rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100"
+                      role="status"
+                    >
+                      <p className="font-medium">Still queued — the video worker is probably not running.</p>
+                      <p className="mt-2 text-amber-900/90 dark:text-amber-50/90">
+                        Jobs only move past <strong>Queued</strong> when{" "}
+                        <code className="rounded bg-black/10 px-1 py-0.5 text-xs dark:bg-white/10">
+                          worker/worker.js
+                        </code>{" "}
+                        is running (ffmpeg, yt-dlp on PATH, OpenAI). From the repo root:{" "}
+                        <code className="rounded bg-black/10 px-1 py-0.5 text-xs dark:bg-white/10">
+                          {"cd worker && npm install && npm start"}
+                        </code>
+                        , or{" "}
+                        <code className="rounded bg-black/10 px-1 py-0.5 text-xs dark:bg-white/10">
+                          npm run worker
+                        </code>{" "}
+                        from the app root after{" "}
+                        <code className="rounded bg-black/10 px-1 py-0.5 text-xs dark:bg-white/10">
+                          cd worker && npm install
+                        </code>
+                        . Use{" "}
+                        <code className="rounded bg-black/10 px-1 py-0.5 text-xs dark:bg-white/10">
+                          SUPABASE_SERVICE_ROLE_KEY
+                        </code>{" "}
+                        and the same project URL as the app (
+                        <code className="rounded bg-black/10 px-1 py-0.5 text-xs dark:bg-white/10">
+                          SUPABASE_URL
+                        </code>{" "}
+                        or{" "}
+                        <code className="rounded bg-black/10 px-1 py-0.5 text-xs dark:bg-white/10">
+                          NEXT_PUBLIC_SUPABASE_URL
+                        </code>
+                        ).
+                      </p>
+                    </div>
+                  ) : null}
                   <ol className="text-muted-foreground flex flex-wrap gap-x-3 gap-y-2 text-sm">
                     {PIPELINE_STEPS.map((label, i) => (
                       <li

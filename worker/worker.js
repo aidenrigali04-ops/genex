@@ -19,7 +19,13 @@ const TMP_ROOT = "/tmp/genex";
 const VIDEOS_BUCKET = "videos";
 const ERR_MSG_MAX = 500;
 
-const supabaseUrl = requiredEnv("SUPABASE_URL");
+const supabaseUrl =
+  process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+if (!supabaseUrl) {
+  throw new Error(
+    "Missing SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL (same project URL as the Next app)",
+  );
+}
 const serviceKey = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
 const openaiKey = requiredEnv("OPENAI_API_KEY");
 
