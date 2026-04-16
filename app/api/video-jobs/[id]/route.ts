@@ -135,7 +135,10 @@ export async function PATCH(
     );
   }
 
-  const { error: upErr } = await supabase
+  // Prefer service role so the update succeeds even if RLS or PostgREST quirks block the user JWT;
+  // ownership is enforced by .eq("user_id", userId) from the verified session.
+  const db = createServiceRoleClient() ?? supabase;
+  const { data: updated, error: upErr } = await db
     .from("video_jobs")
     .update({
       storage_path: pending,
@@ -144,7 +147,9 @@ export async function PATCH(
     })
     .eq("id", jobId)
     .eq("user_id", userId)
-    .is("storage_path", null);
+    .is("storage_path", null)
+    .select("id")
+    .maybeSingle();
 
   if (upErr) {
     logVideoJob(
@@ -152,7 +157,29 @@ export async function PATCH(
       { userId, jobId, message: upErr.message },
       "error",
     );
-    return Response.json({ error: "update_failed" }, { status: 500 });
+    return Response.json(
+      {
+        error: "update_failed",
+        message: upErr.message,
+        hint:
+          /pending_storage_path|column/i.test(upErr.message)
+            ? "Apply migration 20260422120000_video_jobs_pending_storage_worker_claim.sql in Supabase SQL Editor."
+            : undefined,
+      },
+      { status: 500 },
+    );
+  }
+
+  if (!updated) {
+    logVideoJob("finalize_update_no_row", { userId, jobId }, "error");
+    return Response.json(
+      {
+        error: "update_failed",
+        message:
+          "No matching job row to update (already finalized or storage_path changed). Try refreshing status.",
+      },
+      { status: 409 },
+    );
   }
 
   logVideoJob("finalize_direct_upload", {
