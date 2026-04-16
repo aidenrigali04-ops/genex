@@ -167,6 +167,7 @@ export async function POST(req: Request) {
 
     if (upErr) {
       console.error("[video-jobs] storage upload", upErr.message);
+      const bucketMissing = /bucket not found/i.test(upErr.message);
       await supabase
         .from("video_jobs")
         .update({
@@ -176,8 +177,13 @@ export async function POST(req: Request) {
         })
         .eq("id", jobId);
       return Response.json(
-        { error: "upload_failed", message: upErr.message },
-        { status: 500 },
+        {
+          error: "upload_failed",
+          message: bucketMissing
+            ? 'Supabase Storage bucket "videos" is missing. Create a private bucket named exactly `videos` in the Supabase Dashboard (Storage → New bucket), or apply migrations that insert into storage.buckets (e.g. 20260417140000 and 20260419120000_ensure_videos_bucket_outputs_rls.sql).'
+            : upErr.message,
+        },
+        { status: bucketMissing ? 503 : 500 },
       );
     }
 
