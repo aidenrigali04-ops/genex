@@ -386,7 +386,7 @@ export async function POST(req: Request) {
 
     const { data: creditData, error: creditError } = await supabase.rpc(
       "consume_credits",
-      { p_user_id: userId, p_cost: 1 },
+      { p_cost: 1, p_user_id: userId },
     );
 
     if (creditError) {
@@ -395,7 +395,7 @@ export async function POST(req: Request) {
         creditError.message.includes("function")
       ) {
         console.error(
-          "[generate] consume_credits(uuid,int) missing — apply supabase/migrations/20260417140000_video_jobs_storage_consume_credits.sql",
+          "[generate] consume_credits(int,uuid) missing — apply supabase/migrations including 20260418210000_consume_credits_postgrest_arg_order.sql",
           creditError.message,
         );
       } else {

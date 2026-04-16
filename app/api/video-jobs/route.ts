@@ -92,7 +92,7 @@ export async function POST(req: Request) {
   if (!isUnlimitedCreditsModeServer()) {
     const { data: creditData, error: creditError } = await supabase.rpc(
       "consume_credits",
-      { p_user_id: userId, p_cost: VIDEO_JOB_CREDIT_COST },
+      { p_cost: VIDEO_JOB_CREDIT_COST, p_user_id: userId },
     );
 
     if (creditError) {
