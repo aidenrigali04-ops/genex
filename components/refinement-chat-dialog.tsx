@@ -131,20 +131,20 @@ export function RefinementChatDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[min(90vh,720px)] flex-col gap-0 overflow-hidden p-0 sm:max-w-lg">
-        <DialogHeader className="border-border shrink-0 border-b px-6 py-4 text-left">
-          <DialogTitle>Refinement chat</DialogTitle>
+      <DialogContent className="flex max-h-[min(90vh,720px)] flex-col gap-0 overflow-hidden border-[#E8E4F8] bg-white p-0 sm:max-w-lg dark:border-white/10 dark:bg-zinc-950">
+        <DialogHeader className="shrink-0 border-b border-[#E8E4F8] bg-[#FAFAFC] px-6 py-4 text-left dark:border-white/10 dark:bg-zinc-900/50">
+          <DialogTitle className="text-[#0F0A1E] dark:text-white">Refinement chat</DialogTitle>
           <DialogDescription>
             A few quick questions so we can tailor this run. {inputSummary}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="text-muted-foreground shrink-0 border-b border-border px-6 py-2 text-xs font-medium">
+        <div className="text-muted-foreground shrink-0 border-b border-[#E8E4F8] px-6 py-2 text-xs font-medium dark:border-white/10">
           Step {Math.min(step + 1, totalSteps)} of {totalSteps}
         </div>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-4">
-          <div className="bg-muted/50 rounded-xl border border-border px-3 py-2 text-xs">
+          <div className="rounded-xl border border-[#E8E4F8] bg-[#F0EFFE]/60 px-3 py-2 text-xs dark:border-white/10 dark:bg-zinc-900/40">
             <span className="text-muted-foreground">Input: </span>
             {inputSummary}
           </div>
@@ -152,7 +152,7 @@ export function RefinementChatDialog({
           {!isSummary && currentDef ? (
             <>
               <div className="flex justify-start">
-                <div className="bg-primary/12 text-foreground max-w-[95%] rounded-2xl rounded-bl-md px-4 py-3 text-sm leading-relaxed">
+                <div className="max-w-[95%] rounded-2xl rounded-bl-md bg-[#6C47FF]/10 px-4 py-3 text-sm leading-relaxed text-[#0F0A1E] dark:bg-violet-950/40 dark:text-zinc-100">
                   {currentDef.message}
                 </div>
               </div>
@@ -162,7 +162,7 @@ export function RefinementChatDialog({
                   <Label htmlFor="refine-custom">Your answer</Label>
                   <textarea
                     id="refine-custom"
-                    className="border-input bg-background ring-ring/50 focus-visible:ring-[3px] min-h-[88px] w-full resize-y rounded-lg border px-3 py-2 text-sm outline-none"
+                    className="min-h-[88px] w-full resize-y rounded-lg border border-[#E8E4F8] bg-white px-3 py-2 text-sm text-[#0F0A1E] outline-none ring-[#6C47FF]/25 focus-visible:ring-[3px] dark:border-white/10 dark:bg-zinc-950"
                     value={customDraft}
                     onChange={(e) => setCustomDraft(e.target.value)}
                     placeholder="Type your answer…"
@@ -209,7 +209,7 @@ export function RefinementChatDialog({
           ) : (
             <>
               <div className="flex justify-start">
-                <div className="bg-primary/12 text-foreground max-w-[95%] rounded-2xl rounded-bl-md px-4 py-3 text-sm leading-relaxed">
+                <div className="max-w-[95%] rounded-2xl rounded-bl-md bg-[#6C47FF]/10 px-4 py-3 text-sm leading-relaxed text-[#0F0A1E] dark:bg-violet-950/40 dark:text-zinc-100">
                   Generating for{" "}
                   <strong>{platformLabels(platformIds)}</strong>
                   {summaryText ? (
@@ -229,7 +229,7 @@ export function RefinementChatDialog({
                 <Label htmlFor="refine-niche">Niche or account theme (optional)</Label>
                 <input
                   id="refine-niche"
-                  className="border-input bg-background ring-ring/50 focus-visible:ring-[3px] h-10 w-full rounded-lg border px-3 text-sm outline-none"
+                  className="h-10 w-full rounded-lg border border-[#E8E4F8] bg-white px-3 text-sm outline-none ring-[#6C47FF]/25 focus-visible:ring-[3px] dark:border-white/10 dark:bg-zinc-950"
                   value={summaryNiche}
                   onChange={(e) => setSummaryNiche(e.target.value)}
                   placeholder="e.g. Islamic content, B2B SaaS, comedy…"

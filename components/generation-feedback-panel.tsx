@@ -206,22 +206,22 @@ export function GenerationFeedbackPanel({
   const chips = mode === "video" ? VIDEO_CHIPS : CLIP_CHIPS;
 
   return (
-    <section className="border-border mt-10 space-y-4 border-t pt-8">
+    <section className="mt-10 space-y-4 border-t border-[#E8E4F8] pt-8 dark:border-white/10">
       <div>
-        <h3 className="text-lg font-semibold">AI Feedback</h3>
+        <h3 className="text-lg font-semibold text-[#0F0A1E] dark:text-white">AI Feedback</h3>
         <p className="text-muted-foreground text-sm">
           Ask the strategist about these results. Each message uses{" "}
           <strong>1 credit</strong> (signed-in users).
         </p>
         {ctxSummary ? (
-          <p className="text-muted-foreground mt-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs">
-            <span className="font-medium text-foreground">Refinement used: </span>
+          <p className="text-muted-foreground mt-2 rounded-lg border border-[#E8E4F8] bg-[#F0EFFE]/60 px-3 py-2 text-xs dark:border-white/10 dark:bg-zinc-900/40">
+            <span className="font-medium text-[#0F0A1E] dark:text-zinc-100">Refinement used: </span>
             {ctxSummary}
           </p>
         ) : null}
       </div>
 
-      <div className="flex max-h-64 flex-col gap-3 overflow-y-auto rounded-xl border border-border bg-muted/20 p-3">
+      <div className="flex max-h-64 flex-col gap-3 overflow-y-auto rounded-xl border border-[#E8E4F8] bg-[#FAFAFC] p-3 dark:border-white/10 dark:bg-zinc-900/30">
         {messages.length === 0 ? (
           <p className="text-muted-foreground text-sm">
             Ask anything about pacing, hooks, platform fit, or rewrites.
@@ -233,8 +233,8 @@ export function GenerationFeedbackPanel({
               className={cn(
                 "max-w-[95%] rounded-2xl px-3 py-2 text-sm leading-relaxed",
                 m.role === "user"
-                  ? "bg-primary text-primary-foreground ml-auto rounded-br-md"
-                  : "bg-background border-border mr-auto rounded-bl-md border",
+                  ? "ml-auto rounded-br-md bg-[#6C47FF] text-white"
+                  : "mr-auto rounded-bl-md border border-[#E8E4F8] bg-white text-[#0F0A1E] dark:border-white/10 dark:bg-zinc-950 dark:text-zinc-100",
               )}
             >
               <pre className="font-sans whitespace-pre-wrap wrap-break-word">
@@ -252,7 +252,7 @@ export function GenerationFeedbackPanel({
             type="button"
             size="sm"
             variant="outline"
-            className="rounded-full text-xs"
+            className="rounded-full border-[#E8E4F8] text-xs hover:border-[#C4BAF0] dark:border-white/10"
             disabled={streaming}
             onClick={() => void sendFeedback(c)}
           >
@@ -285,7 +285,7 @@ export function GenerationFeedbackPanel({
         <Label htmlFor="feedback-input">Ask AI about these results…</Label>
         <textarea
           id="feedback-input"
-          className="border-input bg-background ring-ring/50 focus-visible:ring-[3px] min-h-[88px] w-full resize-y rounded-lg border px-3 py-2 text-sm outline-none"
+          className="min-h-[88px] w-full resize-y rounded-lg border border-[#E8E4F8] bg-white px-3 py-2 text-sm text-[#0F0A1E] outline-none ring-[#6C47FF]/25 focus-visible:ring-[3px] dark:border-white/10 dark:bg-zinc-950 dark:text-zinc-100"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           disabled={streaming}
@@ -293,6 +293,7 @@ export function GenerationFeedbackPanel({
         />
         <Button
           type="button"
+          className="rounded-full bg-[#6C47FF] font-semibold text-white hover:bg-[#5835E8] genex-cta-glow"
           disabled={streaming || !input.trim()}
           onClick={() => void sendFeedback(input)}
         >

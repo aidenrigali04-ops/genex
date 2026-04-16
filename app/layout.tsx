@@ -1,22 +1,19 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Inter } from "next/font/google";
 import { Toaster } from "sonner";
 
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const inter = Inter({
+  variable: "--font-inter",
   subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
-  title: "genex",
-  description: "Next.js, shadcn/ui, Supabase, and Vercel AI SDK",
+  title: "Genex — Viral short-form clips",
+  description:
+    "Upload a video or paste a URL, describe your edit, and get five ready-to-post variations for TikTok, Reels, and Shorts.",
 };
 
 export default function RootLayout({
@@ -25,13 +22,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className={`dark ${geistSans.variable} ${geistMono.variable} font-sans h-full antialiased`}
-    >
-      <body className="min-h-full flex flex-col">
+    <html lang="en" className={`${inter.variable} font-sans h-full antialiased`}>
+      <body className="min-h-full flex flex-col bg-[#F0EFFE] text-[#0F0A1E] dark:bg-zinc-950 dark:text-zinc-50">
         {children}
-        <Toaster richColors closeButton />
+        <Toaster richColors closeButton theme="light" />
       </body>
     </html>
   );

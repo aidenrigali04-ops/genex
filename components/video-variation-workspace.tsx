@@ -13,6 +13,7 @@ import type { ReactNode } from "react";
 import { toast } from "sonner";
 
 import { GenerationFeedbackPanel } from "@/components/generation-feedback-panel";
+import { SettingsRail } from "@/components/genex/settings-rail";
 import { RefinementChatDialog } from "@/components/refinement-chat-dialog";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
@@ -23,6 +24,12 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import {
   Progress,
@@ -44,6 +51,8 @@ type Props = {
   onOpenBuy: () => void;
   onOpenSignIn: () => void;
   onJobFinished: () => void;
+  /** When embedded in the global landing shell, omit the internal marketing hero. */
+  hideMarketingTitle?: boolean;
 };
 
 type JobRow = {
@@ -429,7 +438,6 @@ function VariationHoverVideo({ src, instanceId }: { src: string; instanceId: str
         ref={ref}
         src={src}
         poster={posterUrl ?? undefined}
-        crossOrigin="anonymous"
         className="aspect-9/16 max-h-[min(560px,70vh)] w-full transform-gpu bg-black object-cover"
         muted
         playsInline
@@ -457,6 +465,7 @@ export function VideoVariationWorkspace({
   onOpenBuy,
   onOpenSignIn,
   onJobFinished,
+  hideMarketingTitle = false,
 }: Props) {
   const [sourceMode, setSourceMode] = useState<"upload" | "url">("upload");
   const [prompt, setPrompt] = useState("");
@@ -480,8 +489,14 @@ export function VideoVariationWorkspace({
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const failedToastJobIdRef = useRef<string | null>(null);
+  /** Parent often passes an inline callback; keep stable so polling `useEffect` does not reset every render. */
+  const onJobFinishedRef = useRef(onJobFinished);
+  useEffect(() => {
+    onJobFinishedRef.current = onJobFinished;
+  }, [onJobFinished]);
   /** True while a direct-upload job is queued but `storage_path` is not linked yet (worker cannot claim). */
   const [jobAwaitingUploadLink, setJobAwaitingUploadLink] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const stopPoll = () => {
     if (pollRef.current) {
@@ -541,10 +556,10 @@ export function VideoVariationWorkspace({
         if (row.error_message?.trim()) {
           toast.info(row.error_message.trim());
         }
-        onJobFinished();
+        onJobFinishedRef.current();
       }
     },
-    [onJobFinished],
+    [],
   );
 
   useEffect(() => {
@@ -649,170 +664,203 @@ export function VideoVariationWorkspace({
         ? "Done"
         : PIPELINE_STEPS[Math.min(activeStepIndex, 4)];
 
+  const creditsLineForRail = creditsUnlimited
+    ? "Unlimited (test)"
+    : `${creditsRemaining} left`;
+
+  const settingsRail = (
+    <SettingsRail
+      mode="video"
+      platformLabel="TikTok · Shorts · Reels"
+      creditsLine={creditsLineForRail}
+    />
+  );
+
   return (
-    <div className="space-y-10">
-      <section className="space-y-3">
-        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-          Video-first AI editor
-        </h1>
-        <p className="text-muted-foreground max-w-2xl text-base sm:text-lg">
-          Upload a video or paste YouTube, describe the edit in plain English,
-          and get five short-form variations for TikTok and Reels.
-        </p>
-        <p className="text-muted-foreground text-sm">
-          Usually <strong>2–4 minutes</strong> end-to-end.
-        </p>
-      </section>
-
-      <>
-        <section className="space-y-6">
-          {!user ? (
-            <p className="bg-muted/40 text-foreground rounded-xl border border-border px-4 py-3 text-sm font-medium">
-              Sign in to generate video variations
-            </p>
-          ) : null}
-
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              size="sm"
-              variant={sourceMode === "upload" ? "default" : "outline"}
-              onClick={() => setSourceMode("upload")}
-              disabled={!user || submitting}
-            >
-              Upload video
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant={sourceMode === "url" ? "default" : "outline"}
-              onClick={() => setSourceMode("url")}
-              disabled={!user || submitting}
-            >
-              YouTube URL
-            </Button>
-          </div>
-
-          {sourceMode === "upload" ? (
-            <div className="space-y-2">
-              <Label>Video file (MP4 or MOV — max 500 MB)</Label>
-              <input
-                ref={fileRef}
-                type="file"
-                accept=".mp4,.mov,video/mp4,video/quicktime"
-                className="sr-only"
-                disabled={!user || submitting}
-                onChange={(e) => setVideoFile(e.target.files?.[0] ?? null)}
-              />
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={!user || submitting}
-                  onClick={() => fileRef.current?.click()}
-                >
-                  Choose file
-                </Button>
-                <span className="text-muted-foreground text-sm">
-                  {videoFile?.name ?? "No file selected"}
-                </span>
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              <Label htmlFor="yt-url">YouTube URL</Label>
-              <input
-                id="yt-url"
-                type="url"
-                className="border-input bg-background ring-ring/50 focus-visible:ring-[3px] h-12 w-full max-w-xl rounded-xl border px-4 text-base outline-none disabled:cursor-not-allowed disabled:opacity-50"
-                placeholder="https://www.youtube.com/watch?v=…"
-                value={youtubeUrl}
-                onChange={(e) => setYoutubeUrl(e.target.value)}
-                disabled={!user || submitting}
-              />
-            </div>
-          )}
-
-          <div className="space-y-2">
-            <Label htmlFor="video-prompt">What do you want?</Label>
-            <textarea
-              id="video-prompt"
-              className="border-input bg-background ring-ring/50 focus-visible:ring-[3px] min-h-[160px] w-full max-w-3xl resize-y rounded-xl border px-4 py-3 text-base outline-none disabled:cursor-not-allowed disabled:opacity-50"
-              placeholder="Describe what you want: e.g. 'Grab the 5 most climactic moments from this vlog and create short clips I can post on TikTok to promote my YouTube'"
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              disabled={!user || submitting}
-            />
-          </div>
-
-          {user && !creditsUnlimited ? (
-            <p className="text-amber-600/90 text-sm dark:text-amber-400/90">
-              This will use <strong>{VIDEO_JOB_CREDIT_COST} credits</strong>{" "}
-              ({creditsRemaining} remaining). You will confirm before submit.
-            </p>
-          ) : null}
-
-          {submitting && uploadPct > 0 && uploadPct < 99 ? (
-            <div className="max-w-md space-y-1">
-              <Progress value={uploadPct}>
-                <div className="flex w-full justify-between text-xs">
-                  <ProgressLabel>Uploading to app</ProgressLabel>
-                  <ProgressValue />
-                </div>
-              </Progress>
-            </div>
-          ) : null}
-          {submitting && finishingOnServer ? (
-            <div className="max-w-md space-y-2">
-              <Progress value={99}>
-                <div className="flex w-full justify-between text-xs">
-                  <ProgressLabel>Finishing on server</ProgressLabel>
-                  <ProgressValue />
-                </div>
-              </Progress>
-              <p className="text-muted-foreground text-xs">
-                Large files upload straight to storage, then the app links the job. That step
-                can take a bit before status updates below.
-              </p>
-            </div>
-          ) : null}
-
-          {error ? (
-            <p className="text-destructive text-sm" role="alert">
-              {error}
-            </p>
-          ) : null}
-
-          <Button
-            type="button"
-            size="lg"
-            className="w-full max-w-md sm:w-auto"
-            disabled={submitting}
-            onClick={() => handleSubmit()}
-          >
-            {submitting ? "Working…" : "Generate 5 variations"}
-          </Button>
+    <div className={cn(hideMarketingTitle ? "space-y-6" : "space-y-10")}>
+      {!hideMarketingTitle ? (
+        <section className="space-y-3">
+          <h1 className="text-3xl font-semibold tracking-tight text-[#0F0A1E] sm:text-4xl dark:text-white">
+            Video-first AI editor
+          </h1>
+          <p className="text-muted-foreground max-w-2xl text-base sm:text-lg">
+            Upload a video or paste YouTube, describe the edit in plain English,
+            and get five short-form variations for TikTok and Reels.
+          </p>
+          <p className="text-muted-foreground text-sm">
+            Usually <strong>2–4 minutes</strong> end-to-end.
+          </p>
         </section>
+      ) : null}
 
-        <RefinementChatDialog
-          open={refinementOpen}
-          onOpenChange={setRefinementOpen}
-          kind="video_variations"
-          platformIds={VIDEO_REFINEMENT_PLATFORMS}
-          inputSummary={
-            sourceMode === "upload"
-              ? videoFile
-                ? `Upload: ${videoFile.name}`
-                : "Video upload"
-              : `YouTube: ${youtubeUrl.trim() || "…"}`
-          }
-          onConfirm={(ctx) => void submitWithRefinementContext(ctx)}
-        />
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[240px_minmax(0,1fr)_208px]">
+        <div className="space-y-6 lg:min-w-0">
+          <div className="flex justify-end lg:hidden">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="rounded-full border-[#E8E4F8]"
+              onClick={() => setSettingsOpen(true)}
+            >
+              Settings
+            </Button>
+          </div>
 
-        {user && jobId && jobStatus ? (
-            <section className="border-border space-y-4 border-t pt-10">
-              <h2 className="text-xl font-semibold">Status</h2>
+          <section className="space-y-6">
+            {!user ? (
+              <p className="rounded-xl border border-[#E8E4F8] bg-[#FAFAFC] px-4 py-3 text-sm font-medium text-[#0F0A1E] dark:border-white/10 dark:bg-zinc-900/60 dark:text-zinc-100">
+                Sign in to generate video variations
+              </p>
+            ) : null}
+
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant={sourceMode === "upload" ? "default" : "outline"}
+                className={cn(
+                  sourceMode === "upload" &&
+                    "bg-[#6C47FF] text-white hover:bg-[#5835E8] genex-cta-glow",
+                )}
+                onClick={() => setSourceMode("upload")}
+                disabled={!user || submitting}
+              >
+                Upload video
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={sourceMode === "url" ? "default" : "outline"}
+                className={cn(
+                  sourceMode === "url" &&
+                    "bg-[#6C47FF] text-white hover:bg-[#5835E8] genex-cta-glow",
+                )}
+                onClick={() => setSourceMode("url")}
+                disabled={!user || submitting}
+              >
+                YouTube URL
+              </Button>
+            </div>
+
+            {sourceMode === "upload" ? (
+              <div className="space-y-2">
+                <Label>Video file (MP4 or MOV — max 500 MB)</Label>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept=".mp4,.mov,video/mp4,video/quicktime"
+                  className="sr-only"
+                  disabled={!user || submitting}
+                  onChange={(e) => setVideoFile(e.target.files?.[0] ?? null)}
+                />
+                <div className="rounded-2xl border border-dashed border-[#C4BAF0] bg-[#FAFAFC] p-4 dark:border-violet-500/25 dark:bg-zinc-900/40">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={!user || submitting}
+                      onClick={() => fileRef.current?.click()}
+                    >
+                      Choose file
+                    </Button>
+                    <span className="text-muted-foreground text-sm">
+                      {videoFile?.name ?? "No file selected"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Label htmlFor="yt-url">YouTube URL</Label>
+                <input
+                  id="yt-url"
+                  type="url"
+                  className="h-12 w-full max-w-xl rounded-xl border border-[#E8E4F8] bg-white px-4 text-base outline-none ring-[#6C47FF]/25 focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-zinc-950"
+                  placeholder="https://www.youtube.com/watch?v=…"
+                  value={youtubeUrl}
+                  onChange={(e) => setYoutubeUrl(e.target.value)}
+                  disabled={!user || submitting}
+                />
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <Label htmlFor="video-prompt">What do you want?</Label>
+              <textarea
+                id="video-prompt"
+                className="min-h-[160px] w-full max-w-3xl resize-y rounded-xl border border-[#E8E4F8] bg-white px-4 py-3 text-base outline-none ring-[#6C47FF]/25 focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-zinc-950"
+                placeholder="Describe what you want: e.g. 'Grab the 5 most climactic moments from this vlog and create short clips I can post on TikTok to promote my YouTube'"
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                disabled={!user || submitting}
+              />
+            </div>
+
+            {user && !creditsUnlimited ? (
+              <p className="text-sm text-amber-700 dark:text-amber-400/90">
+                This will use <strong>{VIDEO_JOB_CREDIT_COST} credits</strong>{" "}
+                ({creditsRemaining} remaining). You will confirm before submit.
+              </p>
+            ) : null}
+
+            {submitting && uploadPct > 0 && uploadPct < 99 ? (
+              <div className="max-w-md space-y-1">
+                <Progress value={uploadPct}>
+                  <div className="flex w-full justify-between text-xs">
+                    <ProgressLabel>Uploading to app</ProgressLabel>
+                    <ProgressValue />
+                  </div>
+                </Progress>
+              </div>
+            ) : null}
+            {submitting && finishingOnServer ? (
+              <div className="max-w-md space-y-2">
+                <Progress value={99}>
+                  <div className="flex w-full justify-between text-xs">
+                    <ProgressLabel>Finishing on server</ProgressLabel>
+                    <ProgressValue />
+                  </div>
+                </Progress>
+                <p className="text-muted-foreground text-xs">
+                  Large files upload straight to storage, then the app links the job. That step
+                  can take a bit before status updates below.
+                </p>
+              </div>
+            ) : null}
+
+            {error ? (
+              <p className="text-destructive text-sm" role="alert">
+                {error}
+              </p>
+            ) : null}
+
+            <Button
+              type="button"
+              size="lg"
+              className="w-full rounded-xl bg-[#6C47FF] font-semibold text-white shadow-md hover:bg-[#5835E8] genex-cta-glow sm:w-auto"
+              disabled={submitting}
+              onClick={() => handleSubmit()}
+            >
+              {submitting ? "Working…" : "Generate 5 variations"}
+            </Button>
+          </section>
+        </div>
+
+        <div className="min-w-0 space-y-6 lg:min-w-0">
+          <div className="flex justify-center lg:justify-start">
+            <span
+              id="video-output"
+              className="inline-flex items-center gap-2 rounded-full border border-[#E8E4F8] bg-white px-3 py-1 text-xs font-medium text-[#6B6B8A] dark:border-white/10 dark:bg-zinc-900"
+            >
+              English · Casual tone
+            </span>
+          </div>
+
+          {user && jobId && jobStatus ? (
+            <section className="space-y-4 border-t border-[#E8E4F8] pt-6 dark:border-white/10">
+              <h2 className="text-xl font-semibold text-[#0F0A1E] dark:text-white">Status</h2>
 
               {jobStatus !== "failed" ? (
                 <>
@@ -858,7 +906,7 @@ export function VideoVariationWorkspace({
                           className={cn(
                             "size-2 rounded-full",
                             activeStepIndex >= i
-                              ? "bg-primary"
+                              ? "bg-[#6C47FF]"
                               : "bg-muted-foreground/30",
                           )}
                         />
@@ -877,11 +925,14 @@ export function VideoVariationWorkspace({
                 <VariationPreviewRegistryProvider>
                   <div className="space-y-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <h3 className="text-lg font-semibold">Your variations</h3>
+                      <h3 className="text-lg font-semibold text-[#0F0A1E] dark:text-white">
+                        Your variations
+                      </h3>
                       <Button
                         type="button"
                         variant="outline"
                         size="sm"
+                        className="rounded-full border-[#E8E4F8]"
                         onClick={() => {
                           resetJobUi();
                           setPrompt("");
@@ -900,7 +951,7 @@ export function VideoVariationWorkspace({
                         return (
                           <Card
                             key={v.url ? `${v.url}::${num}` : `${jobId}-var-${idx}-${num}`}
-                            className="overflow-hidden"
+                            className="overflow-hidden border-[#E8E4F8] shadow-sm transition duration-200 hover:scale-[1.02] hover:shadow-md dark:border-white/10"
                           >
                             <CardHeader className="pb-2">
                               <CardTitle className="text-base">{v.label}</CardTitle>
@@ -978,8 +1029,42 @@ export function VideoVariationWorkspace({
                 </VariationPreviewRegistryProvider>
               ) : null}
             </section>
-          ) : null}
-      </>
+          ) : (
+            <p className="text-muted-foreground text-sm lg:max-w-md">
+              Submit a job to see pipeline status and variations here.
+            </p>
+          )}
+        </div>
+
+        <div className="hidden lg:block lg:min-w-0">{settingsRail}</div>
+      </div>
+
+      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <DialogContent
+          showCloseButton
+          className="fixed right-auto bottom-0 left-1/2 top-auto max-h-[min(88dvh,640px)] w-full max-w-full translate-x-[-50%] translate-y-0 overflow-y-auto rounded-t-2xl rounded-b-none border-[#E8E4F8] p-6 sm:max-w-md"
+        >
+          <DialogHeader>
+            <DialogTitle>Settings</DialogTitle>
+          </DialogHeader>
+          {settingsRail}
+        </DialogContent>
+      </Dialog>
+
+      <RefinementChatDialog
+        open={refinementOpen}
+        onOpenChange={setRefinementOpen}
+        kind="video_variations"
+        platformIds={VIDEO_REFINEMENT_PLATFORMS}
+        inputSummary={
+          sourceMode === "upload"
+            ? videoFile
+              ? `Upload: ${videoFile.name}`
+              : "Video upload"
+            : `YouTube: ${youtubeUrl.trim() || "…"}`
+        }
+        onConfirm={(ctx) => void submitWithRefinementContext(ctx)}
+      />
     </div>
   );
 }
