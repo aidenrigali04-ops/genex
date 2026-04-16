@@ -10,6 +10,22 @@ import { VIDEO_JOB_CREDIT_COST } from "@/lib/video-job-cost";
 
 export const maxDuration = 300;
 
+function pickGenerationContextFromBody(
+  body: Record<string, unknown>,
+): unknown | null {
+  const g = body.generationContext;
+  if (g == null || g === "") return null;
+  if (typeof g === "object") return g;
+  if (typeof g === "string" && g.trim()) {
+    try {
+      return JSON.parse(g) as unknown;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 type CreditRow = { success: boolean; reason: string | null; remaining: number };
 
 async function consumeCreditsIfNeeded(
@@ -95,6 +111,8 @@ async function handleJsonUrlJob(
   const credits = await consumeCreditsIfNeeded(supabase, userId);
   if (!credits.ok) return credits.response;
 
+  const generationContext = pickGenerationContextFromBody(body);
+
   const { data: job, error: insertError } = await supabase
     .from("video_jobs")
     .insert({
@@ -104,6 +122,7 @@ async function handleJsonUrlJob(
       storage_path: null,
       prompt,
       status: "queued",
+      generation_context: generationContext,
     })
     .select("id, status, created_at")
     .single();
@@ -115,7 +134,12 @@ async function handleJsonUrlJob(
       "error",
     );
     return Response.json(
-      { error: "Could not create job. Apply the latest Supabase migration." },
+      {
+        error: "Could not create job. Apply the latest Supabase migration.",
+        message: insertError?.message?.includes("generation_context")
+          ? "Apply migration 20260424100000_generation_context.sql (generation_context column)."
+          : undefined,
+      },
       { status: 500 },
     );
   }
@@ -161,6 +185,8 @@ async function handlePrepareDirectUpload(
   const credits = await consumeCreditsIfNeeded(supabase, userId);
   if (!credits.ok) return credits.response;
 
+  const generationContext = pickGenerationContextFromBody(body);
+
   const { storagePath } = buildVideoInputStoragePath(userId, filename);
 
   const { data: job, error: insertError } = await supabase
@@ -173,6 +199,7 @@ async function handlePrepareDirectUpload(
       pending_storage_path: storagePath,
       prompt,
       status: "queued",
+      generation_context: generationContext,
     })
     .select("id, status, created_at")
     .single();
@@ -188,7 +215,9 @@ async function handlePrepareDirectUpload(
         error: "Could not create job.",
         message: insertError?.message?.includes("pending_storage_path")
           ? "Apply migration 20260422120000_video_jobs_pending_storage_worker_claim.sql (pending_storage_path + worker claim)."
-          : insertError?.message,
+          : insertError?.message?.includes("generation_context")
+            ? "Apply migration 20260424100000_generation_context.sql (generation_context column)."
+            : insertError?.message,
       },
       { status: 500 },
     );
@@ -327,6 +356,16 @@ export async function POST(req: Request) {
   const credits = await consumeCreditsIfNeeded(supabase, userId);
   if (!credits.ok) return credits.response;
 
+  let multipartGenerationContext: unknown | null = null;
+  const gcMultipart = form.get("generationContext");
+  if (typeof gcMultipart === "string" && gcMultipart.trim()) {
+    try {
+      multipartGenerationContext = JSON.parse(gcMultipart) as unknown;
+    } catch {
+      multipartGenerationContext = null;
+    }
+  }
+
   const { data: job, error: insertError } = await supabase
     .from("video_jobs")
     .insert({
@@ -336,6 +375,7 @@ export async function POST(req: Request) {
       storage_path: null,
       prompt,
       status: "queued",
+      generation_context: multipartGenerationContext,
     })
     .select("id, status, created_at")
     .single();
@@ -347,7 +387,12 @@ export async function POST(req: Request) {
       "error",
     );
     return Response.json(
-      { error: "Could not create job. Apply the latest Supabase migration." },
+      {
+        error: "Could not create job. Apply the latest Supabase migration.",
+        message: insertError?.message?.includes("generation_context")
+          ? "Apply migration 20260424100000_generation_context.sql (generation_context column)."
+          : undefined,
+      },
       { status: 500 },
     );
   }

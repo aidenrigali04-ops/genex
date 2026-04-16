@@ -12,6 +12,8 @@ import {
 import type { ReactNode } from "react";
 import { toast } from "sonner";
 
+import { GenerationFeedbackPanel } from "@/components/generation-feedback-panel";
+import { RefinementChatDialog } from "@/components/refinement-chat-dialog";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Card,
@@ -29,6 +31,9 @@ import {
 } from "@/components/ui/progress";
 import type { VideoVariationItem, VideoJobStatus } from "@/lib/video-job-types";
 import { VIDEO_JOB_CREDIT_COST } from "@/lib/video-job-cost";
+import type { GenerationContextV1 } from "@/lib/generation-context";
+import { isGenerationContextV1 } from "@/lib/generation-context";
+import type { PlatformId } from "@/lib/platforms";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -47,6 +52,7 @@ type JobRow = {
   variations: unknown;
   error_message?: string | null;
   updated_at?: string;
+  generation_context?: unknown;
 };
 
 const PIPELINE_STEPS = [
@@ -57,9 +63,16 @@ const PIPELINE_STEPS = [
   "Done",
 ] as const;
 
+const VIDEO_REFINEMENT_PLATFORMS: PlatformId[] = [
+  "tiktok",
+  "youtube_shorts",
+  "clip_package",
+];
+
 async function postVideoJobUrlJson(params: {
   prompt: string;
   youtubeUrl: string;
+  generationContext?: GenerationContextV1 | null;
 }): Promise<{ id: string; remainingCredits?: number }> {
   const res = await fetch("/api/video-jobs", {
     method: "POST",
@@ -69,6 +82,9 @@ async function postVideoJobUrlJson(params: {
       inputType: "url",
       prompt: params.prompt,
       youtubeUrl: params.youtubeUrl,
+      ...(params.generationContext
+        ? { generationContext: params.generationContext }
+        : {}),
     }),
   });
   const data = (await res.json()) as {
@@ -137,6 +153,7 @@ function putVideoToSignedUploadUrl(
 async function submitUploadJobViaDirectStorage(params: {
   file: File;
   prompt: string;
+  generationContext?: GenerationContextV1 | null;
   onProgress: (pct: number) => void;
   onUploadFullySent?: () => void;
 }): Promise<{ id: string; remainingCredits?: number }> {
@@ -151,6 +168,9 @@ async function submitUploadJobViaDirectStorage(params: {
       filename: params.file.name,
       bytes: params.file.size,
       contentType: params.file.type || "video/mp4",
+      ...(params.generationContext
+        ? { generationContext: params.generationContext }
+        : {}),
     }),
   });
   const prep = (await prepRes.json()) as {
@@ -241,6 +261,17 @@ function statusToPipelineProgress(status: VideoJobStatus): number {
   }
 }
 
+function formatVariationsForFeedback(list: VideoVariationItem[]): string {
+  return list
+    .map((v) => {
+      const n = v.variation_number ?? 0;
+      const err = typeof v.error === "string" && v.error ? `Error: ${v.error}` : "";
+      const url = typeof v.url === "string" && v.url ? `Output: ${v.url}` : "";
+      return `Variation ${n}: ${v.label}\nNotes: ${v.style_note ?? ""}\n${err || url}`;
+    })
+    .join("\n\n---\n\n");
+}
+
 function parseVariations(raw: unknown): VideoVariationItem[] {
   if (!Array.isArray(raw)) return [];
   return raw.filter((x): x is VideoVariationItem => {
@@ -308,8 +339,10 @@ function VariationHoverVideo({ src, instanceId }: { src: string; instanceId: str
     return () => preview?.unregister(instanceId);
   }, [preview, instanceId, pauseStill]);
 
+  /* Poster resets when `src` changes; initial null is intentional before captureStill. */
   useEffect(() => {
     posterDoneRef.current = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset poster when video src changes
     setPosterUrl(null);
     const el = ref.current;
     if (!el) return;
@@ -438,6 +471,9 @@ export function VideoVariationWorkspace({
   const [variations, setVariations] = useState<VideoVariationItem[]>([]);
   /** Server `error_message` when status is complete but some variations failed. */
   const [jobPartialNotice, setJobPartialNotice] = useState<string | null>(null);
+  const [refinementOpen, setRefinementOpen] = useState(false);
+  const [jobGenerationContext, setJobGenerationContext] =
+    useState<GenerationContextV1 | null>(null);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const failedToastJobIdRef = useRef<string | null>(null);
@@ -490,6 +526,8 @@ export function VideoVariationWorkspace({
           ? row.error_message.trim()
           : null,
       );
+      const gc = row.generation_context;
+      setJobGenerationContext(isGenerationContextV1(gc) ? gc : null);
 
       if (row.status === "failed") {
         stopPoll();
@@ -525,11 +563,12 @@ export function VideoVariationWorkspace({
     setJobUpdatedAt(null);
     setVariations([]);
     setJobPartialNotice(null);
+    setJobGenerationContext(null);
     setUploadPct(0);
     failedToastJobIdRef.current = null;
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = () => {
     setError(null);
     if (!user) {
       onOpenSignIn();
@@ -553,18 +592,16 @@ export function VideoVariationWorkspace({
       return;
     }
 
-    const creditNote = creditsUnlimited
-      ? "Unlimited credits are enabled."
-      : `This will use ${VIDEO_JOB_CREDIT_COST} credits (${creditsRemaining} remaining).`;
-    const ok = window.confirm(
-      `Generate 5 variations?\n\n${creditNote}\n\nUsually 2–4 minutes once processing starts.`,
-    );
-    if (!ok) return;
+    setRefinementOpen(true);
+  };
 
+  const submitWithRefinementContext = async (ctx: GenerationContextV1) => {
+    setRefinementOpen(false);
     setSubmitting(true);
     setUploadPct(0);
     setFinishingOnServer(false);
     resetJobUi();
+    setJobGenerationContext(ctx);
 
     try {
       const { id, remainingCredits } =
@@ -572,12 +609,14 @@ export function VideoVariationWorkspace({
           ? await submitUploadJobViaDirectStorage({
               file: videoFile,
               prompt: prompt.trim(),
+              generationContext: ctx,
               onProgress: setUploadPct,
               onUploadFullySent: () => setFinishingOnServer(true),
             })
           : await postVideoJobUrlJson({
               prompt: prompt.trim(),
               youtubeUrl: youtubeUrl.trim(),
+              generationContext: ctx,
             });
       if (typeof remainingCredits === "number") {
         setCreditsRemaining(remainingCredits);
@@ -752,11 +791,26 @@ export function VideoVariationWorkspace({
             size="lg"
             className="w-full max-w-md sm:w-auto"
             disabled={submitting}
-            onClick={() => void handleSubmit()}
+            onClick={() => handleSubmit()}
           >
             {submitting ? "Working…" : "Generate 5 variations"}
           </Button>
         </section>
+
+        <RefinementChatDialog
+          open={refinementOpen}
+          onOpenChange={setRefinementOpen}
+          kind="video_variations"
+          platformIds={VIDEO_REFINEMENT_PLATFORMS}
+          inputSummary={
+            sourceMode === "upload"
+              ? videoFile
+                ? `Upload: ${videoFile.name}`
+                : "Video upload"
+              : `YouTube: ${youtubeUrl.trim() || "…"}`
+          }
+          onConfirm={(ctx) => void submitWithRefinementContext(ctx)}
+        />
 
         {user && jobId && jobStatus ? (
             <section className="border-border space-y-4 border-t pt-10">
@@ -937,6 +991,23 @@ export function VideoVariationWorkspace({
                         );
                       })}
                     </div>
+                    <GenerationFeedbackPanel
+                      mode="video"
+                      videoJobId={jobId}
+                      originalPrompt={prompt}
+                      generationContext={jobGenerationContext}
+                      variationsOutput={formatVariationsForFeedback(variations)}
+                      onCreditsUpdated={setCreditsRemaining}
+                      onVideoForked={(newId) => {
+                        stopPoll();
+                        setJobId(newId);
+                        setJobStatus("queued");
+                        setVariations([]);
+                        setJobPartialNotice(null);
+                        setJobGenerationContext(null);
+                        failedToastJobIdRef.current = null;
+                      }}
+                    />
                   </div>
                 </VariationPreviewRegistryProvider>
               ) : null}

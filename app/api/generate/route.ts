@@ -30,6 +30,10 @@ import {
 import { createClient } from "@/lib/supabase/server";
 import { fetchYoutubeTranscriptText } from "@/lib/youtube-transcript-server";
 import { isYoutubeVideoUrlForTranscript } from "@/lib/youtube-url";
+import {
+  formatGenerationContextForPrompt,
+  type GenerationContextV1,
+} from "@/lib/generation-context";
 
 export const maxDuration = 300;
 
@@ -64,6 +68,16 @@ Output sections in this exact order with these headings (include the numbers):
    FORMAT_TAGS: <pick 2–4 comma-separated from: Hook-heavy, Storytime, Educational, Contrarian, Tutorial-lite, Transformation, Listicle, POV, Controversy>
    LENGTH_HINT_SECONDS: <integer 30–60 based on how long the [LINE] script would take read aloud at TikTok pace>`;
 
+const generationContextSchema = z
+  .object({
+    version: z.literal(1),
+    kind: z.enum(["video_variations", "text_generation"]),
+    platforms: z.array(z.string()),
+    answers: z.record(z.string(), z.string()),
+    confirmedAt: z.string(),
+  })
+  .passthrough();
+
 const bodySchema = z.object({
   mode: z.enum(["text", "url"]),
   text: z.string().max(120_000).optional(),
@@ -74,6 +88,7 @@ const bodySchema = z.object({
   preset: z
     .enum(["viral_hook", "storytime", "educational", "contrarian"])
     .optional(),
+  generationContext: generationContextSchema.optional(),
 });
 
 function normalizeOrderedPlatforms(raw: string[]): PlatformId[] {
@@ -99,6 +114,7 @@ function createGenerationStreamText(opts: {
   storedInputUrl: string | null;
   orderedPlatforms: PlatformId[];
   preset: GenerationPresetId | undefined;
+  generationContext?: GenerationContextV1 | null;
 }): StreamTextResult {
   const {
     supabase,
@@ -108,6 +124,7 @@ function createGenerationStreamText(opts: {
     storedInputUrl,
     orderedPlatforms,
     preset,
+    generationContext,
   } = opts;
 
   const headerLines = orderedPlatforms
@@ -117,7 +134,11 @@ function createGenerationStreamText(opts: {
   const baseSystem = includesClipPackage
     ? CLIP_PACKAGE_SYSTEM_PROMPT
     : GENERIC_SYSTEM_PROMPT;
-  const systemPrompt = appendPresetToSystemPrompt(baseSystem, preset);
+  const ctxBlock = formatGenerationContextForPrompt(generationContext ?? null);
+  const systemPrompt =
+    (ctxBlock
+      ? `User context from pre-generation refinement (honor every constraint):\n${ctxBlock}\n\n`
+      : "") + appendPresetToSystemPrompt(baseSystem, preset);
 
   const userPrompt = `Repurpose the source content for ONLY the following platforms, in this exact order.
 
@@ -195,6 +216,7 @@ ${sourceTextForModel}
           platforms: orderedPlatforms,
           output: outputToStore,
           type: rowType,
+          generation_context: generationContext ?? null,
         });
         if (error) {
           console.error("generations insert failed", error.message);
@@ -261,6 +283,7 @@ export async function POST(req: Request) {
         let storedInputUrl: string | null = null;
         let orderedPlatforms: PlatformId[] = [];
         let preset: GenerationPresetId | undefined;
+        let generationContext: GenerationContextV1 | undefined;
 
         const contentType = req.headers.get("content-type") ?? "";
 
@@ -325,6 +348,19 @@ export async function POST(req: Request) {
             preset = p;
           }
 
+          const gcField = form.get("generationContext");
+          if (typeof gcField === "string" && gcField.trim()) {
+            try {
+              const rawGc = JSON.parse(gcField) as unknown;
+              const gcParsed = generationContextSchema.safeParse(rawGc);
+              if (gcParsed.success) {
+                generationContext = gcParsed.data as GenerationContextV1;
+              }
+            } catch {
+              /* ignore invalid refinement JSON */
+            }
+          }
+
           step("transcribe", "Extracting text from your upload…");
           try {
             const resolved = await sourceFromUpload(file);
@@ -356,6 +392,9 @@ export async function POST(req: Request) {
 
           const bodyParsed = parsed.data;
           preset = bodyParsed.preset;
+          generationContext = bodyParsed.generationContext as
+            | GenerationContextV1
+            | undefined;
           orderedPlatforms = normalizeOrderedPlatforms(bodyParsed.platforms);
 
           if (orderedPlatforms.length === 0) {
@@ -516,6 +555,7 @@ export async function POST(req: Request) {
           storedInputUrl,
           orderedPlatforms,
           preset,
+          generationContext: generationContext ?? null,
         });
 
         await pipeStreamTextAsPlainText(result, append);

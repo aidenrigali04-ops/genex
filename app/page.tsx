@@ -54,7 +54,7 @@ export default async function Home({ searchParams }: PageProps) {
 
     const { data: rows, error: clipError } = await supabase
       .from("generations")
-      .select("id, created_at, input_text, input_url, platforms, output")
+      .select("id, created_at, input_text, input_url, platforms, output, generation_context")
       .eq("type", "clip_package")
       .eq("user_id", user.id)
       .order("created_at", { ascending: false })
@@ -88,6 +88,7 @@ export default async function Home({ searchParams }: PageProps) {
       inputUrl: (row.input_url as string | null) ?? null,
       output: displayOutput,
       platforms,
+      generationContext: row.generation_context ?? null,
     };
   });
 

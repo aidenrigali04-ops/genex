@@ -57,7 +57,11 @@ import {
 import { MAX_MEDIA_UPLOAD_BYTES } from "@/lib/media-upload-limits";
 import { isYoutubeVideoUrlForTranscript } from "@/lib/youtube-url";
 import { type PlatformId } from "@/lib/platforms";
+import { GenerationFeedbackPanel } from "@/components/generation-feedback-panel";
+import { RefinementChatDialog } from "@/components/refinement-chat-dialog";
 import { VideoVariationWorkspace } from "@/components/video-variation-workspace";
+import type { GenerationContextV1 } from "@/lib/generation-context";
+import { isGenerationContextV1 } from "@/lib/generation-context";
 import { cn } from "@/lib/utils";
 
 const CLIP_PLATFORMS: PlatformId[] = ["clip_package"];
@@ -80,6 +84,7 @@ export type ClipPackageHistoryItem = {
   inputUrl: string | null;
   output: string;
   platforms: PlatformId[];
+  generationContext?: unknown | null;
 };
 
 type HomeWorkspaceProps = {
@@ -132,6 +137,11 @@ export function HomeWorkspace({
   const [clips, setClips] = useState(initialClipPackages);
 
   const abortRef = useRef<AbortController | null>(null);
+  const pendingGenerationContextRef = useRef<GenerationContextV1 | null>(null);
+
+  const [refinementOpen, setRefinementOpen] = useState(false);
+  const [lastClipGenerationContext, setLastClipGenerationContext] =
+    useState<GenerationContextV1 | null>(null);
 
   useEffect(() => {
     setUser(initialUser);
@@ -222,6 +232,9 @@ export function HomeWorkspace({
     abortRef.current = new AbortController();
     const { signal } = abortRef.current;
 
+    const generationContext = pendingGenerationContextRef.current;
+    pendingGenerationContextRef.current = null;
+
     setLoading(true);
     setProgress(8);
     setGenerationSteps([]);
@@ -230,6 +243,8 @@ export function HomeWorkspace({
     try {
       let res: Response;
       const presetPart = preset ? { preset } : {};
+      const gcPart =
+        generationContext != null ? { generationContext } : {};
 
       if (inputMode === "file" && uploadFile) {
         res = await fetch("/api/generate", {
@@ -241,6 +256,9 @@ export function HomeWorkspace({
             fd.append("file", uploadFile);
             fd.append("platforms", JSON.stringify(CLIP_PLATFORMS));
             if (preset) fd.append("preset", preset);
+            if (generationContext) {
+              fd.append("generationContext", JSON.stringify(generationContext));
+            }
             return fd;
           })(),
         });
@@ -287,6 +305,7 @@ export function HomeWorkspace({
               sourceUrl: url.trim(),
               platforms: CLIP_PLATFORMS,
               ...presetPart,
+              ...gcPart,
             }),
           });
         } else {
@@ -300,6 +319,7 @@ export function HomeWorkspace({
               url: url.trim(),
               platforms: CLIP_PLATFORMS,
               ...presetPart,
+              ...gcPart,
             }),
           });
         }
@@ -315,6 +335,7 @@ export function HomeWorkspace({
             url: inputMode === "url" ? url : undefined,
             platforms: CLIP_PLATFORMS,
             ...presetPart,
+            ...gcPart,
           }),
         });
       }
@@ -502,8 +523,17 @@ export function HomeWorkspace({
     [clips],
   );
 
+  const clipOriginalPromptSummary = useMemo(() => {
+    if (inputMode === "text") return text.trim();
+    if (inputMode === "url") return url.trim();
+    if (uploadFile) return `File: ${uploadFile.name}`;
+    return "";
+  }, [inputMode, text, url, uploadFile]);
+
   const openClip = (clip: ClipPackageHistoryItem) => {
     setStreamedText(clip.output);
+    const gc = clip.generationContext;
+    setLastClipGenerationContext(isGenerationContextV1(gc) ? gc : null);
     setUploadFile(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
     if (clip.inputUrl?.startsWith("file:")) {
@@ -819,7 +849,7 @@ export function HomeWorkspace({
             type="button"
             className="h-12 w-full rounded-xl text-base sm:h-11"
             disabled={loading || !canSubmit}
-            onClick={() => void runGeneration()}
+            onClick={() => setRefinementOpen(true)}
           >
             {loading
               ? fetchingYoutubeTranscript
@@ -827,6 +857,28 @@ export function HomeWorkspace({
                 : "Generating…"
               : "Generate Clip Package"}
           </Button>
+
+          <RefinementChatDialog
+            open={refinementOpen}
+            onOpenChange={setRefinementOpen}
+            kind="text_generation"
+            platformIds={CLIP_PLATFORMS}
+            inputSummary={
+              inputMode === "text"
+                ? text.trim().slice(0, 120) || "Text / idea"
+                : inputMode === "url"
+                  ? url.trim() || "URL"
+                  : uploadFile
+                    ? `File: ${uploadFile.name}`
+                    : "Upload"
+            }
+            onConfirm={(ctx) => {
+              pendingGenerationContextRef.current = ctx;
+              setLastClipGenerationContext(ctx);
+              setRefinementOpen(false);
+              void runGeneration();
+            }}
+          />
         </section>
 
         {(streamedText.trim() || loading) && (
@@ -838,7 +890,7 @@ export function HomeWorkspace({
                 variant="secondary"
                 size="sm"
                 disabled={loading || !canSubmit}
-                onClick={() => void runGeneration()}
+                onClick={() => setRefinementOpen(true)}
               >
                 Regenerate
               </Button>
@@ -901,6 +953,15 @@ export function HomeWorkspace({
                   );
                 })}
               </div>
+
+              {!loading && streamedText.trim() ? (
+                <GenerationFeedbackPanel
+                  mode="clip"
+                  originalPrompt={clipOriginalPromptSummary || "Clip package"}
+                  generationContext={lastClipGenerationContext}
+                  variationsOutput={streamedText}
+                />
+              ) : null}
             </div>
           </section>
         )}
@@ -940,6 +1001,15 @@ export function HomeWorkspace({
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
+                    {isGenerationContextV1(clip.generationContext) ? (
+                      <p className="text-primary/90 mb-2 line-clamp-2 text-xs font-medium">
+                        Refinement:{" "}
+                        {Object.values(clip.generationContext.answers)
+                          .filter(Boolean)
+                          .slice(0, 2)
+                          .join(" · ")}
+                      </p>
+                    ) : null}
                     <p className="text-muted-foreground line-clamp-2 text-sm">
                       {(clip.inputText ?? clip.inputUrl ?? "")
                         .replace(/\s+/g, " ")
