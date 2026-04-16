@@ -28,15 +28,20 @@ export default async function Home({ searchParams }: PageProps) {
   let initialCreditsRemaining: number | null = null;
   let clipRows: Record<string, unknown>[] = [];
   let totalClipCount = 0;
+  let profileUnlimited = false;
 
   if (user) {
     const { data: profile } = await supabase
       .from("profiles")
-      .select("credits, last_reset_at")
+      .select("credits, last_reset_at, unlimited_credits")
       .eq("id", user.id)
       .maybeSingle();
 
-    if (unlimitedCredits) {
+    profileUnlimited =
+      profile != null &&
+      (profile as { unlimited_credits?: boolean }).unlimited_credits === true;
+
+    if (unlimitedCredits || profileUnlimited) {
       initialCreditsRemaining = UNLIMITED_CREDITS_SENTINEL;
     } else if (profile) {
       initialCreditsRemaining = remainingCreditsForDisplay({
@@ -96,7 +101,7 @@ export default async function Home({ searchParams }: PageProps) {
       initialCreditsRemaining={initialCreditsRemaining}
       initialClipPackages={initialClipPackages}
       totalClipCount={totalClipCount}
-      unlimitedCredits={unlimitedCredits}
+      unlimitedCredits={unlimitedCredits || profileUnlimited}
       authError={params.authError ?? null}
     />
   );
