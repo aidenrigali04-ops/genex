@@ -941,7 +941,15 @@ async function processJob(job) {
   }
 }
 
+async function requeueStaleJobs() {
+  const { error } = await supabaseAdmin.rpc('worker_requeue_stale_jobs');
+  if (error && !error.message?.includes("function")) {
+    console.error("[worker] requeueStaleJobs error:", error.message);
+  }
+}
+
 async function tick() {
+  await requeueStaleJobs();
   const job = await claimNextJob();
   if (!job) return false;
   log(job.id, "claimed (queued → processing).");
