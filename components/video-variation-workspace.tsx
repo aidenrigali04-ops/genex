@@ -48,43 +48,149 @@ const PIPELINE_STEPS = [
   "Done",
 ] as const;
 
-function postVideoJobMultipart(
-  form: FormData,
+async function postVideoJobUrlJson(params: {
+  prompt: string;
+  youtubeUrl: string;
+}): Promise<{ id: string; remainingCredits?: number }> {
+  const res = await fetch("/api/video-jobs", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      inputType: "url",
+      prompt: params.prompt,
+      youtubeUrl: params.youtubeUrl,
+    }),
+  });
+  const data = (await res.json()) as {
+    id?: string;
+    remainingCredits?: number;
+    error?: string;
+    message?: string;
+  };
+  if (!res.ok || !data.id) {
+    throw new Error(
+      String(data.message || data.error || res.statusText || "Request failed."),
+    );
+  }
+  return { id: data.id, remainingCredits: data.remainingCredits };
+}
+
+/** PUT to Supabase signed upload URL (same shape as @supabase/storage-js uploadToSignedUrl). */
+function putVideoToSignedUploadUrl(
+  signedUrl: string,
+  file: File,
   onProgress: (pct: number) => void,
-): Promise<{ id: string; remainingCredits?: number }> {
+  onUploadFullySent?: () => void,
+): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", "/api/video-jobs");
-    xhr.responseType = "json";
+    xhr.open("PUT", signedUrl);
+    xhr.timeout = 320_000;
+    const fd = new FormData();
+    fd.append("cacheControl", "3600");
+    fd.append("", file);
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && e.total > 0) {
         onProgress(Math.min(99, Math.round((100 * e.loaded) / e.total)));
       }
     };
+    xhr.upload.onload = () => {
+      onProgress(99);
+      onUploadFullySent?.();
+    };
+    xhr.ontimeout = () =>
+      reject(
+        new Error(
+          "Upload timed out. Try a smaller file or check your connection.",
+        ),
+      );
     xhr.onload = () => {
-      const res =
-        typeof xhr.response === "object" && xhr.response
-          ? (xhr.response as {
-              id?: string;
-              remainingCredits?: number;
-              error?: string;
-              message?: string;
-            })
-          : {};
-      if (xhr.status >= 200 && xhr.status < 300 && res.id) {
-        onProgress(100);
-        resolve({ id: res.id, remainingCredits: res.remainingCredits });
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
         return;
       }
-      const msg =
-        res.message ||
-        res.error ||
-        (xhr.status === 403 ? "no_credits" : xhr.statusText);
-      reject(new Error(String(msg)));
+      let msg = xhr.statusText;
+      try {
+        const j = JSON.parse(xhr.responseText) as { message?: string; error?: string };
+        if (j.message) msg = j.message;
+        else if (j.error) msg = j.error;
+      } catch {
+        if (xhr.responseText) msg = xhr.responseText.slice(0, 500);
+      }
+      reject(new Error(msg || "Storage upload failed."));
     };
-    xhr.onerror = () => reject(new Error("Network error"));
-    xhr.send(form);
+    xhr.onerror = () => reject(new Error("Network error during upload to storage."));
+    xhr.send(fd);
   });
+}
+
+async function submitUploadJobViaDirectStorage(params: {
+  file: File;
+  prompt: string;
+  onProgress: (pct: number) => void;
+  onUploadFullySent?: () => void;
+}): Promise<{ id: string; remainingCredits?: number }> {
+  const prepRes = await fetch("/api/video-jobs", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      inputType: "upload",
+      prepareDirectUpload: true,
+      prompt: params.prompt,
+      filename: params.file.name,
+      bytes: params.file.size,
+      contentType: params.file.type || "video/mp4",
+    }),
+  });
+  const prep = (await prepRes.json()) as {
+    id?: string;
+    remainingCredits?: number;
+    directUpload?: { signedUrl?: string };
+    error?: string;
+    message?: string;
+  };
+  if (!prepRes.ok || !prep.id) {
+    throw new Error(
+      String(prep.message || prep.error || prepRes.statusText || "Could not start upload."),
+    );
+  }
+  const signedUrl = prep.directUpload?.signedUrl;
+  if (!signedUrl) {
+    throw new Error("Server did not return a signed upload URL.");
+  }
+
+  await putVideoToSignedUploadUrl(
+    signedUrl,
+    params.file,
+    params.onProgress,
+    params.onUploadFullySent,
+  );
+
+  const finRes = await fetch(`/api/video-jobs/${prep.id}`, {
+    method: "PATCH",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ finalizeDirectUpload: true }),
+  });
+  const fin = (await finRes.json()) as {
+    ok?: boolean;
+    error?: string;
+    message?: string;
+  };
+  if (!finRes.ok || !fin.ok) {
+    throw new Error(
+      String(
+        fin.message ||
+          fin.error ||
+          "Could not finalize upload. If the file is still transferring, wait and try submitting again.",
+      ),
+    );
+  }
+
+  params.onProgress(100);
+  return { id: prep.id, remainingCredits: prep.remainingCredits };
 }
 
 function statusToStep(status: VideoJobStatus): number {
@@ -151,6 +257,7 @@ export function VideoVariationWorkspace({
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [uploadPct, setUploadPct] = useState(0);
+  const [finishingOnServer, setFinishingOnServer] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -185,7 +292,20 @@ export function VideoVariationWorkspace({
   const fetchJob = useCallback(
     async (id: string) => {
       const res = await fetch(`/api/video-jobs/${id}`, { credentials: "same-origin" });
-      if (!res.ok) return;
+      if (!res.ok) {
+        const raw = await res.text();
+        let msg = raw || res.statusText;
+        try {
+          const j = JSON.parse(raw) as { error?: string; message?: string };
+          if (j.message) msg = j.message;
+          else if (j.error) msg = j.error;
+        } catch {
+          /* keep */
+        }
+        setError(`Could not load job (${res.status}): ${msg}`);
+        return;
+      }
+      setError(null);
       const row = (await res.json()) as JobRow;
       setJobStatus(row.status);
       setJobUpdatedAt(
@@ -261,16 +381,22 @@ export function VideoVariationWorkspace({
 
     setSubmitting(true);
     setUploadPct(0);
+    setFinishingOnServer(false);
     resetJobUi();
 
-    const fd = new FormData();
-    fd.append("prompt", prompt.trim());
-    fd.append("inputType", sourceMode);
-    if (sourceMode === "upload" && videoFile) fd.append("file", videoFile);
-    if (sourceMode === "url") fd.append("youtubeUrl", youtubeUrl.trim());
-
     try {
-      const { id, remainingCredits } = await postVideoJobMultipart(fd, setUploadPct);
+      const { id, remainingCredits } =
+        sourceMode === "upload" && videoFile
+          ? await submitUploadJobViaDirectStorage({
+              file: videoFile,
+              prompt: prompt.trim(),
+              onProgress: setUploadPct,
+              onUploadFullySent: () => setFinishingOnServer(true),
+            })
+          : await postVideoJobUrlJson({
+              prompt: prompt.trim(),
+              youtubeUrl: youtubeUrl.trim(),
+            });
       if (typeof remainingCredits === "number") {
         setCreditsRemaining(remainingCredits);
       }
@@ -283,6 +409,7 @@ export function VideoVariationWorkspace({
     } finally {
       setSubmitting(false);
       setUploadPct(0);
+      setFinishingOnServer(false);
     }
   };
 
@@ -407,14 +534,28 @@ export function VideoVariationWorkspace({
             </p>
           ) : null}
 
-          {submitting && uploadPct > 0 && uploadPct < 100 ? (
+          {submitting && uploadPct > 0 && uploadPct < 99 ? (
             <div className="max-w-md space-y-1">
               <Progress value={uploadPct}>
                 <div className="flex w-full justify-between text-xs">
-                  <ProgressLabel>Uploading</ProgressLabel>
+                  <ProgressLabel>Uploading to app</ProgressLabel>
                   <ProgressValue />
                 </div>
               </Progress>
+            </div>
+          ) : null}
+          {submitting && finishingOnServer ? (
+            <div className="max-w-md space-y-2">
+              <Progress value={99}>
+                <div className="flex w-full justify-between text-xs">
+                  <ProgressLabel>Finishing on server</ProgressLabel>
+                  <ProgressValue />
+                </div>
+              </Progress>
+              <p className="text-muted-foreground text-xs">
+                Large files upload straight to storage, then the app links the job. That step
+                can take a bit before status updates below.
+              </p>
             </div>
           ) : null}
 
