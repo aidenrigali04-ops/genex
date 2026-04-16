@@ -1,15 +1,23 @@
 FROM node:20-slim
 
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Slim images often lack a service manager; postinst scripts that call invoke-rc.d
+# can otherwise make apt exit non-zero (e.g. exit 5) even when packages unpacked.
+RUN printf '%s\n' '#!/bin/sh' 'exit 0' > /usr/sbin/policy-rc.d \
+  && chmod +x /usr/sbin/policy-rc.d
+
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
+    ca-certificates \
     ffmpeg \
     python3 \
-    wget \
+    python3-pip \
     fonts-noto \
     fonts-arabeyes \
-  && wget -qO /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
-  && chmod a+rx /usr/local/bin/yt-dlp \
-  && rm -rf /var/lib/apt/lists/*
+  && rm -rf /var/lib/apt/lists/* \
+  && PIP_BREAK_SYSTEM_PACKAGES=1 pip3 install --no-cache-dir yt-dlp \
+  && yt-dlp --version
 
 WORKDIR /app
 
