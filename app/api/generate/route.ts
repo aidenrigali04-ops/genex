@@ -19,7 +19,14 @@ import {
 import { extractPlatformSection } from "@/lib/parse-generation-output";
 import { sourceFromUpload } from "@/lib/source-from-upload";
 import { isUnlimitedCreditsModeServer } from "@/lib/credits-config";
-import { streamTextToPlainTextResponse } from "@/lib/stream-text-plain-response";
+import {
+  GENEX_FATAL_PREFIX,
+  GENEX_STEP_PREFIX,
+} from "@/lib/generation-stream-protocol";
+import {
+  pipeStreamTextAsPlainText,
+  type StreamTextResult,
+} from "@/lib/stream-text-plain-response";
 import { createClient } from "@/lib/supabase/server";
 import { fetchYoutubeTranscriptText } from "@/lib/youtube-transcript-server";
 import { isYoutubeVideoUrlForTranscript } from "@/lib/youtube-url";
@@ -82,7 +89,7 @@ function normalizeOrderedPlatforms(raw: string[]): PlatformId[] {
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
 
-function streamGenerationResponse(opts: {
+function createGenerationStreamText(opts: {
   supabase: SupabaseServerClient;
   userId: string | null;
   /** Text embedded in the model prompt (may be truncated for TPM). */
@@ -92,7 +99,7 @@ function streamGenerationResponse(opts: {
   storedInputUrl: string | null;
   orderedPlatforms: PlatformId[];
   preset: GenerationPresetId | undefined;
-}) {
+}): StreamTextResult {
   const {
     supabase,
     userId,
@@ -196,7 +203,7 @@ ${sourceTextForModel}
     },
   });
 
-  return streamTextToPlainTextResponse(result);
+  return result;
 }
 
 export async function POST(req: Request) {
@@ -207,257 +214,325 @@ export async function POST(req: Request) {
     );
   }
 
-  const supabase = await createClient();
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
+  const encoder = new TextEncoder();
 
-  const userId = session?.user?.id ?? null;
-
-  let sourceText = "";
-  let storedInputUrl: string | null = null;
-  let orderedPlatforms: PlatformId[] = [];
-  let preset: GenerationPresetId | undefined;
-
-  const contentType = req.headers.get("content-type") ?? "";
-
-  if (contentType.includes("multipart/form-data")) {
-    let form: FormData;
-    try {
-      form = await req.formData();
-    } catch {
-      return Response.json(
-        { error: "Invalid multipart body." },
-        { status: 400 },
-      );
-    }
-
-    const file = form.get("file");
-    const platformsField = form.get("platforms");
-
-    if (!(file instanceof File) || file.size === 0) {
-      return Response.json(
-        { error: "A non-empty file is required." },
-        { status: 400 },
-      );
-    }
-
-    if (typeof platformsField !== "string") {
-      return Response.json(
-        { error: 'Form field "platforms" must be a JSON array string.' },
-        { status: 400 },
-      );
-    }
-
-    let rawPlatforms: unknown;
-    try {
-      rawPlatforms = JSON.parse(platformsField);
-    } catch {
-      return Response.json({ error: "Invalid platforms JSON." }, { status: 400 });
-    }
-
-    if (!Array.isArray(rawPlatforms)) {
-      return Response.json(
-        { error: "platforms must be a JSON array." },
-        { status: 400 },
-      );
-    }
-
-    orderedPlatforms = normalizeOrderedPlatforms(
-      rawPlatforms.filter((x): x is string => typeof x === "string"),
-    );
-
-    if (orderedPlatforms.length === 0) {
-      return Response.json(
-        { error: "Select at least one valid platform." },
-        { status: 400 },
-      );
-    }
-
-    const presetField = form.get("preset");
-    if (typeof presetField === "string" && presetField.trim()) {
-      const p = presetField.trim();
-      if (!isGenerationPresetId(p)) {
-        return Response.json({ error: "Invalid preset." }, { status: 400 });
-      }
-      preset = p;
-    }
-
-    try {
-      const resolved = await sourceFromUpload(file);
-      sourceText = resolved.sourceText;
-      storedInputUrl = resolved.storedInputUrl;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Could not read file";
-      return Response.json({ error: msg }, { status: 400 });
-    }
-  } else {
-    let json: unknown;
-    try {
-      json = await req.json();
-    } catch {
-      return Response.json({ error: "Invalid JSON body" }, { status: 400 });
-    }
-
-    const parsed = bodySchema.safeParse(json);
-    if (!parsed.success) {
-      return Response.json(
-        { error: parsed.error.issues.map((i) => i.message).join("; ") },
-        { status: 400 },
-      );
-    }
-
-    const body = parsed.data;
-    preset = body.preset;
-    orderedPlatforms = normalizeOrderedPlatforms(body.platforms);
-
-    if (orderedPlatforms.length === 0) {
-      return Response.json(
-        { error: "Select at least one valid platform." },
-        { status: 400 },
-      );
-    }
-
-    if (body.mode === "text") {
-      const t = body.text?.trim() ?? "";
-      if (!t) {
-        return Response.json({ error: "Text is required." }, { status: 400 });
-      }
-      sourceText = t;
-      const src = body.sourceUrl?.trim();
-      if (src) storedInputUrl = src;
-    } else {
-      const u = body.url?.trim() ?? "";
-      if (!u) {
-        return Response.json({ error: "URL is required." }, { status: 400 });
-      }
-      storedInputUrl = u;
-      if (isYoutubeVideoUrlForTranscript(u)) {
-        const fromCaptions = await fetchYoutubeTranscriptText(u);
-        if (fromCaptions?.trim()) {
-          sourceText = fromCaptions;
-        } else {
+  const body = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      let closed = false;
+      const close = () => {
+        if (!closed) {
+          closed = true;
           try {
-            sourceText = await fetchUrlAsPlainText(u);
-          } catch (e) {
-            const msg = e instanceof Error ? e.message : "Could not read URL";
-            return Response.json({ error: msg }, { status: 400 });
+            controller.close();
+          } catch {
+            /* ignore */
           }
         }
-      } else {
-        try {
-          sourceText = await fetchUrlAsPlainText(u);
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : "Could not read URL";
-          return Response.json({ error: msg }, { status: 400 });
+      };
+
+      const step = (id: string, label: string) => {
+        controller.enqueue(
+          encoder.encode(
+            `${GENEX_STEP_PREFIX}${JSON.stringify({ id, label })}\n`,
+          ),
+        );
+      };
+
+      const fatal = (payload: Record<string, unknown>) => {
+        controller.enqueue(
+          encoder.encode(`${GENEX_FATAL_PREFIX}${JSON.stringify(payload)}\n`),
+        );
+        close();
+      };
+
+      const append = (s: string) => {
+        if (s) controller.enqueue(encoder.encode(s));
+      };
+
+      try {
+        step("receive", "Receiving your request…");
+        const supabase = await createClient();
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        const userId = session?.user?.id ?? null;
+
+        let sourceText = "";
+        let storedInputUrl: string | null = null;
+        let orderedPlatforms: PlatformId[] = [];
+        let preset: GenerationPresetId | undefined;
+
+        const contentType = req.headers.get("content-type") ?? "";
+
+        if (contentType.includes("multipart/form-data")) {
+          step("upload", "Reading your file…");
+          let form: FormData;
+          try {
+            form = await req.formData();
+          } catch {
+            fatal({ error: "bad_request", message: "Invalid multipart body." });
+            return;
+          }
+
+          const file = form.get("file");
+          const platformsField = form.get("platforms");
+
+          if (!(file instanceof File) || file.size === 0) {
+            fatal({ error: "bad_request", message: "A non-empty file is required." });
+            return;
+          }
+
+          if (typeof platformsField !== "string") {
+            fatal({
+              error: "bad_request",
+              message: 'Form field "platforms" must be a JSON array string.',
+            });
+            return;
+          }
+
+          let rawPlatforms: unknown;
+          try {
+            rawPlatforms = JSON.parse(platformsField);
+          } catch {
+            fatal({ error: "bad_request", message: "Invalid platforms JSON." });
+            return;
+          }
+
+          if (!Array.isArray(rawPlatforms)) {
+            fatal({ error: "bad_request", message: "platforms must be a JSON array." });
+            return;
+          }
+
+          orderedPlatforms = normalizeOrderedPlatforms(
+            rawPlatforms.filter((x): x is string => typeof x === "string"),
+          );
+
+          if (orderedPlatforms.length === 0) {
+            fatal({
+              error: "bad_request",
+              message: "Select at least one valid platform.",
+            });
+            return;
+          }
+
+          const presetField = form.get("preset");
+          if (typeof presetField === "string" && presetField.trim()) {
+            const p = presetField.trim();
+            if (!isGenerationPresetId(p)) {
+              fatal({ error: "bad_request", message: "Invalid preset." });
+              return;
+            }
+            preset = p;
+          }
+
+          step("transcribe", "Extracting text from your upload…");
+          try {
+            const resolved = await sourceFromUpload(file);
+            sourceText = resolved.sourceText;
+            storedInputUrl = resolved.storedInputUrl;
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : "Could not read file";
+            fatal({ error: "bad_request", message: msg });
+            return;
+          }
+        } else {
+          step("parse", "Reading input…");
+          let json: unknown;
+          try {
+            json = await req.json();
+          } catch {
+            fatal({ error: "bad_request", message: "Invalid JSON body" });
+            return;
+          }
+
+          const parsed = bodySchema.safeParse(json);
+          if (!parsed.success) {
+            fatal({
+              error: "bad_request",
+              message: parsed.error.issues.map((i) => i.message).join("; "),
+            });
+            return;
+          }
+
+          const bodyParsed = parsed.data;
+          preset = bodyParsed.preset;
+          orderedPlatforms = normalizeOrderedPlatforms(bodyParsed.platforms);
+
+          if (orderedPlatforms.length === 0) {
+            fatal({
+              error: "bad_request",
+              message: "Select at least one valid platform.",
+            });
+            return;
+          }
+
+          if (bodyParsed.mode === "text") {
+            const t = bodyParsed.text?.trim() ?? "";
+            if (!t) {
+              fatal({ error: "bad_request", message: "Text is required." });
+              return;
+            }
+            sourceText = t;
+            const src = bodyParsed.sourceUrl?.trim();
+            if (src) storedInputUrl = src;
+          } else {
+            const u = bodyParsed.url?.trim() ?? "";
+            if (!u) {
+              fatal({ error: "bad_request", message: "URL is required." });
+              return;
+            }
+            storedInputUrl = u;
+            if (isYoutubeVideoUrlForTranscript(u)) {
+              step("youtube", "Fetching YouTube captions…");
+              const fromCaptions = await fetchYoutubeTranscriptText(u);
+              if (fromCaptions?.trim()) {
+                sourceText = fromCaptions;
+              } else {
+                step("fetch", "Fetching page text (fallback)…");
+                try {
+                  sourceText = await fetchUrlAsPlainText(u);
+                } catch (e) {
+                  const msg = e instanceof Error ? e.message : "Could not read URL";
+                  fatal({ error: "bad_request", message: msg });
+                  return;
+                }
+              }
+            } else {
+              step("fetch", "Fetching page content…");
+              try {
+                sourceText = await fetchUrlAsPlainText(u);
+              } catch (e) {
+                const msg = e instanceof Error ? e.message : "Could not read URL";
+                fatal({ error: "bad_request", message: msg });
+                return;
+              }
+            }
+          }
         }
+
+        step("validate", "Checking source text…");
+        if (!sourceText.trim()) {
+          fatal({
+            error: "bad_request",
+            message: "No usable text found for that input.",
+          });
+          return;
+        }
+
+        if (userId && !isUnlimitedCreditsModeServer()) {
+          type CreditRow = {
+            success: boolean;
+            reason: string | null;
+            remaining: number;
+          };
+
+          step("credits", "Checking credits…");
+
+          const { error: profileBootstrapErr } = await supabase
+            .from("profiles")
+            .insert({ id: userId });
+          if (
+            profileBootstrapErr &&
+            profileBootstrapErr.code !== "23505" &&
+            !profileBootstrapErr.message.toLowerCase().includes("duplicate")
+          ) {
+            console.warn(
+              "[generate] profiles bootstrap insert:",
+              profileBootstrapErr.code,
+              profileBootstrapErr.message,
+            );
+          }
+
+          const { data: creditData, error: creditError } = await supabase.rpc(
+            "consume_credits",
+            { p_cost: 1, p_user_id: userId },
+          );
+
+          if (creditError) {
+            if (
+              creditError.code === "42883" ||
+              creditError.message.includes("function")
+            ) {
+              console.error(
+                "[generate] consume_credits(int,uuid) missing — apply supabase/migrations including 20260418210000_consume_credits_postgrest_arg_order.sql",
+                creditError.message,
+              );
+            } else {
+              console.error("[generate] consume_credits failed", creditError.message);
+            }
+            fatal({
+              error: "credit_check_failed",
+              message:
+                "Could not verify your credits. Confirm the latest Supabase migration is applied.",
+            });
+            return;
+          }
+
+          const creditRow = (
+            Array.isArray(creditData) ? creditData[0] : creditData
+          ) as CreditRow | undefined;
+
+          if (
+            !creditRow ||
+            typeof creditRow.success !== "boolean" ||
+            creditRow.success !== true
+          ) {
+            if (creditRow?.reason === "no_credits") {
+              fatal({ error: "no_credits" });
+              return;
+            }
+            if (creditRow?.reason === "no_profile") {
+              fatal({
+                error: "profile_setup",
+                message:
+                  "Could not load your profile for credits. Apply the latest Supabase migration (profiles insert policy + consume_credits), then try again.",
+              });
+              return;
+            }
+            fatal({
+              error: "credit_denied",
+              message: creditRow?.reason ?? "Could not use a credit.",
+            });
+            return;
+          }
+        }
+
+        const { forModel, wasTruncated } = capSourceTextForClipModel(sourceText);
+        if (wasTruncated) {
+          console.info("[generate] clipped source for model TPM", {
+            storedChars: sourceText.length,
+            modelChars: forModel.length,
+          });
+          step("truncate", "Trimming source for model limits…");
+        }
+
+        step("generate", "Generating with GPT-4o…");
+
+        const result = createGenerationStreamText({
+          supabase,
+          userId,
+          sourceTextForModel: forModel,
+          sourceTextForStorage: sourceText,
+          storedInputUrl,
+          orderedPlatforms,
+          preset,
+        });
+
+        await pipeStreamTextAsPlainText(result, append);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        fatal({ error: "exception", message: msg });
+        return;
+      } finally {
+        close();
       }
-    }
-  }
+    },
+  });
 
-  if (!sourceText.trim()) {
-    return Response.json(
-      { error: "No usable text found for that input." },
-      { status: 400 },
-    );
-  }
-
-  if (userId && !isUnlimitedCreditsModeServer()) {
-    type CreditRow = {
-      success: boolean;
-      reason: string | null;
-      remaining: number;
-    };
-
-    const { error: profileBootstrapErr } = await supabase
-      .from("profiles")
-      .insert({ id: userId });
-    if (
-      profileBootstrapErr &&
-      profileBootstrapErr.code !== "23505" &&
-      !profileBootstrapErr.message.toLowerCase().includes("duplicate")
-    ) {
-      console.warn(
-        "[generate] profiles bootstrap insert:",
-        profileBootstrapErr.code,
-        profileBootstrapErr.message,
-      );
-    }
-
-    const { data: creditData, error: creditError } = await supabase.rpc(
-      "consume_credits",
-      { p_cost: 1, p_user_id: userId },
-    );
-
-    if (creditError) {
-      if (
-        creditError.code === "42883" ||
-        creditError.message.includes("function")
-      ) {
-        console.error(
-          "[generate] consume_credits(int,uuid) missing — apply supabase/migrations including 20260418210000_consume_credits_postgrest_arg_order.sql",
-          creditError.message,
-        );
-      } else {
-        console.error("[generate] consume_credits failed", creditError.message);
-      }
-      return Response.json(
-        {
-          error: "credit_check_failed",
-          message:
-            "Could not verify your credits. Confirm the latest Supabase migration is applied.",
-        },
-        { status: 503 },
-      );
-    }
-
-    const creditRow = (
-      Array.isArray(creditData) ? creditData[0] : creditData
-    ) as CreditRow | undefined;
-
-    if (
-      !creditRow ||
-      typeof creditRow.success !== "boolean" ||
-      creditRow.success !== true
-    ) {
-      if (creditRow?.reason === "no_credits") {
-        return Response.json({ error: "no_credits" }, { status: 403 });
-      }
-      if (creditRow?.reason === "no_profile") {
-        return Response.json(
-          {
-            error: "profile_setup",
-            message:
-              "Could not load your profile for credits. Apply the latest Supabase migration (profiles insert policy + consume_credits), then try again.",
-          },
-          { status: 503 },
-        );
-      }
-      return Response.json(
-        {
-          error: "credit_denied",
-          message: creditRow?.reason ?? "Could not use a credit.",
-        },
-        { status: 403 },
-      );
-    }
-  }
-
-  const { forModel, wasTruncated } = capSourceTextForClipModel(sourceText);
-  if (wasTruncated) {
-    console.info("[generate] clipped source for model TPM", {
-      storedChars: sourceText.length,
-      modelChars: forModel.length,
-    });
-  }
-
-  return streamGenerationResponse({
-    supabase,
-    userId,
-    sourceTextForModel: forModel,
-    sourceTextForStorage: sourceText,
-    storedInputUrl,
-    orderedPlatforms,
-    preset,
+  return new Response(body, {
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+    },
   });
 }

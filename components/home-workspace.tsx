@@ -50,6 +50,10 @@ import { type GenerationPresetId } from "@/lib/generation-presets";
 import { isEmptyStoredClipPackageV1 } from "@/lib/generation-output";
 import { decrementGuestCredit, readGuestCreditsRemaining } from "@/lib/guest-credits";
 import { extractPlatformSection } from "@/lib/parse-generation-output";
+import {
+  createGenerationStreamParser,
+  type GenerationUiStep,
+} from "@/lib/generation-stream-protocol";
 import { MAX_MEDIA_UPLOAD_BYTES } from "@/lib/media-upload-limits";
 import { isYoutubeVideoUrlForTranscript } from "@/lib/youtube-url";
 import { type PlatformId } from "@/lib/platforms";
@@ -120,6 +124,9 @@ export function HomeWorkspace({
   const [fetchingYoutubeTranscript, setFetchingYoutubeTranscript] =
     useState(false);
   const [progress, setProgress] = useState(0);
+  const [generationSteps, setGenerationSteps] = useState<GenerationUiStep[]>(
+    [],
+  );
   const [error, setError] = useState<string | null>(authError ?? null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [clips, setClips] = useState(initialClipPackages);
@@ -217,6 +224,7 @@ export function HomeWorkspace({
 
     setLoading(true);
     setProgress(8);
+    setGenerationSteps([]);
     setStreamedText("");
 
     try {
@@ -346,27 +354,97 @@ export function HomeWorkspace({
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
-      let accumulated = "";
+      const parser = createGenerationStreamParser();
+      let displayAccum = "";
+      let streamFatal = false;
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         if (value) {
-          accumulated += decoder.decode(value, { stream: true });
-          setStreamedText(accumulated);
-          setProgress((p) => Math.min(92, p + 1.2));
+          const chunk = decoder.decode(value, { stream: true });
+          const r = parser.push(chunk);
+          if (r.fatal) {
+            const code = r.fatal.error ?? "";
+            const msg =
+              r.fatal.message ??
+              (code === "no_credits"
+                ? "You've used your available credits."
+                : code || "Request failed.");
+            if (code === "no_credits") setBuyOpen(true);
+            setError(msg);
+            setProgress(0);
+            displayAccum = "";
+            setStreamedText("");
+            streamFatal = true;
+            break;
+          }
+          if (r.steps.length) {
+            setGenerationSteps((prev) => [...prev, ...r.steps]);
+          }
+          if (r.textDelta) {
+            displayAccum += r.textDelta;
+            setStreamedText(displayAccum);
+            setProgress((prev) =>
+              Math.max(
+                prev,
+                Math.min(
+                  92,
+                  14 +
+                    Math.min(52, Math.floor(displayAccum.length / 90)),
+                ),
+              ),
+            );
+          }
         }
       }
-      accumulated += decoder.decode();
-      setStreamedText(accumulated);
-      setProgress(100);
 
-      if (!user && !creditsUnlimited) {
+      if (!streamFatal) {
+        const finalChunk = decoder.decode();
+        if (finalChunk) {
+          const r3 = parser.push(finalChunk);
+          if (r3.fatal) {
+            const code = r3.fatal.error ?? "";
+            const msg =
+              r3.fatal.message ??
+              (code === "no_credits"
+                ? "You've used your available credits."
+                : code || "Request failed.");
+            if (code === "no_credits") setBuyOpen(true);
+            setError(msg);
+            setProgress(0);
+            displayAccum = "";
+            setStreamedText("");
+            streamFatal = true;
+          } else {
+            if (r3.steps.length) {
+              setGenerationSteps((prev) => [...prev, ...r3.steps]);
+            }
+            displayAccum += r3.textDelta;
+            setStreamedText(displayAccum);
+          }
+        }
+      }
+
+      if (!streamFatal) {
+        const tail = parser.end();
+        if (tail.steps.length) {
+          setGenerationSteps((prev) => [...prev, ...tail.steps]);
+        }
+        if (tail.textDelta) {
+          displayAccum += tail.textDelta;
+          setStreamedText(displayAccum);
+        }
+        setProgress(100);
+      }
+
+      if (!user && !creditsUnlimited && !streamFatal) {
         decrementGuestCredit();
         setCreditsRemaining(readGuestCreditsRemaining());
       }
 
-      if (!accumulated.trim()) {
+      const accumulated = displayAccum;
+      if (!streamFatal && !accumulated.trim()) {
         setError(
           "No text came back from the model. Check the browser Network tab for /api/generate, confirm OPENAI_API_KEY on the server, and try again.",
         );
@@ -697,23 +775,43 @@ export function HomeWorkspace({
           ) : null}
 
           {loading ? (
-            <div className="space-y-2">
+            <div className="space-y-3">
               <Progress
                 value={fetchingYoutubeTranscript ? 18 : progress}
                 className="w-full"
               >
                 <div className="flex w-full items-center justify-between gap-2">
                   <ProgressLabel>
-                    {fetchingYoutubeTranscript ? "YouTube" : "Generating"}
+                    {fetchingYoutubeTranscript
+                      ? "YouTube"
+                      : generationSteps.at(-1)?.label ?? "Generating"}
                   </ProgressLabel>
                   <ProgressValue />
                 </div>
               </Progress>
               <p className="text-muted-foreground text-xs">
                 {fetchingYoutubeTranscript
-                  ? "Fetching captions…"
-                  : "Streaming your clip package…"}
+                  ? "Fetching captions before generation…"
+                  : generationSteps.length > 0
+                    ? "Server steps stream first, then the model output appears in the preview."
+                    : "Connecting to the server…"}
               </p>
+              {generationSteps.length > 0 ? (
+                <ol className="border-border bg-muted/40 max-h-48 list-inside list-decimal overflow-y-auto rounded-lg border px-3 py-2 text-xs">
+                  {generationSteps.map((s, i) => (
+                    <li
+                      key={`${s.id}-${i}`}
+                      className={
+                        i === generationSteps.length - 1
+                          ? "text-foreground py-0.5 font-medium"
+                          : "text-muted-foreground py-0.5"
+                      }
+                    >
+                      {s.label}
+                    </li>
+                  ))}
+                </ol>
+              ) : null}
             </div>
           ) : null}
 
