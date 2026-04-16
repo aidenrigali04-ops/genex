@@ -1,4 +1,8 @@
 # Pins the start process so Railway does not rely on a custom dashboard command
 # like `npm run start:api` (which breaks if an older commit is deployed).
+#
+# Railpack build: if you see `failed to stat .../secrets/VAR_NAME`, Railway expects that
+# variable as a build-time secret. Fix: Service → Variables → add VAR_NAME (e.g.
+# NEXT_PUBLIC_GENEX_UNLIMITED_CREDITS=0), or remove VAR_NAME from shared / referenced vars.
 [deploy]
 startCommand = "npm start"
