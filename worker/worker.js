@@ -1,19 +1,20 @@
-"use strict";
-
 /**
  * GenX video worker — implements `worker/CONTRACT.md`.
  * Uses SUPABASE_SERVICE_ROLE_KEY (admin) for Storage and video_jobs updates.
  */
 
-const path = require("path");
-require("dotenv").config({ path: path.join(__dirname, ".env") });
-require("dotenv").config();
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import fs from "node:fs";
+import { execSync, spawn } from "node:child_process";
 
-const fs = require("fs");
-const { execSync, spawn } = require("child_process");
+import dotenv from "dotenv";
+import { createClient } from "@supabase/supabase-js";
+import OpenAI from "openai";
 
-const { createClient } = require("@supabase/supabase-js");
-const OpenAI = require("openai");
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.join(__dirname, ".env") });
+dotenv.config();
 
 const POLL_MS = 5000;
 const TMP_ROOT = "/tmp/genex";
@@ -225,8 +226,7 @@ function runSpawn(cmd, args, opts = {}) {
 
 function ffprobeDurationSeconds(filePath) {
   return new Promise((resolve, reject) => {
-    const { spawn: sp } = require("child_process");
-    const p = sp("ffprobe", [
+    const p = spawn("ffprobe", [
       "-v",
       "error",
       "-show_entries",
@@ -249,9 +249,8 @@ function ffprobeDurationSeconds(filePath) {
 }
 
 function ffprobeHasAudio(filePath) {
-  return new Promise((resolve, reject) => {
-    const { spawn: sp } = require("child_process");
-    const p = sp("ffprobe", [
+  return new Promise((resolve) => {
+    const p = spawn("ffprobe", [
       "-v",
       "error",
       "-select_streams",

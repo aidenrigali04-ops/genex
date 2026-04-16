@@ -37,10 +37,8 @@ import {
 import {
   CLIP_SECTIONS,
   deriveClipTitle,
-  estimateClipDurationSeconds,
   parseClipPackageSections,
   parseFormatTagsFromCreatorSignals,
-  parseLengthHintSeconds,
 } from "@/lib/clip-package";
 import { MAX_CLIP_SOURCE_CHARS } from "@/lib/clip-model-input";
 import {
@@ -54,7 +52,7 @@ import { decrementGuestCredit, readGuestCreditsRemaining } from "@/lib/guest-cre
 import { extractPlatformSection } from "@/lib/parse-generation-output";
 import { MAX_MEDIA_UPLOAD_BYTES } from "@/lib/media-upload-limits";
 import { isYoutubeVideoUrlForTranscript } from "@/lib/youtube-url";
-import { isPlatformId, type PlatformId } from "@/lib/platforms";
+import { type PlatformId } from "@/lib/platforms";
 import { VideoVariationWorkspace } from "@/components/video-variation-workspace";
 import { cn } from "@/lib/utils";
 
@@ -151,12 +149,11 @@ export function HomeWorkspace({
     if (user) setSignInOpen(false);
   }, [user]);
 
-  const selectedOrdered = CLIP_PLATFORMS;
   const clipPackageBody = useMemo(() => {
     const extracted = extractPlatformSection(
       streamedText,
       "clip_package",
-      selectedOrdered,
+      CLIP_PLATFORMS,
     );
     if (extracted.trim()) return extracted;
     if (/TOP CLIP MOMENTS/i.test(streamedText)) return streamedText.trim();
@@ -183,16 +180,8 @@ export function HomeWorkspace({
     return "";
   }, [clipPackageBody, parsedClipPackage, streamedText]);
 
-  const clipDurationEstimate = useMemo(
-    () => estimateClipDurationSeconds(parsedClipPackage.script),
-    [parsedClipPackage.script],
-  );
   const clipFormatTags = useMemo(
     () => parseFormatTagsFromCreatorSignals(parsedClipPackage.creator_signals),
-    [parsedClipPackage.creator_signals],
-  );
-  const clipLengthHintSeconds = useMemo(
-    () => parseLengthHintSeconds(parsedClipPackage.creator_signals),
     [parsedClipPackage.creator_signals],
   );
 
