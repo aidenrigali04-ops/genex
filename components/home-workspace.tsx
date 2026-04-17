@@ -58,6 +58,7 @@ import { MAX_MEDIA_UPLOAD_BYTES } from "@/lib/media-upload-limits";
 import { isYoutubeVideoUrlForTranscript } from "@/lib/youtube-url";
 import { type PlatformId } from "@/lib/platforms";
 import { GenerationFeedbackPanel } from "@/components/generation-feedback-panel";
+import { RatingWidget } from "@/components/rating-widget";
 import { Hero } from "@/components/genex/hero";
 import { HowItWorks } from "@/components/genex/how-it-works";
 import { PlatformsGrid } from "@/components/genex/platforms-grid";
@@ -567,6 +568,14 @@ export function HomeWorkspace({
     if (uploadFile) return `File: ${uploadFile.name}`;
     return "";
   }, [inputMode, text, url, uploadFile]);
+
+  /** Match saved `generations` row to the output currently shown (list is newest-first). */
+  const textRatingGenerationId = useMemo(() => {
+    if (!streamedText.trim()) return undefined;
+    const t = streamedText.trim();
+    const row = clips.find((c) => c.output.trim() === t);
+    return row?.id;
+  }, [streamedText, clips]);
 
   const openClip = (clip: ClipPackageHistoryItem) => {
     setStreamedText(clip.output);
@@ -1095,12 +1104,20 @@ export function HomeWorkspace({
                               </div>
 
                               {!loading && streamedText.trim() ? (
-                                <GenerationFeedbackPanel
-                                  mode="clip"
-                                  originalPrompt={clipOriginalPromptSummary || "Clip package"}
-                                  generationContext={lastClipGenerationContext}
-                                  variationsOutput={streamedText}
-                                />
+                                <>
+                                  <div className="rounded-xl bg-zinc-950 px-4 py-3 ring-1 ring-white/10">
+                                    <RatingWidget
+                                      kind="text"
+                                      generationId={textRatingGenerationId}
+                                    />
+                                  </div>
+                                  <GenerationFeedbackPanel
+                                    mode="clip"
+                                    originalPrompt={clipOriginalPromptSummary || "Clip package"}
+                                    generationContext={lastClipGenerationContext}
+                                    variationsOutput={streamedText}
+                                  />
+                                </>
                               ) : null}
                             </>
                           )}

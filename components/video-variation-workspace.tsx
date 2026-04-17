@@ -15,6 +15,7 @@ import type { ReactNode } from "react";
 import { toast } from "sonner";
 
 import { GenerationFeedbackPanel } from "@/components/generation-feedback-panel";
+import { RatingWidget } from "@/components/rating-widget";
 import { LazyVideoPlayer } from "@/components/lazy-video-player";
 import { SettingsRail } from "@/components/genex/settings-rail";
 import { RefinementChatDialog } from "@/components/refinement-chat-dialog";
@@ -653,6 +654,18 @@ export const VideoVariationWorkspace = forwardRef<
     setRefinementOpen(true);
   };
 
+  const hasInput = useMemo(() => {
+    if (sourceMode === "upload") return videoFile != null;
+    const trimmed = youtubeUrl.trim();
+    if (!trimmed) return false;
+    try {
+      const u = new URL(trimmed);
+      return u.protocol === "http:" || u.protocol === "https:";
+    } catch {
+      return false;
+    }
+  }, [sourceMode, videoFile, youtubeUrl]);
+
   const submitWithRefinementContext = async (ctx: GenerationContextV1) => {
     setRefinementOpen(false);
     setSubmitting(true);
@@ -843,6 +856,22 @@ export const VideoVariationWorkspace = forwardRef<
                 disabled={!user || submitting}
               />
             </div>
+
+            {hasInput ? (
+              <div
+                className={cn(
+                  "flex flex-wrap items-center gap-2 rounded-xl border px-4 py-3 text-sm",
+                  "border-[#E8E4F8] bg-[#FAFAFC] text-[#6B6B8A]",
+                  "dark:border-white/10 dark:bg-white/4 dark:text-white/55",
+                )}
+              >
+                <span>⚡ {VIDEO_JOB_CREDIT_COST} credits</span>
+                <span className="text-[#C4BAF0] dark:text-white/25">·</span>
+                <span>~2–5 min</span>
+                <span className="text-[#C4BAF0] dark:text-white/25">·</span>
+                <span>5 variations from your footage</span>
+              </div>
+            ) : null}
 
             {user && !creditsUnlimited ? (
               <p className="text-sm text-amber-700 dark:text-amber-400/90">
@@ -1054,6 +1083,11 @@ export const VideoVariationWorkspace = forwardRef<
                         );
                       })}
                     </div>
+                    {jobId ? (
+                      <div className="rounded-xl bg-zinc-950 px-4 py-3 ring-1 ring-white/10">
+                        <RatingWidget kind="video" jobId={jobId} />
+                      </div>
+                    ) : null}
                     <GenerationFeedbackPanel
                       mode="video"
                       videoJobId={jobId}
