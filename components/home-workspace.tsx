@@ -146,6 +146,7 @@ export function HomeWorkspace({
 
   const abortRef = useRef<AbortController | null>(null);
   const pendingGenerationContextRef = useRef<GenerationContextV1 | null>(null);
+  const startTsRef = useRef<number | null>(null);
 
   const [refinementOpen, setRefinementOpen] = useState(false);
   const [lastClipGenerationContext, setLastClipGenerationContext] =
@@ -210,6 +211,12 @@ export function HomeWorkspace({
     [parsedClipPackage.creator_signals],
   );
 
+  const getElapsed = (ts?: number) => {
+    if (!ts || startTsRef.current == null) return null;
+    const s = Math.round((ts - startTsRef.current) / 1000);
+    return `+${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  };
+
   const runGeneration = useCallback(async () => {
     setError(null);
     setCopiedId(null);
@@ -245,6 +252,7 @@ export function HomeWorkspace({
 
     setLoading(true);
     setProgress(8);
+    startTsRef.current = null;
     setGenerationSteps([]);
     setStreamedText("");
 
@@ -409,6 +417,12 @@ export function HomeWorkspace({
             break;
           }
           if (r.steps.length) {
+            for (const st of r.steps) {
+              if (startTsRef.current === null && typeof st.ts === "number") {
+                startTsRef.current = st.ts;
+                break;
+              }
+            }
             setGenerationSteps((prev) => [...prev, ...r.steps]);
           }
           if (r.textDelta) {
@@ -447,6 +461,12 @@ export function HomeWorkspace({
             streamFatal = true;
           } else {
             if (r3.steps.length) {
+              for (const st of r3.steps) {
+                if (startTsRef.current === null && typeof st.ts === "number") {
+                  startTsRef.current = st.ts;
+                  break;
+                }
+              }
               setGenerationSteps((prev) => [...prev, ...r3.steps]);
             }
             displayAccum += r3.textDelta;
@@ -458,6 +478,12 @@ export function HomeWorkspace({
       if (!streamFatal) {
         const tail = parser.end();
         if (tail.steps.length) {
+          for (const st of tail.steps) {
+            if (startTsRef.current === null && typeof st.ts === "number") {
+              startTsRef.current = st.ts;
+              break;
+            }
+          }
           setGenerationSteps((prev) => [...prev, ...tail.steps]);
         }
         if (tail.textDelta) {
@@ -877,17 +903,23 @@ export function HomeWorkspace({
                                 : "Connecting to the server…"}
                           </p>
                           {generationSteps.length > 0 ? (
-                            <ol className="max-h-48 list-inside list-decimal overflow-y-auto rounded-lg border border-[#E8E4F8] bg-[#FAFAFC] px-3 py-2 text-xs dark:border-white/10 dark:bg-zinc-900/50">
+                            <ol className="max-h-48 list-none space-y-0.5 overflow-y-auto rounded-lg border border-[#E8E4F8] bg-[#FAFAFC] px-3 py-2 text-xs dark:border-white/10 dark:bg-zinc-900/50">
                               {generationSteps.map((s, i) => (
                                 <li
                                   key={`${s.id}-${i}`}
                                   className={
                                     i === generationSteps.length - 1
-                                      ? "text-foreground py-0.5 font-medium"
-                                      : "text-muted-foreground py-0.5"
+                                      ? "flex items-center gap-2 py-0.5 font-medium text-foreground"
+                                      : "flex items-center gap-2 py-0.5 text-muted-foreground"
                                   }
                                 >
-                                  {s.label}
+                                  <span className="w-4 shrink-0 tabular-nums opacity-70">
+                                    {i + 1}.
+                                  </span>
+                                  <span className="min-w-0 flex-1">{s.label}</span>
+                                  <span className="ml-auto text-xs tabular-nums text-muted-foreground dark:text-white/35">
+                                    {getElapsed(s.ts)}
+                                  </span>
                                 </li>
                               ))}
                             </ol>
@@ -958,79 +990,93 @@ export function HomeWorkspace({
                         </div>
 
                         <div className="space-y-4">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="inline-flex rounded-full border border-[#6C47FF]/35 bg-[#6C47FF]/10 px-3 py-1 text-xs font-medium text-[#6C47FF]">
-                              TikTok · Reels · Shorts
-                            </span>
-                            {clipFormatTags.map((tag) => (
-                              <span
-                                key={tag}
-                                className="rounded-full bg-[#F0EFFE] px-2.5 py-0.5 text-xs font-medium text-[#0F0A1E] dark:bg-zinc-800 dark:text-zinc-200"
-                              >
-                                {tag}
-                              </span>
-                            ))}
-                          </div>
-
-                          <div className="mx-auto w-[min(100%,240px)] rounded-[2rem] border-4 border-[#E8E4F8] bg-[#0F0A1E] p-2 dark:border-white/10">
-                            <div
-                              className={cn(
-                                "relative aspect-9/16 min-h-[200px] overflow-y-auto rounded-[1.5rem] bg-zinc-950 p-3 text-[12px] leading-snug text-zinc-100",
-                                loading && "genex-shimmer",
-                              )}
-                            >
-                              <p className="mb-2 text-[10px] tracking-wide text-zinc-500 uppercase">
-                                9:16 preview
-                              </p>
-                              <pre className="font-sans wrap-break-word whitespace-pre-wrap">
-                                {verticalPreviewText.trim()
-                                  ? verticalPreviewText
-                                  : loading
-                                    ? "Streaming…"
-                                    : "Script appears here."}
-                              </pre>
+                          {loading && !streamedText.trim() ? (
+                            <div className="space-y-3 animate-pulse">
+                              {[...Array(6)].map((_, i) => (
+                                <div
+                                  key={i}
+                                  className="h-4 rounded-full bg-white/8"
+                                  style={{ width: `${85 - i * 8}%` }}
+                                />
+                              ))}
                             </div>
-                          </div>
+                          ) : (
+                            <>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="inline-flex rounded-full border border-[#6C47FF]/35 bg-[#6C47FF]/10 px-3 py-1 text-xs font-medium text-[#6C47FF]">
+                                  TikTok · Reels · Shorts
+                                </span>
+                                {clipFormatTags.map((tag) => (
+                                  <span
+                                    key={tag}
+                                    className="rounded-full bg-[#F0EFFE] px-2.5 py-0.5 text-xs font-medium text-[#0F0A1E] dark:bg-zinc-800 dark:text-zinc-200"
+                                  >
+                                    {tag}
+                                  </span>
+                                ))}
+                              </div>
 
-                          <div className="grid gap-3">
-                            {CLIP_SECTIONS.map((section) => {
-                              const block = parsedClipPackage[section.id];
-                              return (
-                                <Card
-                                  key={section.id}
-                                  size="sm"
-                                  className="border-[#E8E4F8] shadow-sm transition duration-200 hover:scale-[1.02] hover:shadow-md dark:border-white/10"
+                              <div className="mx-auto w-[min(100%,240px)] rounded-[2rem] border-4 border-[#E8E4F8] bg-[#0F0A1E] p-2 dark:border-white/10">
+                                <div
+                                  className={cn(
+                                    "relative aspect-9/16 min-h-[200px] overflow-y-auto rounded-[1.5rem] bg-zinc-950 p-3 text-[12px] leading-snug text-zinc-100",
+                                    loading && "genex-shimmer",
+                                  )}
                                 >
-                                  <CardHeader className="flex-row items-start justify-between gap-2 space-y-0">
-                                    <CardTitle className="text-base">{section.label}</CardTitle>
-                                    <Button
-                                      type="button"
-                                      size="xs"
-                                      variant="outline"
-                                      disabled={!block}
-                                      onClick={() => void copyText(section.id, block)}
-                                    >
-                                      {copiedId === section.id ? "Copied" : "Copy"}
-                                    </Button>
-                                  </CardHeader>
-                                  <CardContent>
-                                    <pre className="font-sans text-sm whitespace-pre-wrap wrap-break-word">
-                                      {block || (loading ? "Waiting…" : "No content yet.")}
-                                    </pre>
-                                  </CardContent>
-                                </Card>
-                              );
-                            })}
-                          </div>
+                                  <p className="mb-2 text-[10px] tracking-wide text-zinc-500 uppercase">
+                                    9:16 preview
+                                  </p>
+                                  <pre className="font-sans wrap-break-word whitespace-pre-wrap">
+                                    {verticalPreviewText.trim()
+                                      ? verticalPreviewText
+                                      : loading
+                                        ? "Streaming…"
+                                        : "Script appears here."}
+                                  </pre>
+                                </div>
+                              </div>
 
-                          {!loading && streamedText.trim() ? (
-                            <GenerationFeedbackPanel
-                              mode="clip"
-                              originalPrompt={clipOriginalPromptSummary || "Clip package"}
-                              generationContext={lastClipGenerationContext}
-                              variationsOutput={streamedText}
-                            />
-                          ) : null}
+                              <div className="grid gap-3">
+                                {CLIP_SECTIONS.map((section) => {
+                                  const block = parsedClipPackage[section.id];
+                                  return (
+                                    <Card
+                                      key={section.id}
+                                      size="sm"
+                                      className="border-[#E8E4F8] shadow-sm transition duration-200 hover:scale-[1.02] hover:shadow-md dark:border-white/10"
+                                    >
+                                      <CardHeader className="flex-row items-start justify-between gap-2 space-y-0">
+                                        <CardTitle className="text-base">{section.label}</CardTitle>
+                                        <Button
+                                          type="button"
+                                          size="xs"
+                                          variant="outline"
+                                          disabled={!block}
+                                          onClick={() => void copyText(section.id, block)}
+                                        >
+                                          {copiedId === section.id ? "Copied" : "Copy"}
+                                        </Button>
+                                      </CardHeader>
+                                      <CardContent>
+                                        <pre className="font-sans text-sm whitespace-pre-wrap wrap-break-word">
+                                          {block || (loading ? "Waiting…" : "No content yet.")}
+                                        </pre>
+                                      </CardContent>
+                                    </Card>
+                                  );
+                                })}
+                              </div>
+
+                              {!loading && streamedText.trim() ? (
+                                <GenerationFeedbackPanel
+                                  mode="clip"
+                                  originalPrompt={clipOriginalPromptSummary || "Clip package"}
+                                  generationContext={lastClipGenerationContext}
+                                  variationsOutput={streamedText}
+                                />
+                              ) : null}
+                            </>
+                          )}
                         </div>
                       </section>
                     )}

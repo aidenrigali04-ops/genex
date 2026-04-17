@@ -13,6 +13,7 @@ import type { ReactNode } from "react";
 import { toast } from "sonner";
 
 import { GenerationFeedbackPanel } from "@/components/generation-feedback-panel";
+import { LazyVideoPlayer } from "@/components/lazy-video-player";
 import { SettingsRail } from "@/components/genex/settings-rail";
 import { RefinementChatDialog } from "@/components/refinement-chat-dialog";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -61,7 +62,7 @@ type JobRow = {
   input_type?: string;
   storage_path?: string | null;
   pending_storage_path?: string | null;
-  variations: unknown;
+  variations?: unknown;
   error_message?: string | null;
   updated_at?: string;
   generation_context?: unknown;
@@ -339,6 +340,11 @@ function VariationHoverVideo({ src, instanceId }: { src: string; instanceId: str
   const preview = useContext(VariationPreviewRegistryContext);
   const [posterUrl, setPosterUrl] = useState<string | null>(null);
   const posterDoneRef = useRef(false);
+  const [posterLayoutKey, setPosterLayoutKey] = useState(0);
+
+  const onLazyVideoReady = useCallback(() => {
+    setPosterLayoutKey((k) => k + 1);
+  }, []);
 
   const pauseStill = useCallback(() => {
     const el = ref.current;
@@ -404,7 +410,7 @@ function VariationHoverVideo({ src, instanceId }: { src: string; instanceId: str
       el.removeEventListener("loadeddata", onLoadedData);
       el.removeEventListener("seeked", onSeeked);
     };
-  }, [src]);
+  }, [src, posterLayoutKey]);
 
   const play = () => {
     const el = ref.current;
@@ -434,16 +440,19 @@ function VariationHoverVideo({ src, instanceId }: { src: string; instanceId: str
         }
       }}
     >
-      <video
+      <LazyVideoPlayer
         ref={ref}
         src={src}
         poster={posterUrl ?? undefined}
-        className="aspect-9/16 max-h-[min(560px,70vh)] w-full transform-gpu bg-black object-cover"
+        className="aspect-9/16 max-h-[min(560px,70vh)] w-full transform-gpu bg-black"
+        videoClassName="h-full w-full transform-gpu object-cover"
         muted
         playsInline
         loop
         controls
+        crossOrigin="anonymous"
         preload="metadata"
+        onVideoMount={onLazyVideoReady}
       />
       <div
         aria-hidden
@@ -507,11 +516,15 @@ export function VideoVariationWorkspace({
 
   const fetchJob = useCallback(
     async (id: string) => {
-      const res = await fetch(`/api/video-jobs/${id}`, {
-        credentials: "same-origin",
-        cache: "no-store",
-      });
-      if (!res.ok) {
+      const fetchOnce = async (slim: boolean) => {
+        const url = `/api/video-jobs/${id}${slim ? "?slim=true" : ""}`;
+        return fetch(url, {
+          credentials: "same-origin",
+          cache: "no-store",
+        });
+      };
+
+      const readErrorMessage = async (res: Response) => {
         const raw = await res.text();
         let msg = raw || res.statusText;
         try {
@@ -521,11 +534,27 @@ export function VideoVariationWorkspace({
         } catch {
           /* keep */
         }
-        setError(`Could not load job (${res.status}): ${msg}`);
+        return msg;
+      };
+
+      let res = await fetchOnce(true);
+      if (!res.ok) {
+        setError(`Could not load job (${res.status}): ${await readErrorMessage(res)}`);
         return;
       }
       setError(null);
-      const row = (await res.json()) as JobRow;
+      let row = (await res.json()) as JobRow;
+
+      if (row.status === "complete") {
+        res = await fetchOnce(false);
+        if (!res.ok) {
+          setError(
+            `Could not load job (${res.status}): ${await readErrorMessage(res)}`,
+          );
+          return;
+        }
+        row = (await res.json()) as JobRow;
+      }
       setJobStatus(row.status);
       const awaitingLink =
         row.status === "queued" &&

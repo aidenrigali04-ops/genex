@@ -20,11 +20,18 @@ export async function GET(
     return Response.json({ error: "sign_in_required" }, { status: 401 });
   }
 
+  const url = new URL(_req.url);
+  const slim = url.searchParams.get("slim") === "true";
+
+  // Slim skips heavy JSON (variations, generation_context) and prompt/input_url. Small
+  // storage columns stay so upload jobs can show “awaiting storage link” while polling.
+  const selectFields = slim
+    ? "id, user_id, input_type, storage_path, pending_storage_path, status, error_message, created_at, updated_at"
+    : "id, user_id, input_type, input_url, storage_path, pending_storage_path, prompt, status, variations, error_message, created_at, updated_at, generation_context";
+
   const { data: job, error } = await supabase
     .from("video_jobs")
-    .select(
-      "id, user_id, input_type, input_url, storage_path, pending_storage_path, prompt, status, variations, error_message, created_at, updated_at, generation_context",
-    )
+    .select(selectFields)
     .eq("id", id)
     .eq("user_id", session.user.id)
     .maybeSingle();
@@ -38,13 +45,17 @@ export async function GET(
     return Response.json({ error: "not_found" }, { status: 404 });
   }
 
+  const j = job as unknown as { status: string; variations: unknown };
+
   const variationsSigned =
-    job.status === "complete"
-      ? await signVideoJobVariationsForResponse(supabase, job.variations)
-      : job.variations;
+    !slim && j.status === "complete"
+      ? await signVideoJobVariationsForResponse(supabase, j.variations)
+      : slim
+        ? null
+        : j.variations;
 
   return Response.json(
-    { ...job, variations: variationsSigned },
+    { ...(job as unknown as Record<string, unknown>), variations: variationsSigned },
     {
       headers: {
         "Cache-Control": "private, no-store, max-age=0, must-revalidate",

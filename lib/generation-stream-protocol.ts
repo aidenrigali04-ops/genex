@@ -2,7 +2,12 @@
 export const GENEX_STEP_PREFIX = "[[GENEX:STEP]]";
 export const GENEX_FATAL_PREFIX = "[[GENEX:FATAL]]";
 
-export type GenerationUiStep = { id: string; label: string };
+export type GenerationUiStep = {
+  id: string;
+  label: string;
+  /** Unix ms — added by the server */
+  ts?: number;
+};
 
 export type GenerationFatalPayload = {
   error?: string;
@@ -73,9 +78,14 @@ export function createGenerationStreamParser(): GenerationStreamParser {
           const o = JSON.parse(line.slice(GENEX_STEP_PREFIX.length)) as {
             id?: string;
             label?: string;
+            ts?: unknown;
           };
           if (typeof o.id === "string" && typeof o.label === "string") {
-            steps.push({ id: o.id, label: o.label });
+            steps.push({
+              id: o.id,
+              label: o.label,
+              ts: typeof o.ts === "number" ? o.ts : undefined,
+            });
           }
         } catch {
           /* ignore malformed step line */

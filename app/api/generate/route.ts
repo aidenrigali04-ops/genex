@@ -253,7 +253,7 @@ export async function POST(req: Request) {
       const step = (id: string, label: string) => {
         controller.enqueue(
           encoder.encode(
-            `${GENEX_STEP_PREFIX}${JSON.stringify({ id, label })}\n`,
+            `${GENEX_STEP_PREFIX}${JSON.stringify({ id, label, ts: Date.now() })}\n`,
           ),
         );
       };
