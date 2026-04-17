@@ -36,7 +36,7 @@ function wantsBlog(platformIds: PlatformId[]): boolean {
   return platformIds.includes("blog");
 }
 
-/** Max 3 question steps before summary (per product spec). */
+/** Max 4 question steps before summary (per product spec). */
 export function buildRefinementSteps(
   kind: RefinementKind,
   platformIds: PlatformId[],
@@ -82,6 +82,19 @@ export function buildRefinementSteps(
         ],
         allowCustom: true,
       },
+      {
+        id: "hook_style",
+        message: "What type of hook do you want leading each clip?",
+        fieldKey: "hookStyle",
+        pills: [
+          { label: "Curiosity gap", value: "Open with a curiosity gap" },
+          { label: "Bold claim", value: "Lead with a bold claim" },
+          { label: "Story", value: "Start mid-story" },
+          { label: "Question", value: "Direct question to viewer" },
+          { label: "Custom", value: "__custom__" },
+        ],
+        allowCustom: true,
+      },
     ];
   }
 
@@ -115,14 +128,27 @@ export function buildRefinementSteps(
         allowCustom: true,
       },
       {
-        id: "niche",
-        message: "What niche or account theme should the voice match?",
-        fieldKey: "niche",
+        id: "audience",
+        message: "Who watches your content — describe them in one word.",
+        fieldKey: "audiencePersona",
         pills: [
-          { label: "Faith / values", value: "Faith-forward or values-led" },
-          { label: "Fitness", value: "Fitness / health" },
-          { label: "Travel", value: "Travel / lifestyle" },
-          { label: "Comedy", value: "Comedy / personality-forward" },
+          { label: "Builders", value: "Builders / founders / makers" },
+          { label: "Fitness people", value: "Fitness-focused audience" },
+          { label: "Gen Z", value: "Gen Z creators and explorers" },
+          { label: "Professionals", value: "Working professionals" },
+          { label: "Custom", value: "__custom__" },
+        ],
+        allowCustom: true,
+      },
+      {
+        id: "hook_style",
+        message: "What hook style usually works best for your audience?",
+        fieldKey: "hookStyle",
+        pills: [
+          { label: "Curiosity gap", value: "Open with a curiosity gap or mystery" },
+          { label: "Bold claim", value: "Lead with a bold or contrarian claim" },
+          { label: "Story opener", value: "Start mid-story with tension" },
+          { label: "Question", value: "Open with a direct question to viewer" },
           { label: "Custom", value: "__custom__" },
         ],
         allowCustom: true,

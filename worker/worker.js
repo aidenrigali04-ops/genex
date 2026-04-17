@@ -402,6 +402,14 @@ function normalizeWhisperSegments(transcription) {
 const VARIATION_PLAN_MAX_TOTAL_SEC = 100;
 
 const GPT_SYSTEM = `You are a short-form video editor AI. Given a video transcript with timestamps and a user's creative prompt, plan exactly 5 distinct video variations for TikTok/Reels/Shorts.
+
+Critical rules about variation design:
+- READ the job_prompt carefully. If the user specified a goal (e.g. "Grow followers", "Promote a product"), EVERY variation label and segment selection must serve that goal.
+- If the user specified a niche (e.g. "Fitness", "Faith-forward"), the style_note for each variation must reflect that niche's native content style.
+- If the user specified a delivery (e.g. "captions on screen", "voiceover"), the caption_overlay and style_note must reflect that.
+- Make each of the 5 variations genuinely different in angle, not just different segments of the same narrative. Name them descriptively: "Hook-first cut", "Story arc", "Contrarian angle", "CTA-led", "Transformation edit".
+- Never use generic labels like "Variation 1" or "Short clip".
+
 Rules for total runtime of each variation (sum of segment lengths after clipping to 0…video_duration_sec):
 - If video_duration_sec >= 15: each variation should total about 15–100 seconds (prefer 20–60s when the source allows; use up to ~100s for longer sources when it serves the edit).
 - If video_duration_sec < 15: use as much strong footage as fits—each variation should total roughly 70–100% of the source length (still use multiple segments when it helps).
@@ -557,18 +565,36 @@ async function planVariationsWithGptOnce(
 function formatGenerationContextWorker(gc) {
   if (gc == null || typeof gc !== "object") return "";
   if (gc.version === 1 && gc.answers && typeof gc.answers === "object") {
-    const lines = [];
+    const answers = gc.answers;
+    const pick = (key) => String(answers[key] ?? "").trim();
+
+    const goalFromPrimary = pick("primaryOutcome");
+    const goalFromGoal = pick("goal");
+    const userGoal = [goalFromPrimary, goalFromGoal].filter(Boolean).join(" | ") || "(not specified)";
+    const userNiche = pick("niche") || "(not specified)";
+    const delivery = pick("voiceoverCaptions") || "(not specified)";
+
+    const mappedKeys = new Set(["primaryOutcome", "goal", "niche", "voiceoverCaptions"]);
+    const briefParts = [];
     if (Array.isArray(gc.platforms) && gc.platforms.length) {
-      lines.push(`Platforms: ${gc.platforms.join(", ")}`);
+      briefParts.push(`Platforms: ${gc.platforms.join(", ")}`);
     }
-    for (const [k, v] of Object.entries(gc.answers)) {
+    for (const [k, v] of Object.entries(answers)) {
+      if (mappedKeys.has(k)) continue;
       const t = String(v ?? "").trim();
-      if (t) lines.push(`${k}: ${t}`);
+      if (t) briefParts.push(`${k}: ${t}`);
     }
     if (gc.forkedFromJobId) {
-      lines.push("Follow-up refinement job (prioritize latest instructions).");
+      briefParts.push("Follow-up refinement job (prioritize latest instructions).");
     }
-    return lines.join(". ");
+    const editorBrief = briefParts.length ? briefParts.join("\n") : "(none)";
+
+    return [
+      `USER GOAL: ${userGoal}`,
+      `USER NICHE: ${userNiche}`,
+      `DELIVERY: ${delivery}`,
+      `EDITOR BRIEF:\n${editorBrief}`,
+    ].join("\n");
   }
   try {
     return `User context: ${JSON.stringify(gc)}`;
@@ -654,7 +680,28 @@ function buildFilterGraph(jobId, segments, durationSec, hasAudio, captionOverlay
     if (fontfile) {
       const escFont = fontfile.replace(/'/g, "'\\''");
       const text = escapeDrawtext(String(captionOverlay).trim());
-      graph += `;[vscaled]drawtext=fontfile='${escFont}':fontsize=52:fontcolor=white:borderw=2:bordercolor=black@0.8:text='${text}':x=(w-text_w)/2:y=h-200:box=1:boxcolor=black@0.55:boxborderw=18[vout]`;
+      const style = process.env.GENEX_CAPTION_STYLE ?? "default";
+
+      // Safe zone: keep captions in bottom-third, 80px margin from edge
+      const yPos = style === "top" ? "80" : "h-200";
+      const fontSize = style === "large" ? "64" : "52";
+      const boxAlpha = style === "minimal" ? "0.0" : "0.55";
+      const borderAlpha = style === "minimal" ? "1" : "0";
+
+      graph += `;[vscaled]drawtext=` +
+        `fontfile='${escFont}':` +
+        `fontsize=${fontSize}:` +
+        `fontcolor=white:` +
+        `borderw=3:` +
+        `bordercolor=black@0.9:` +
+        `text='${text}':` +
+        `x=(w-text_w)/2:` +
+        `y=${yPos}:` +
+        `box=1:` +
+        `boxcolor=black@${boxAlpha}:` +
+        `boxborderw=20:` +
+        `line_spacing=8` +
+        `[vout]`;
       outVideoTag = "vout";
     } else {
       log(jobId, "No caption font found; skipping caption overlay.");

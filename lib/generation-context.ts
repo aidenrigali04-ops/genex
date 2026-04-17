@@ -26,7 +26,7 @@ export function isGenerationContextV1(v: unknown): v is GenerationContextV1 {
   );
 }
 
-/** Single paragraph for system / worker prompts */
+/** Structured imperative blocks for system / worker prompts */
 export function formatGenerationContextForPrompt(raw: unknown): string {
   if (!raw) return "";
   if (!isGenerationContextV1(raw)) {
@@ -36,15 +36,22 @@ export function formatGenerationContextForPrompt(raw: unknown): string {
       return "";
     }
   }
-  const platformLine =
-    raw.platforms.length > 0
-      ? `Platforms: ${raw.platforms.join(", ")}.`
-      : "";
-  const lines = Object.entries(raw.answers)
-    .filter(([, v]) => String(v).trim().length > 0)
-    .map(([k, v]) => `${humanizeKey(k)}: ${String(v).trim()}`);
-  const body = [platformLine, ...lines].filter(Boolean).join(" ");
-  return body.trim();
+  const lines: string[] = [];
+  lines.push("=== USER REQUIREMENTS — HONOR ALL OF THESE EXACTLY ===");
+  if (raw.platforms.length > 0) {
+    lines.push(`• Target platforms: ${raw.platforms.join(", ")}`);
+  }
+  for (const [k, v] of Object.entries(raw.answers)) {
+    const val = String(v).trim();
+    if (!val) continue;
+    const label = humanizeKey(k);
+    lines.push(`• ${label}: ${val}`);
+  }
+  lines.push("=== END USER REQUIREMENTS ===");
+  lines.push(
+    "Do NOT ignore any requirement above. Apply every constraint literally.",
+  );
+  return lines.join("\n");
 }
 
 function humanizeKey(key: string): string {

@@ -136,9 +136,7 @@ function createGenerationStreamText(opts: {
     : GENERIC_SYSTEM_PROMPT;
   const ctxBlock = formatGenerationContextForPrompt(generationContext ?? null);
   const systemPrompt =
-    (ctxBlock
-      ? `User context from pre-generation refinement (honor every constraint):\n${ctxBlock}\n\n`
-      : "") + appendPresetToSystemPrompt(baseSystem, preset);
+    (ctxBlock ? `${ctxBlock}\n\n` : "") + appendPresetToSystemPrompt(baseSystem, preset);
 
   const userPrompt = `Repurpose the source content for ONLY the following platforms, in this exact order.
 
