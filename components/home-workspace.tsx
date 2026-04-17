@@ -66,7 +66,10 @@ import { SiteFooter } from "@/components/genex/site-footer";
 import { SiteNav } from "@/components/genex/site-nav";
 import { WorkspaceChrome } from "@/components/genex/workspace-chrome";
 import { RefinementChatDialog } from "@/components/refinement-chat-dialog";
-import { VideoVariationWorkspace } from "@/components/video-variation-workspace";
+import {
+  VideoVariationWorkspace,
+  type VideoVariationWorkspaceHandle,
+} from "@/components/video-variation-workspace";
 import type { GenerationContextV1 } from "@/lib/generation-context";
 import { isGenerationContextV1 } from "@/lib/generation-context";
 import { cn } from "@/lib/utils";
@@ -147,6 +150,7 @@ export function HomeWorkspace({
   const abortRef = useRef<AbortController | null>(null);
   const pendingGenerationContextRef = useRef<GenerationContextV1 | null>(null);
   const startTsRef = useRef<number | null>(null);
+  const videoWorkspaceRef = useRef<VideoVariationWorkspaceHandle | null>(null);
 
   const [refinementOpen, setRefinementOpen] = useState(false);
   const [lastClipGenerationContext, setLastClipGenerationContext] =
@@ -677,6 +681,26 @@ export function HomeWorkspace({
     else setSignInOpen(true);
   };
 
+  const openWorkspaceSettings = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const wide = window.matchMedia("(min-width: 1024px)").matches;
+    const railId =
+      workspaceTab === "clip" ? "clip-settings-rail" : "video-settings-rail";
+    if (wide) {
+      document.getElementById(railId)?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+        inline: "nearest",
+      });
+      return;
+    }
+    if (workspaceTab === "clip") {
+      setClipSettingsOpen(true);
+    } else {
+      videoWorkspaceRef.current?.openSettings();
+    }
+  }, [workspaceTab]);
+
   return (
     <div className="flex min-h-screen flex-col">
       <SiteNav
@@ -693,6 +717,7 @@ export function HomeWorkspace({
             workspaceTab={workspaceTab}
             onWorkspaceTab={setWorkspaceTab}
             onUpgrade={() => setBuyOpen(true)}
+            onOpenSettings={openWorkspaceSettings}
             onPlayPreview={() => {
               const id = workspaceTab === "clip" ? "output-section" : "video-output";
               document.getElementById(id)?.scrollIntoView({
@@ -705,6 +730,7 @@ export function HomeWorkspace({
           <div className="p-4 sm:p-6 lg:p-8">
             {workspaceTab === "video" ? (
               <VideoVariationWorkspace
+                ref={videoWorkspaceRef}
                 hideMarketingTitle
                 user={user}
                 creditsRemaining={creditsRemaining}
@@ -724,6 +750,7 @@ export function HomeWorkspace({
                         variant="outline"
                         size="sm"
                         className="rounded-full border-[#E8E4F8]"
+                        aria-label="Open settings"
                         onClick={() => setClipSettingsOpen(true)}
                       >
                         Settings
@@ -1082,7 +1109,9 @@ export function HomeWorkspace({
                     )}
                   </div>
 
-                  <div className="hidden lg:block lg:min-w-0">{clipSettingsRail}</div>
+                  <div id="clip-settings-rail" className="hidden lg:block lg:min-w-0">
+                    {clipSettingsRail}
+                  </div>
                 </div>
 
                 <Dialog open={clipSettingsOpen} onOpenChange={setClipSettingsOpen}>

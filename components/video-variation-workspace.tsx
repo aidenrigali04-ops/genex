@@ -2,9 +2,11 @@
 
 import {
   createContext,
+  forwardRef,
   useCallback,
   useContext,
   useEffect,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState,
@@ -466,16 +468,24 @@ function VariationHoverVideo({ src, instanceId }: { src: string; instanceId: str
   );
 }
 
-export function VideoVariationWorkspace({
-  user,
-  creditsRemaining,
-  creditsUnlimited,
-  setCreditsRemaining,
-  onOpenBuy,
-  onOpenSignIn,
-  onJobFinished,
-  hideMarketingTitle = false,
-}: Props) {
+export type VideoVariationWorkspaceHandle = {
+  openSettings: () => void;
+};
+
+export const VideoVariationWorkspace = forwardRef<
+  VideoVariationWorkspaceHandle,
+  Props
+>(function VideoVariationWorkspace(props, ref) {
+  const {
+    user,
+    creditsRemaining,
+    creditsUnlimited,
+    setCreditsRemaining,
+    onOpenBuy,
+    onOpenSignIn,
+    onJobFinished,
+    hideMarketingTitle = false,
+  } = props;
   const [sourceMode, setSourceMode] = useState<"upload" | "url">("upload");
   const [prompt, setPrompt] = useState("");
   const [youtubeUrl, setYoutubeUrl] = useState("");
@@ -506,6 +516,12 @@ export function VideoVariationWorkspace({
   /** True while a direct-upload job is queued but `storage_path` is not linked yet (worker cannot claim). */
   const [jobAwaitingUploadLink, setJobAwaitingUploadLink] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  useImperativeHandle(ref, () => ({
+    openSettings: () => {
+      setSettingsOpen(true);
+    },
+  }));
 
   const stopPoll = () => {
     if (pollRef.current) {
@@ -730,6 +746,7 @@ export function VideoVariationWorkspace({
               variant="outline"
               size="sm"
               className="rounded-full border-[#E8E4F8]"
+              aria-label="Open settings"
               onClick={() => setSettingsOpen(true)}
             >
               Settings
@@ -1065,7 +1082,9 @@ export function VideoVariationWorkspace({
           )}
         </div>
 
-        <div className="hidden lg:block lg:min-w-0">{settingsRail}</div>
+        <div id="video-settings-rail" className="hidden lg:block lg:min-w-0">
+          {settingsRail}
+        </div>
       </div>
 
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
@@ -1096,4 +1115,6 @@ export function VideoVariationWorkspace({
       />
     </div>
   );
-}
+});
+
+VideoVariationWorkspace.displayName = "VideoVariationWorkspace";

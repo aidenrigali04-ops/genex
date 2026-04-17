@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Bell, ChevronDown, Play } from "lucide-react";
+import { Bell, ChevronDown, Play, Settings } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -19,6 +19,8 @@ export type WorkspaceChromeProps = {
   workspaceTab: "video" | "clip";
   onWorkspaceTab: (tab: "video" | "clip") => void;
   onUpgrade: () => void;
+  /** Opens settings sheet on small screens, or scrolls to the settings rail on large screens. */
+  onOpenSettings?: () => void;
   onPlayPreview?: () => void;
   accountSection?: ReactNode;
 };
@@ -33,6 +35,7 @@ export function WorkspaceChrome({
   workspaceTab,
   onWorkspaceTab,
   onUpgrade,
+  onOpenSettings,
   onPlayPreview,
   accountSection,
 }: WorkspaceChromeProps) {
@@ -50,9 +53,10 @@ export function WorkspaceChrome({
             variant="outline"
             size="sm"
             className="gap-1.5 rounded-full border-[#E8E4F8] bg-white font-medium dark:border-white/15 dark:bg-zinc-900"
+            aria-label={`Workspace mode: ${TAB_LABEL[workspaceTab]}. Choose Video or Clip.`}
           >
             {TAB_LABEL[workspaceTab]}
-            <ChevronDown className="size-4 opacity-60" />
+            <ChevronDown className="size-4 opacity-60" aria-hidden />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="min-w-40">
@@ -66,6 +70,18 @@ export function WorkspaceChrome({
       </DropdownMenu>
 
       <div className="flex items-center gap-1 sm:gap-2">
+        {onOpenSettings ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="text-[#6B6B8A] dark:text-zinc-400"
+            aria-label="Settings"
+            onClick={() => onOpenSettings()}
+          >
+            <Settings className="size-5" aria-hidden />
+          </Button>
+        ) : null}
         <Button
           type="button"
           variant="ghost"
@@ -85,7 +101,8 @@ export function WorkspaceChrome({
           size="icon"
           className="text-[#6B6B8A] dark:text-zinc-400"
           aria-label="Scroll to preview"
-          onClick={onPlayPreview}
+          disabled={!onPlayPreview}
+          onClick={() => onPlayPreview?.()}
         >
           <Play className="size-5" />
         </Button>
