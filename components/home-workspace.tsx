@@ -59,6 +59,7 @@ import { isYoutubeVideoUrlForTranscript } from "@/lib/youtube-url";
 import { type PlatformId } from "@/lib/platforms";
 import { GenerationFeedbackPanel } from "@/components/generation-feedback-panel";
 import { RatingWidget } from "@/components/rating-widget";
+import { AiInputPanel } from "@/components/genex/ai-input-panel";
 import { Hero } from "@/components/genex/hero";
 import { HowItWorks } from "@/components/genex/how-it-works";
 import { PlatformsGrid } from "@/components/genex/platforms-grid";
@@ -131,10 +132,10 @@ export function HomeWorkspace({
   const [clipSettingsOpen, setClipSettingsOpen] = useState(false);
   const [workspaceTab, setWorkspaceTab] = useState<"video" | "clip">("video");
   const [inputMode, setInputMode] = useState<"text" | "url" | "file">("text");
+  const [selectedModel, setSelectedModel] = useState("gpt-4o");
   const [text, setText] = useState("");
   const [url, setUrl] = useState("");
   const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [preset, setPreset] = useState<GenerationPresetId | null>(null);
   const [streamedText, setStreamedText] = useState("");
   const [loading, setLoading] = useState(false);
@@ -582,7 +583,6 @@ export function HomeWorkspace({
     const gc = clip.generationContext;
     setLastClipGenerationContext(isGenerationContextV1(gc) ? gc : null);
     setUploadFile(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
     if (clip.inputUrl?.startsWith("file:")) {
       setInputMode("text");
       setText(clip.inputText ?? "");
@@ -720,8 +720,22 @@ export function HomeWorkspace({
 
       <Hero isSignedIn={Boolean(user)} onPrimaryCta={handleGetStarted} />
 
-      <section id="workspace" className="scroll-mt-24 px-4 py-10">
-        <div className="mx-auto max-w-6xl overflow-hidden rounded-3xl border border-[#E8E4F8] bg-white shadow-[0_24px_80px_-24px_rgba(108,71,255,0.2)] dark:border-white/10 dark:bg-zinc-900">
+      <section id="workspace" className="relative scroll-mt-24 px-4 py-10">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute -right-16 top-8 h-48 w-48 rounded-full opacity-40 blur-3xl"
+          style={{
+            background: "radial-gradient(circle, #d946ef 0%, #7c3aed 100%)",
+          }}
+        />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute bottom-16 -left-12 h-36 w-36 rounded-full opacity-30 blur-3xl"
+          style={{
+            background: "radial-gradient(circle, #c471ed 0%, #818cf8 100%)",
+          }}
+        />
+        <div className="relative mx-auto max-w-6xl overflow-hidden rounded-3xl border border-white/40 bg-white/60 shadow-[0_32px_80px_-24px_rgba(180,120,255,0.25)] backdrop-blur-xl dark:border-white/10 dark:bg-zinc-900/60 dark:backdrop-blur-xl">
           <WorkspaceChrome
             workspaceTab={workspaceTab}
             onWorkspaceTab={setWorkspaceTab}
@@ -766,148 +780,66 @@ export function HomeWorkspace({
                       </Button>
                     </div>
 
-                    <section className="space-y-6">
+                    <section className="space-y-4">
+                      <AiInputPanel
+                        inputMode={inputMode}
+                        onInputModeChange={(mode) => {
+                          setInputMode(mode);
+                          if (mode !== "file") {
+                            setUploadFile(null);
+                          }
+                        }}
+                        text={text}
+                        onTextChange={setText}
+                        url={url}
+                        onUrlChange={setUrl}
+                        uploadFile={uploadFile}
+                        onFileChange={setUploadFile}
+                        selectedModel={selectedModel}
+                        onModelChange={setSelectedModel}
+                        loading={loading}
+                        canSubmit={canSubmit}
+                        onSubmit={() => setRefinementOpen(true)}
+                        onQuickAction={(id) => {
+                          const map: Record<string, string> = {
+                            hook: "viral_hook",
+                            thread: "contrarian",
+                            repurpose: "educational",
+                          };
+                          const p = map[id];
+                          if (p) {
+                            setPreset((cur) =>
+                              cur === p ? null : (p as GenerationPresetId),
+                            );
+                          }
+                        }}
+                        maxUploadMb={Math.round(
+                          MAX_MEDIA_UPLOAD_BYTES / (1024 * 1024),
+                        )}
+                      />
+
                       <div className="flex flex-wrap gap-2">
-                        <Button
-                          type="button"
-                          variant={inputMode === "text" ? "default" : "outline"}
-                          size="sm"
-                          className={cn(
-                            inputMode === "text" &&
-                              "bg-[#6C47FF] text-white hover:bg-[#5835E8] genex-cta-glow",
-                          )}
-                          onClick={() => {
-                            setInputMode("text");
-                            setUploadFile(null);
-                            if (fileInputRef.current) fileInputRef.current.value = "";
-                          }}
-                          disabled={loading}
-                        >
-                          Text / idea
-                        </Button>
-                        <Button
-                          type="button"
-                          variant={inputMode === "url" ? "default" : "outline"}
-                          size="sm"
-                          className={cn(
-                            inputMode === "url" &&
-                              "bg-[#6C47FF] text-white hover:bg-[#5835E8] genex-cta-glow",
-                          )}
-                          onClick={() => {
-                            setInputMode("url");
-                            setUploadFile(null);
-                            if (fileInputRef.current) fileInputRef.current.value = "";
-                          }}
-                          disabled={loading}
-                        >
-                          URL
-                        </Button>
-                        <Button
-                          type="button"
-                          variant={inputMode === "file" ? "default" : "outline"}
-                          size="sm"
-                          className={cn(
-                            inputMode === "file" &&
-                              "bg-[#6C47FF] text-white hover:bg-[#5835E8] genex-cta-glow",
-                          )}
-                          onClick={() => setInputMode("file")}
-                          disabled={loading}
-                        >
-                          Upload file
-                        </Button>
-                      </div>
-
-                      {inputMode === "text" ? (
-                        <textarea
-                          className="min-h-[200px] w-full resize-y rounded-xl border border-[#E8E4F8] bg-white px-4 py-3 text-base text-[#0F0A1E] outline-none ring-[#6C47FF]/25 focus-visible:ring-[3px] dark:border-white/10 dark:bg-zinc-950 dark:text-zinc-100"
-                          placeholder="Paste your transcript, talking points, or rough idea…"
-                          value={text}
-                          onChange={(e) => setText(e.target.value)}
-                          disabled={loading}
-                        />
-                      ) : inputMode === "url" ? (
-                        <div className="space-y-2">
-                          <input
-                            type="url"
-                            className="h-12 w-full rounded-xl border border-[#E8E4F8] bg-white px-4 text-base outline-none ring-[#6C47FF]/25 focus-visible:ring-[3px] dark:border-white/10 dark:bg-zinc-950"
-                            placeholder="https://youtube.com/watch?v=… or any article URL"
-                            value={url}
-                            onChange={(e) => setUrl(e.target.value)}
-                            disabled={loading}
-                          />
-                          <p className="text-muted-foreground text-xs">
-                            YouTube watch and youtu.be links load captions first when possible.
-                          </p>
-                        </div>
-                      ) : (
-                        <div className="space-y-2 rounded-xl border border-dashed border-[#C4BAF0] bg-[#FAFAFC] p-4 dark:border-violet-500/25 dark:bg-zinc-900/40">
-                          <p className="text-muted-foreground text-sm">
-                            Video/audio (Whisper, max{" "}
-                            {Math.round(MAX_MEDIA_UPLOAD_BYTES / (1024 * 1024))} MB) or .txt /
-                            .md / .srt / .vtt
-                          </p>
-                          <input
-                            ref={fileInputRef}
-                            type="file"
-                            className="sr-only"
-                            accept=".flac,.m4a,.mp3,.mp4,.mpeg,.mpga,.mov,.m4v,.oga,.ogg,.wav,.webm,.txt,.md,.markdown,.csv,.srt,.vtt,.json"
-                            disabled={loading}
-                            onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
-                          />
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              disabled={loading}
-                              onClick={() => fileInputRef.current?.click()}
-                            >
-                              Choose file
-                            </Button>
-                            <span className="text-muted-foreground truncate text-sm">
-                              {uploadFile?.name ?? "No file selected"}
-                            </span>
-                            {uploadFile ? (
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => {
-                                  setUploadFile(null);
-                                  if (fileInputRef.current) fileInputRef.current.value = "";
-                                }}
-                              >
-                                Clear
-                              </Button>
-                            ) : null}
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="space-y-2">
-                        <p className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
-                          Style (one optional)
+                        <p className="w-full text-xs font-medium uppercase tracking-wide text-[#9B8EC4] dark:text-zinc-400">
+                          Style
                         </p>
-                        <div className="flex flex-wrap gap-2">
-                          {PRESET_CHIPS.map(({ id, emoji, label }) => (
-                            <Button
-                              key={id}
-                              type="button"
-                              size="sm"
-                              variant={preset === id ? "default" : "outline"}
-                              disabled={loading}
-                              onClick={() => setPreset((cur) => (cur === id ? null : id))}
-                              className={cn(
-                                "rounded-full",
-                                preset === id &&
-                                  "bg-[#6C47FF] text-white hover:bg-[#5835E8] genex-cta-glow",
-                              )}
-                            >
-                              <span className="mr-1">{emoji}</span>
-                              {label}
-                            </Button>
-                          ))}
-                        </div>
+                        {PRESET_CHIPS.map(({ id, emoji, label }) => (
+                          <Button
+                            key={id}
+                            type="button"
+                            size="sm"
+                            variant={preset === id ? "default" : "outline"}
+                            disabled={loading}
+                            onClick={() => setPreset((cur) => (cur === id ? null : id))}
+                            className={cn(
+                              "rounded-full border-violet-200/60 bg-white/60 backdrop-blur-sm dark:border-violet-500/25 dark:bg-zinc-900/50",
+                              preset === id &&
+                                "genex-cta-glow border-transparent bg-[#6C47FF] text-white hover:bg-[#5835E8]",
+                            )}
+                          >
+                            <span className="mr-1">{emoji}</span>
+                            {label}
+                          </Button>
+                        ))}
                       </div>
 
                       {error ? (
@@ -963,19 +895,6 @@ export function HomeWorkspace({
                         </div>
                       ) : null}
 
-                      <Button
-                        type="button"
-                        className="h-12 w-full rounded-xl bg-[#6C47FF] text-base font-semibold text-white shadow-md hover:bg-[#5835E8] genex-cta-glow sm:h-11"
-                        disabled={loading || !canSubmit}
-                        onClick={() => setRefinementOpen(true)}
-                      >
-                        {loading
-                          ? fetchingYoutubeTranscript
-                            ? "Fetching transcript…"
-                            : "Generating…"
-                          : "Generate Clip Package"}
-                      </Button>
-
                       <RefinementChatDialog
                         open={refinementOpen}
                         onOpenChange={setRefinementOpen}
@@ -991,8 +910,15 @@ export function HomeWorkspace({
                                 : "Upload"
                         }
                         onConfirm={(ctx) => {
-                          pendingGenerationContextRef.current = ctx;
-                          setLastClipGenerationContext(ctx);
+                          const ctxWithModel: GenerationContextV1 = {
+                            ...ctx,
+                            answers: {
+                              ...ctx.answers,
+                              preferredModel: selectedModel,
+                            },
+                          };
+                          pendingGenerationContextRef.current = ctxWithModel;
+                          setLastClipGenerationContext(ctxWithModel);
                           setRefinementOpen(false);
                           void runGeneration();
                         }}

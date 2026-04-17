@@ -1,15 +1,9 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Bell, ChevronDown, Play, Settings } from "lucide-react";
+import { Bell, Play, Settings } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 
 import { ThemeToggle } from "./theme-toggle";
@@ -30,6 +24,8 @@ const TAB_LABEL: Record<"video" | "clip", string> = {
   clip: "Clip",
 };
 
+const TABS = ["video", "clip"] as const;
+
 export function WorkspaceChrome({
   className,
   workspaceTab,
@@ -42,32 +38,33 @@ export function WorkspaceChrome({
   return (
     <div
       className={cn(
-        "flex flex-wrap items-center justify-between gap-3 border-b border-[#E8E4F8] bg-[#FAFAFC] px-4 py-3 dark:border-white/10 dark:bg-zinc-900/50",
+        "flex flex-wrap items-center justify-between gap-3 border-b border-[#E8E4F8] bg-[#FAFAFC]/80 px-4 py-3 backdrop-blur-md dark:border-white/10 dark:bg-zinc-900/40",
         className,
       )}
     >
-      <DropdownMenu>
-        <DropdownMenuTrigger>
-          <Button
+      <div
+        className="flex items-center gap-1 rounded-full border border-white/40 bg-white/30 p-0.5 backdrop-blur-sm dark:border-white/10 dark:bg-white/5"
+        role="tablist"
+        aria-label="Workspace mode"
+      >
+        {TABS.map((tab) => (
+          <button
+            key={tab}
             type="button"
-            variant="outline"
-            size="sm"
-            className="gap-1.5 rounded-full border-[#E8E4F8] bg-white font-medium dark:border-white/15 dark:bg-zinc-900"
-            aria-label={`Workspace mode: ${TAB_LABEL[workspaceTab]}. Choose Video or Clip.`}
+            role="tab"
+            aria-selected={workspaceTab === tab}
+            onClick={() => onWorkspaceTab(tab)}
+            className={cn(
+              "rounded-full px-3 py-1.5 text-sm font-medium transition-colors",
+              workspaceTab === tab
+                ? "border border-white/60 bg-white/70 text-[#6C47FF] shadow-sm backdrop-blur-sm dark:border-white/20 dark:bg-white/15 dark:text-violet-200"
+                : "border border-transparent text-[#9B8EC4] hover:bg-white/30 hover:text-[#1a1030] dark:hover:bg-white/10 dark:hover:text-zinc-100",
+            )}
           >
-            {TAB_LABEL[workspaceTab]}
-            <ChevronDown className="size-4 opacity-60" aria-hidden />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="min-w-40">
-          <DropdownMenuItem onClick={() => onWorkspaceTab("video")}>
-            Video
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => onWorkspaceTab("clip")}>
-            Clip
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+            {TAB_LABEL[tab]}
+          </button>
+        ))}
+      </div>
 
       <div className="flex items-center gap-1 sm:gap-2">
         {onOpenSettings ? (

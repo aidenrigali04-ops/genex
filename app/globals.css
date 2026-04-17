@@ -6,6 +6,9 @@
 
 /* Genex marketing / product palette */
 :root {
+  --genex-bg-from: #e8d5f5;
+  --genex-bg-mid: #f5dde8;
+  --genex-bg-to: #fde8d0;
   --genex-page: #f0effe;
   --genex-surface: #ffffff;
   --genex-surface-tint: #faf5ff;
@@ -189,6 +192,15 @@
   .genex-cta-glow:hover {
     box-shadow: 0 0 20px rgb(108 71 255 / 0.4);
   }
+
+  .scrollbar-none {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 @keyframes genex-fade-in-up {
@@ -213,10 +225,24 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-[#F0EFFE] text-[#0F0A1E];
+    background: linear-gradient(
+      160deg,
+      var(--genex-bg-from) 0%,
+      var(--genex-bg-mid) 45%,
+      var(--genex-bg-to) 100%
+    );
+    min-height: 100dvh;
+    @apply text-[#0F0A1E];
   }
   .dark body {
-    @apply bg-zinc-950 text-zinc-50;
+    background: linear-gradient(
+      160deg,
+      oklch(0.22 0.06 290) 0%,
+      oklch(0.2 0.05 300) 45%,
+      oklch(0.18 0.04 280) 100%
+    );
+    min-height: 100dvh;
+    @apply text-zinc-50;
   }
   html {
     @apply font-sans;
