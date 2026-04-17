@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, type KeyboardEvent } from "react";
+import { Globe, Sparkles } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -13,7 +14,7 @@ export type AiModelOption = {
 const AI_MODELS: AiModelOption[] = [
   {
     id: "gpt-4o",
-    label: "GPT-4o",
+    label: "GPT 4o",
     description: "Best for hooks & viral angles",
   },
   {
@@ -29,9 +30,9 @@ const AI_MODELS: AiModelOption[] = [
 ];
 
 const QUICK_ACTIONS = [
-  { id: "hook", label: "Write Hook", icon: "⚡" },
-  { id: "thread", label: "Make Thread", icon: "🧵" },
-  { id: "repurpose", label: "Repurpose", icon: "♻️" },
+  { id: "hook", label: "Write Hook" },
+  { id: "thread", label: "Make Thread" },
+  { id: "repurpose", label: "Repurpose" },
 ];
 
 export type AiInputPanelProps = {
@@ -50,6 +51,8 @@ export type AiInputPanelProps = {
   onSubmit: () => void;
   onQuickAction?: (id: string) => void;
   maxUploadMb: number;
+  /** Sits inside the glass shell under chat — flatter white card. */
+  embedded?: boolean;
 };
 
 export function AiInputPanel({
@@ -68,6 +71,7 @@ export function AiInputPanel({
   onSubmit,
   onQuickAction,
   maxUploadMb,
+  embedded = false,
 }: AiInputPanelProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -86,69 +90,101 @@ export function AiInputPanel({
   };
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-white/50 bg-white/70 shadow-lg backdrop-blur-xl">
-      <div className="flex items-center gap-2 border-b border-white/40 px-4 py-2.5">
-        <div className="relative">
-          <select
-            value={selectedModel}
-            onChange={(e) => onModelChange(e.target.value)}
-            className="cursor-pointer appearance-none rounded-lg border-0 bg-transparent py-1 pr-7 pl-2 text-sm font-medium text-[#1a1030] outline-none transition-colors hover:bg-violet-50/60 focus:ring-2 focus:ring-violet-400/40 disabled:opacity-50 dark:text-zinc-100"
-            disabled={loading}
-          >
-            {AI_MODELS.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.label}
-              </option>
-            ))}
-          </select>
-          <svg
-            className="pointer-events-none absolute right-0 top-1/2 h-3 w-3 -translate-y-1/2 text-[#6C47FF]"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
+    <div
+      className={cn(
+        "overflow-hidden shadow-lg",
+        embedded
+          ? "rounded-xl border border-white/70 bg-white/95 shadow-[0_12px_40px_-16px_rgba(124,58,237,0.2)] backdrop-blur-xl dark:border-white/10 dark:bg-zinc-950/80"
+          : "rounded-2xl border border-white/50 bg-white/70 backdrop-blur-xl",
+      )}
+    >
+      <div className="flex flex-wrap items-center gap-2 border-b border-black/6 px-4 py-2.5 dark:border-white/10">
+        <div className="flex items-center gap-1.5">
+          <Globe
+            className="size-4 shrink-0 text-[#6C47FF] opacity-90"
+            strokeWidth={1.5}
             aria-hidden
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2.5}
-              d="M19 9l-7 7-7-7"
-            />
-          </svg>
+          />
+          <div className="relative">
+            <select
+              value={selectedModel}
+              onChange={(e) => onModelChange(e.target.value)}
+              className="cursor-pointer appearance-none rounded-lg border-0 bg-transparent py-1.5 pr-7 pl-1 text-sm font-semibold text-[#1a1030] outline-none transition-colors hover:bg-violet-50/80 focus:ring-2 focus:ring-violet-400/30 disabled:opacity-50 dark:text-zinc-100 dark:hover:bg-white/5"
+              disabled={loading}
+            >
+              {AI_MODELS.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+            <svg
+              className="pointer-events-none absolute right-0 top-1/2 h-3 w-3 -translate-y-1/2 text-[#6C47FF]"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              aria-hidden
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2.5}
+                d="M19 9l-7 7-7-7"
+              />
+            </svg>
+          </div>
         </div>
 
         <div className="h-4 w-px bg-black/10 dark:bg-white/15" />
 
+        <button
+          type="button"
+          onClick={() => onInputModeChange("url")}
+          disabled={loading}
+          aria-pressed={inputMode === "url"}
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+            inputMode === "url"
+              ? "border-violet-200 bg-violet-100 text-[#6C47FF] dark:border-violet-500/40 dark:bg-violet-950/60 dark:text-violet-200"
+              : "border-transparent bg-black/3 text-[#6B6B8A] hover:bg-black/6 hover:text-[#1a1030] dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/10 dark:hover:text-zinc-100",
+          )}
+        >
+          <Globe className="size-3.5 shrink-0" strokeWidth={1.75} aria-hidden />
+          Search
+        </button>
+
+        <div className="h-4 w-px bg-black/10 dark:bg-white/15" />
+
         <div className="flex items-center gap-1">
-          {(["text", "url", "file"] as const).map((mode) => (
+          {(["text", "file"] as const).map((mode) => (
             <button
               key={mode}
               type="button"
               onClick={() => onInputModeChange(mode)}
               disabled={loading}
               className={cn(
-                "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+                "rounded-full px-2.5 py-1 text-xs font-medium transition-colors",
                 inputMode === mode
                   ? "bg-violet-100 text-[#6C47FF] dark:bg-violet-900/50 dark:text-violet-200"
                   : "text-[#6B6B8A] hover:bg-black/5 hover:text-[#1a1030] dark:hover:bg-white/10 dark:hover:text-zinc-100",
               )}
             >
-              {mode === "text" ? "Text" : mode === "url" ? "URL" : "File"}
+              {mode === "text" ? "Text" : "File"}
             </button>
           ))}
         </div>
 
-        <span className="ml-auto hidden text-xs text-[#9B8EC4] sm:block">
+        <span className="ml-auto hidden text-xs text-[#9B8EC4] sm:block dark:text-zinc-500">
           {AI_MODELS.find((m) => m.id === selectedModel)?.description}
         </span>
       </div>
 
-      <div className="px-4 pb-2 pt-3">
+      <div className="px-4 pb-2 pt-4">
         {inputMode === "text" ? (
           <textarea
             ref={textareaRef}
-            className="min-h-[100px] w-full resize-none bg-transparent text-sm leading-relaxed text-[#1a1030] outline-none placeholder:text-[#9B8EC4] dark:text-zinc-100 dark:placeholder:text-zinc-500"
-            placeholder="Ask anything… paste your transcript, article, or rough idea"
+            className="min-h-[120px] w-full resize-none bg-transparent text-[15px] leading-relaxed text-[#1a1030] outline-none placeholder:text-[#b4a8c9] dark:text-zinc-100 dark:placeholder:text-zinc-500"
+            placeholder="Ask anything…"
             value={text}
             onChange={(e) => onTextChange(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -173,7 +209,7 @@ export function AiInputPanel({
               </svg>
               <input
                 type="url"
-                className="flex-1 bg-transparent py-1 text-sm text-[#1a1030] outline-none placeholder:text-[#9B8EC4] dark:text-zinc-100 dark:placeholder:text-zinc-500"
+                className="flex-1 bg-transparent py-1 text-[15px] text-[#1a1030] outline-none placeholder:text-[#b4a8c9] dark:text-zinc-100 dark:placeholder:text-zinc-500"
                 placeholder="https://youtube.com/watch?v=… or any article URL"
                 value={url}
                 onChange={(e) => onUrlChange(e.target.value)}
@@ -190,7 +226,7 @@ export function AiInputPanel({
               type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={loading}
-              className="rounded-lg border border-dashed border-violet-300 bg-violet-50/60 px-3 py-2 text-xs text-[#6C47FF] transition-colors hover:bg-violet-100/60 dark:border-violet-500/40 dark:bg-violet-950/40 dark:text-violet-200"
+              className="rounded-lg border border-dashed border-violet-300 bg-violet-50/80 px-3 py-2.5 text-xs font-medium text-[#6C47FF] transition-colors hover:bg-violet-100 dark:border-violet-500/40 dark:bg-violet-950/50 dark:text-violet-200"
             >
               {uploadFile
                 ? uploadFile.name
@@ -217,7 +253,7 @@ export function AiInputPanel({
         )}
       </div>
 
-      <div className="flex items-center gap-2 px-4 pb-3 pt-1">
+      <div className="flex items-center gap-2 border-t border-black/4 px-4 pb-4 pt-2 dark:border-white/10">
         <div className="scrollbar-none flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
           {QUICK_ACTIONS.map((action) => (
             <button
@@ -225,9 +261,9 @@ export function AiInputPanel({
               type="button"
               disabled={loading}
               onClick={() => onQuickAction?.(action.id)}
-              className="flex shrink-0 items-center gap-1.5 rounded-full border border-violet-200/70 bg-white/60 px-3 py-1 text-xs font-medium text-[#6C47FF] transition-colors hover:border-violet-300 hover:bg-violet-50 dark:border-violet-500/30 dark:bg-zinc-900/40 dark:text-violet-200 dark:hover:bg-violet-950/50"
+              className="flex shrink-0 items-center gap-1.5 rounded-full border border-violet-200/80 bg-white/90 px-3 py-1.5 text-xs font-medium text-[#6C47FF] shadow-sm transition-colors hover:border-violet-300 hover:bg-violet-50 dark:border-violet-500/30 dark:bg-zinc-900/60 dark:text-violet-200 dark:hover:bg-violet-950/60"
             >
-              <span>{action.icon}</span>
+              <Sparkles className="size-3.5 shrink-0 text-[#9333ea]" aria-hidden />
               {action.label}
             </button>
           ))}
@@ -238,9 +274,9 @@ export function AiInputPanel({
           disabled={loading || !canSubmit}
           onClick={onSubmit}
           className={cn(
-            "flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-all",
+            "flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-all",
             canSubmit && !loading
-              ? "bg-linear-to-br from-[#c471ed] to-[#7c3aed] text-white shadow-md hover:scale-105 hover:shadow-lg"
+              ? "bg-linear-to-br from-[#f0abfc] via-[#c471ed] to-[#7c3aed] text-white shadow-md hover:scale-105 hover:shadow-lg"
               : "cursor-not-allowed bg-black/10 text-white/40 dark:bg-white/10",
           )}
           aria-label={loading ? "Generating" : "Open refinement"}
@@ -263,7 +299,7 @@ export function AiInputPanel({
             </svg>
           ) : (
             <svg
-              className="w-4 translate-x-px"
+              className="w-[18px] translate-x-px"
               viewBox="0 0 24 24"
               fill="currentColor"
               aria-hidden

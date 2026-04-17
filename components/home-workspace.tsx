@@ -60,6 +60,7 @@ import { type PlatformId } from "@/lib/platforms";
 import { GenerationFeedbackPanel } from "@/components/generation-feedback-panel";
 import { RatingWidget } from "@/components/rating-widget";
 import { AiInputPanel } from "@/components/genex/ai-input-panel";
+import { ClipWorkspaceConversation } from "@/components/genex/clip-workspace-conversation";
 import { Hero } from "@/components/genex/hero";
 import { HowItWorks } from "@/components/genex/how-it-works";
 import { PlatformsGrid } from "@/components/genex/platforms-grid";
@@ -781,42 +782,59 @@ export function HomeWorkspace({
                     </div>
 
                     <section className="space-y-4">
-                      <AiInputPanel
-                        inputMode={inputMode}
-                        onInputModeChange={(mode) => {
-                          setInputMode(mode);
-                          if (mode !== "file") {
-                            setUploadFile(null);
-                          }
-                        }}
-                        text={text}
-                        onTextChange={setText}
-                        url={url}
-                        onUrlChange={setUrl}
-                        uploadFile={uploadFile}
-                        onFileChange={setUploadFile}
-                        selectedModel={selectedModel}
-                        onModelChange={setSelectedModel}
-                        loading={loading}
-                        canSubmit={canSubmit}
-                        onSubmit={() => setRefinementOpen(true)}
-                        onQuickAction={(id) => {
-                          const map: Record<string, string> = {
-                            hook: "viral_hook",
-                            thread: "contrarian",
-                            repurpose: "educational",
-                          };
-                          const p = map[id];
-                          if (p) {
-                            setPreset((cur) =>
-                              cur === p ? null : (p as GenerationPresetId),
-                            );
-                          }
-                        }}
-                        maxUploadMb={Math.round(
-                          MAX_MEDIA_UPLOAD_BYTES / (1024 * 1024),
-                        )}
-                      />
+                      <div className="overflow-hidden rounded-3xl border border-white/55 bg-white/40 shadow-[0_20px_60px_-18px_rgba(124,58,237,0.28)] backdrop-blur-2xl dark:border-white/10 dark:bg-zinc-950/40">
+                        <div className="max-h-[min(50vh,480px)] min-h-[220px] overflow-y-auto border-b border-white/45 bg-white/90 p-4 sm:p-6 dark:border-white/10 dark:bg-zinc-950/70">
+                          <ClipWorkspaceConversation
+                            inputMode={inputMode}
+                            inputSummary={clipOriginalPromptSummary}
+                            streamedText={streamedText}
+                            verticalPreviewText={verticalPreviewText}
+                            loading={loading}
+                            fetchingYoutubeTranscript={fetchingYoutubeTranscript}
+                            generationSteps={generationSteps}
+                            getElapsed={getElapsed}
+                          />
+                        </div>
+                        <div className="space-y-4 bg-linear-to-b from-white/60 to-white/90 p-4 sm:p-5 dark:from-zinc-900/50 dark:to-zinc-950/80">
+                          <AiInputPanel
+                            embedded
+                            inputMode={inputMode}
+                            onInputModeChange={(mode) => {
+                              setInputMode(mode);
+                              if (mode !== "file") {
+                                setUploadFile(null);
+                              }
+                            }}
+                            text={text}
+                            onTextChange={setText}
+                            url={url}
+                            onUrlChange={setUrl}
+                            uploadFile={uploadFile}
+                            onFileChange={setUploadFile}
+                            selectedModel={selectedModel}
+                            onModelChange={setSelectedModel}
+                            loading={loading}
+                            canSubmit={canSubmit}
+                            onSubmit={() => setRefinementOpen(true)}
+                            onQuickAction={(id) => {
+                              const map: Record<string, string> = {
+                                hook: "viral_hook",
+                                thread: "contrarian",
+                                repurpose: "educational",
+                              };
+                              const p = map[id];
+                              if (p) {
+                                setPreset((cur) =>
+                                  cur === p ? null : (p as GenerationPresetId),
+                                );
+                              }
+                            }}
+                            maxUploadMb={Math.round(
+                              MAX_MEDIA_UPLOAD_BYTES / (1024 * 1024),
+                            )}
+                          />
+                        </div>
+                      </div>
 
                       <div className="flex flex-wrap gap-2">
                         <p className="w-full text-xs font-medium uppercase tracking-wide text-[#9B8EC4] dark:text-zinc-400">
@@ -867,31 +885,9 @@ export function HomeWorkspace({
                             {fetchingYoutubeTranscript
                               ? "Fetching captions before generation…"
                               : generationSteps.length > 0
-                                ? "Server steps stream first, then the model output appears in the preview."
+                                ? "Steps also show in the chat panel above."
                                 : "Connecting to the server…"}
                           </p>
-                          {generationSteps.length > 0 ? (
-                            <ol className="max-h-48 list-none space-y-0.5 overflow-y-auto rounded-lg border border-[#E8E4F8] bg-[#FAFAFC] px-3 py-2 text-xs dark:border-white/10 dark:bg-zinc-900/50">
-                              {generationSteps.map((s, i) => (
-                                <li
-                                  key={`${s.id}-${i}`}
-                                  className={
-                                    i === generationSteps.length - 1
-                                      ? "flex items-center gap-2 py-0.5 font-medium text-foreground"
-                                      : "flex items-center gap-2 py-0.5 text-muted-foreground"
-                                  }
-                                >
-                                  <span className="w-4 shrink-0 tabular-nums opacity-70">
-                                    {i + 1}.
-                                  </span>
-                                  <span className="min-w-0 flex-1">{s.label}</span>
-                                  <span className="ml-auto text-xs tabular-nums text-muted-foreground dark:text-white/35">
-                                    {getElapsed(s.ts)}
-                                  </span>
-                                </li>
-                              ))}
-                            </ol>
-                          ) : null}
                         </div>
                       ) : null}
 
@@ -928,13 +924,16 @@ export function HomeWorkspace({
 
                   <div className="min-w-0 space-y-4">
                     <div className="flex justify-center lg:justify-start">
-                      <span className="inline-flex items-center gap-2 rounded-full border border-[#E8E4F8] bg-white px-3 py-1 text-xs font-medium text-[#6B6B8A] dark:border-white/10 dark:bg-zinc-900">
+                      <span className="inline-flex items-center gap-2 rounded-full border border-white/50 bg-white/70 px-3 py-1 text-xs font-medium text-[#6B6B8A] shadow-sm backdrop-blur-sm dark:border-white/10 dark:bg-zinc-900/70">
                         English · Casual tone
                       </span>
                     </div>
 
                     {(streamedText.trim() || loading) && (
-                      <section id="output-section" className="scroll-mt-24 space-y-4">
+                      <section
+                        id="output-section"
+                        className="scroll-mt-24 space-y-4 rounded-2xl border border-white/50 bg-white/55 p-4 shadow-[0_12px_40px_-16px_rgba(124,58,237,0.15)] backdrop-blur-xl sm:p-5 dark:border-white/10 dark:bg-zinc-950/50"
+                      >
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                           <h2 className="text-xl font-semibold text-[#0F0A1E] dark:text-white">
                             Your clip package
