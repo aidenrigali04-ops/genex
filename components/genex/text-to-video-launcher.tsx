@@ -14,8 +14,15 @@ const VOICE_OPTIONS = [
   { id: "VR6AewLTigWG4xSOukaG", label: "Arnold (Male, Crisp)" },
 ];
 
+export type TextVideoShotPreview = {
+  keyword: string;
+  duration: number;
+  caption: string;
+};
+
 type JobStatus =
   | "idle"
+  | "previewing"
   | "queued"
   | "planning"
   | "fetching"
@@ -26,6 +33,7 @@ type JobStatus =
 
 const STATUS_LABELS: Record<JobStatus, string> = {
   idle: "",
+  previewing: "",
   queued: "Queued…",
   planning: "Planning shots with AI…",
   fetching: "Fetching B-roll footage…",
@@ -63,6 +71,10 @@ export function TextToVideoLauncher({
   const [voiceId, setVoiceId] = useState(VOICE_OPTIONS[0].id);
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [status, setStatus] = useState<JobStatus>("idle");
+  const [shotPreview, setShotPreview] = useState<TextVideoShotPreview[] | null>(
+    null,
+  );
+  const [previewBusy, setPreviewBusy] = useState(false);
   const [outputUrl, setOutputUrl] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
@@ -70,7 +82,93 @@ export function TextToVideoLauncher({
 
   const voScript = [hooks.trim(), script.trim()].filter(Boolean).join("\n\n");
 
-  const startJob = async () => {
+  const totalPreviewDuration =
+    shotPreview?.reduce((s, sh) => s + (Number(sh.duration) || 0), 0) ?? 0;
+
+  const updateShotPreview = (
+    index: number,
+    patch: Partial<TextVideoShotPreview>,
+  ) => {
+    setShotPreview((prev) => {
+      if (!prev) return prev;
+      const next = [...prev];
+      const cur = next[index];
+      if (!cur) return prev;
+      let duration = cur.duration;
+      if (patch.duration !== undefined) {
+        const n = Number(patch.duration);
+        duration = Number.isFinite(n)
+          ? Math.min(8, Math.max(3, Math.round(n)))
+          : cur.duration;
+      }
+      next[index] = {
+        ...cur,
+        ...patch,
+        ...(patch.duration !== undefined ? { duration } : {}),
+      };
+      return next;
+    });
+  };
+
+  const requestPreview = async () => {
+    if (voScript.trim().length < 20) {
+      setErrorMsg("Add a bit more script (at least 20 characters) to preview.");
+      return;
+    }
+    setStatus("previewing");
+    setPreviewBusy(true);
+    setErrorMsg(null);
+    setOutputUrl(null);
+    setShotPreview(null);
+    setJobId(null);
+
+    try {
+      const res = await fetch("/api/text-video-jobs/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ script: voScript }),
+      });
+      const data = (await res.json()) as {
+        shots?: TextVideoShotPreview[];
+        message?: string;
+        error?: string;
+      };
+
+      if (!res.ok) {
+        setStatus("failed");
+        setErrorMsg(
+          data.message ?? data.error ?? `Preview failed (${res.status})`,
+        );
+        return;
+      }
+
+      const shots = data.shots;
+      if (!Array.isArray(shots) || shots.length < 3) {
+        setStatus("failed");
+        setErrorMsg("Shot plan was too short. Try again.");
+        return;
+      }
+
+      setShotPreview(
+        shots.map((s) => ({
+          keyword: String(s.keyword ?? ""),
+          duration: Math.min(
+            8,
+            Math.max(3, Math.round(Number(s.duration) || 5)),
+          ),
+          caption: String(s.caption ?? ""),
+        })),
+      );
+    } catch {
+      setStatus("failed");
+      setErrorMsg("Network error while planning shots.");
+    } finally {
+      setPreviewBusy(false);
+    }
+  };
+
+  const confirmAndGenerate = async () => {
+    if (!shotPreview?.length) return;
     setStatus("queued");
     setErrorMsg(null);
     setOutputUrl(null);
@@ -83,6 +181,7 @@ export function TextToVideoLauncher({
           script: voScript,
           generationId,
           voiceId,
+          shotPlan: shotPreview,
         }),
       });
 
@@ -95,7 +194,7 @@ export function TextToVideoLauncher({
       };
 
       if (!res.ok) {
-        setStatus("failed");
+        setStatus("previewing");
         setErrorMsg(
           data.message ?? data.error ?? `Failed to start (${res.status})`,
         );
@@ -110,7 +209,7 @@ export function TextToVideoLauncher({
         onCreditChange?.(data.credits_remaining);
       }
     } catch {
-      setStatus("failed");
+      setStatus("previewing");
       setErrorMsg("Network error");
     }
   };
@@ -155,7 +254,8 @@ export function TextToVideoLauncher({
       !jobId ||
       status === "complete" ||
       status === "failed" ||
-      status === "idle"
+      status === "idle" ||
+      status === "previewing"
     ) {
       return;
     }
@@ -173,7 +273,10 @@ export function TextToVideoLauncher({
   }, [jobId, status, pollOnce]);
 
   const isRunning =
-    status !== "idle" && status !== "complete" && status !== "failed";
+    status !== "idle" &&
+    status !== "previewing" &&
+    status !== "complete" &&
+    status !== "failed";
   const stepIndex = STATUS_ORDER.indexOf(status);
   const activeStep = stepIndex < 0 ? 0 : stepIndex;
   const selectedVoice = VOICE_OPTIONS.find((v) => v.id === voiceId) ?? VOICE_OPTIONS[0];
@@ -222,7 +325,7 @@ export function TextToVideoLauncher({
           </div>
         </div>
 
-        {status === "idle" ? (
+        {status === "idle" || status === "previewing" ? (
           <button
             type="button"
             onClick={() => setVoiceOpen((v) => !v)}
@@ -242,7 +345,7 @@ export function TextToVideoLauncher({
         ) : null}
       </div>
 
-      {voiceOpen && status === "idle" ? (
+      {voiceOpen && (status === "idle" || status === "previewing") ? (
         <div
           className={cn(
             "space-y-0.5 border-b p-2",
@@ -276,19 +379,212 @@ export function TextToVideoLauncher({
 
       <div className="space-y-4 p-5">
         {status === "idle" ? (
-          <button
-            type="button"
-            onClick={() => void startJob()}
-            className={cn(
-              "flex w-full items-center justify-center gap-2.5 rounded-[10px] py-3 text-sm font-semibold text-white transition-all hover:opacity-90 active:scale-[0.98]",
-              kit
-                ? "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] shadow-[0_0_20px_rgba(203,45,206,0.2)]"
-                : "bg-gradient-to-r from-[#7B5CFA] to-[#9B6FFF] shadow-lg shadow-[#7B5CFA22]",
+          <div className="space-y-2">
+            {errorMsg ? (
+              <p
+                className={cn(
+                  "rounded-lg border px-3 py-2 text-xs",
+                  kit
+                    ? "border-amber-400/35 bg-amber-950/30 text-amber-100"
+                    : "border-ada-border bg-ada-elevated text-ada-secondary",
+                )}
+              >
+                {errorMsg}
+              </p>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => void requestPreview()}
+              className={cn(
+                "flex w-full items-center justify-center gap-2.5 rounded-[10px] py-3 text-sm font-semibold text-white transition-all hover:opacity-90 active:scale-[0.98]",
+                kit
+                  ? "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] shadow-[0_0_20px_rgba(203,45,206,0.2)]"
+                  : "bg-gradient-to-r from-[#7B5CFA] to-[#9B6FFF] shadow-lg shadow-[#7B5CFA22]",
+              )}
+            >
+              <Sparkles className="h-4 w-4" aria-hidden />
+              Plan shots (free preview)
+            </button>
+            <p
+              className={cn(
+                "text-center text-[10px]",
+                kit ? "text-white/45" : "text-[var(--ada-text-disabled)]",
+              )}
+            >
+              5 credits when you generate the final video
+            </p>
+          </div>
+        ) : null}
+
+        {status === "previewing" ? (
+          <div className="space-y-3">
+            {previewBusy || !shotPreview ? (
+              <div className="space-y-2">
+                <p
+                  className={cn(
+                    "animate-pulse text-sm font-medium",
+                    kit ? "text-white" : "text-ada-primary",
+                  )}
+                >
+                  Planning shots with AI…
+                </p>
+                <p
+                  className={cn(
+                    "text-[10px]",
+                    kit ? "text-white/45" : "text-[var(--ada-text-disabled)]",
+                  )}
+                >
+                  No credits used · ~5s
+                </p>
+              </div>
+            ) : (
+              <>
+                {errorMsg ? (
+                  <p
+                    className={cn(
+                      "rounded-lg border px-3 py-2 text-xs",
+                      kit
+                        ? "border-amber-400/35 bg-amber-950/30 text-amber-100"
+                        : "border-ada-error/30 bg-ada-error/10 text-ada-error",
+                    )}
+                  >
+                    {errorMsg}
+                  </p>
+                ) : null}
+                <p
+                  className={cn(
+                    "text-xs",
+                    kit ? "text-white/55" : "text-[var(--ada-text-secondary)]",
+                  )}
+                >
+                  AI planned {shotPreview.length} shots · {totalPreviewDuration}s
+                  total
+                </p>
+                <div className="space-y-2">
+                  {shotPreview.map((shot, i) => (
+                    <div
+                      key={i}
+                      className={cn(
+                        "flex items-start gap-3 rounded-[8px] border p-3",
+                        kit
+                          ? "border-white/14 bg-white/[0.06]"
+                          : "border-[var(--ada-border)] bg-[var(--ada-bg-elevated)]",
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "mt-2 text-xs font-bold tabular-nums",
+                          kit ? "text-[#D31CD7]" : "text-[var(--ada-accent)]",
+                        )}
+                      >
+                        {String(i + 1).padStart(2, "0")}
+                      </span>
+                      <div className="min-w-0 flex-1 space-y-2">
+                        <input
+                          type="text"
+                          value={shot.keyword}
+                          onChange={(e) =>
+                            updateShotPreview(i, { keyword: e.target.value })
+                          }
+                          className={cn(
+                            "w-full rounded-md border px-2 py-1.5 text-xs font-medium outline-none",
+                            kit
+                              ? "border-white/20 bg-white/5 text-white placeholder:text-white/35"
+                              : "border-[var(--ada-border)] bg-[var(--ada-bg-input)] text-[var(--ada-text-primary)] placeholder:text-[var(--ada-text-disabled)]",
+                          )}
+                          aria-label={`Shot ${i + 1} stock search keywords`}
+                        />
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={shot.caption}
+                            onChange={(e) =>
+                              updateShotPreview(i, { caption: e.target.value })
+                            }
+                            className={cn(
+                              "min-w-0 flex-1 rounded-md border px-2 py-1.5 text-[10px] outline-none",
+                              kit
+                                ? "border-white/20 bg-white/5 text-white/90"
+                                : "border-[var(--ada-border)] bg-[var(--ada-bg-input)] text-[var(--ada-text-primary)]",
+                            )}
+                            aria-label={`Shot ${i + 1} caption`}
+                          />
+                          <input
+                            type="number"
+                            min={3}
+                            max={8}
+                            value={shot.duration}
+                            onChange={(e) =>
+                              updateShotPreview(i, {
+                                duration: Number(e.target.value),
+                              })
+                            }
+                            className={cn(
+                              "w-14 shrink-0 rounded-md border px-2 py-1.5 text-center text-[10px] outline-none",
+                              kit
+                                ? "border-white/20 bg-white/5 text-white/90"
+                                : "border-[var(--ada-border)] bg-[var(--ada-bg-input)] text-[var(--ada-text-primary)]",
+                            )}
+                            aria-label={`Shot ${i + 1} duration seconds`}
+                          />
+                        </div>
+                        <p
+                          className={cn(
+                            "text-[10px]",
+                            kit ? "text-white/40" : "text-[var(--ada-text-disabled)]",
+                          )}
+                        >
+                          Stock: edit keywords · VO: caption · seconds (3–8)
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void confirmAndGenerate()}
+                  disabled={
+                    totalPreviewDuration < 30 || totalPreviewDuration > 90
+                  }
+                  className={cn(
+                    "flex w-full items-center justify-center gap-2 rounded-[10px] py-3 text-sm font-semibold text-white transition-all hover:opacity-90 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40",
+                    kit
+                      ? "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] shadow-[0_0_20px_rgba(203,45,206,0.2)]"
+                      : "bg-gradient-to-r from-[#7B5CFA] to-[#9B6FFF] shadow-lg shadow-[#7B5CFA22]",
+                  )}
+                >
+                  ✓ Looks good — Generate Video (5 credits)
+                </button>
+                {totalPreviewDuration < 30 || totalPreviewDuration > 90 ? (
+                  <p
+                    className={cn(
+                      "text-center text-[10px]",
+                      kit ? "text-amber-200/80" : "text-ada-error",
+                    )}
+                  >
+                    Total duration must be 30–90s (currently {totalPreviewDuration}
+                    s).
+                  </p>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStatus("idle");
+                    setShotPreview(null);
+                    setErrorMsg(null);
+                  }}
+                  className={cn(
+                    "w-full rounded-lg border py-2.5 text-xs font-medium transition-colors",
+                    kit
+                      ? "border-white/24 text-white/80 hover:bg-white/10"
+                      : "border-[var(--ada-border)] text-[var(--ada-text-secondary)] hover:bg-[var(--ada-bg-elevated)]",
+                  )}
+                >
+                  Regenerate shot plan
+                </button>
+              </>
             )}
-          >
-            <Sparkles className="h-4 w-4" aria-hidden />
-            Generate Video from Script
-          </button>
+          </div>
         ) : null}
 
         {isRunning ? (
@@ -360,6 +656,7 @@ export function TextToVideoLauncher({
                   setStatus("idle");
                   setOutputUrl(null);
                   setJobId(null);
+                  setShotPreview(null);
                 }}
                 className={cn(
                   "flex-1 rounded-lg border px-4 py-2 text-xs font-medium transition-colors",
@@ -392,6 +689,7 @@ export function TextToVideoLauncher({
                 setStatus("idle");
                 setErrorMsg(null);
                 setJobId(null);
+                setShotPreview(null);
               }}
               className={cn(
                 "rounded-lg border px-4 py-2 text-xs transition-colors",

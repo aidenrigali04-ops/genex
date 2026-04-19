@@ -768,18 +768,8 @@ export function HomeWorkspace({
   }, [router]);
 
   const openWorkspaceSettings = useCallback(() => {
-    if (typeof window === "undefined") return;
     if (workspaceTab === "clip") {
       setClipSettingsOpen(true);
-      return;
-    }
-    const wide = window.matchMedia("(min-width: 1024px)").matches;
-    if (wide) {
-      document.getElementById("video-settings-rail")?.scrollIntoView({
-        behavior: "smooth",
-        block: "nearest",
-        inline: "nearest",
-      });
       return;
     }
     videoWorkspaceRef.current?.openSettings();

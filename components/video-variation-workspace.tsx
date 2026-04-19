@@ -30,6 +30,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -40,6 +41,7 @@ import {
 import {
   ArrowRight,
   ArrowUp,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Copy,
@@ -535,7 +537,18 @@ export const VideoVariationWorkspace = forwardRef<
   const [youtubeUrl, setYoutubeUrl] = useState("");
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const youtubeUrlRef = useRef<HTMLInputElement>(null);
   const videoHubCarouselRef = useRef<HTMLDivElement>(null);
+
+  const openVideoFilePicker = useCallback(() => {
+    setSourceMode("upload");
+    window.setTimeout(() => fileRef.current?.click(), 0);
+  }, []);
+
+  const selectYoutubeUrlSource = useCallback(() => {
+    setSourceMode("url");
+    window.setTimeout(() => youtubeUrlRef.current?.focus(), 0);
+  }, []);
 
   const [uploadPct, setUploadPct] = useState(0);
   const [finishingOnServer, setFinishingOnServer] = useState(false);
@@ -773,6 +786,12 @@ export const VideoVariationWorkspace = forwardRef<
     ? "Unlimited (test)"
     : `${creditsRemaining} left`;
 
+  const settingsRailProps = {
+    mode: "video" as const,
+    platformLabel: "TikTok · Shorts · Reels",
+    creditsLine: creditsLineForRail,
+  };
+
   const chatTitle = useMemo(() => {
     const t = lastSubmittedPrompt.trim() || prompt.trim();
     if (!t) return "Video";
@@ -812,14 +831,6 @@ export const VideoVariationWorkspace = forwardRef<
     [variations],
   );
 
-  const settingsRail = (
-    <SettingsRail
-      mode="video"
-      platformLabel="TikTok · Shorts · Reels"
-      creditsLine={creditsLineForRail}
-    />
-  );
-
   return (
     <div
       className={cn(
@@ -852,16 +863,6 @@ export const VideoVariationWorkspace = forwardRef<
                   <Menu className="size-5" />
                 </Button>
               ) : null}
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                className="lg:hidden rounded-full text-white hover:bg-white/10"
-                aria-label="Open settings"
-                onClick={() => setSettingsOpen(true)}
-              >
-                <Settings className="size-5" />
-              </Button>
               {showPreGenerationHub ? null : (
                 <>
                   <Button
@@ -1110,7 +1111,9 @@ export const VideoVariationWorkspace = forwardRef<
                         <div className="space-y-4">
                           <p className="text-sm leading-5 tracking-wide text-white">
                             Here are your short-form cuts — preview each variation, download the
-                            ones you like, or open settings to fine-tune defaults.
+                            ones you like, or open{" "}
+                            <span className="text-white/90">Settings</span> from the composer bar
+                            to review defaults.
                           </p>
                           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                             {variations.map((v, idx) => {
@@ -1230,12 +1233,7 @@ export const VideoVariationWorkspace = forwardRef<
                             <button
                               type="button"
                               className="inline-flex items-center gap-2 rounded-xl px-1 py-1.5 text-sm text-white hover:bg-white/10"
-                              onClick={() => {
-                                setSettingsOpen(true);
-                                document
-                                  .getElementById("video-settings-rail")
-                                  ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-                              }}
+                              onClick={() => setSettingsOpen(true)}
                             >
                               <SlidersHorizontal className="size-3.5" />
                               Customize
@@ -1341,9 +1339,9 @@ export const VideoVariationWorkspace = forwardRef<
                   size="icon"
                   variant="ghost"
                   className="size-8 shrink-0 rounded-full border border-white/30 text-white hover:bg-white/10"
-                  disabled={!user || submitting || sourceMode !== "upload"}
-                  aria-label="Attach video file"
-                  onClick={() => fileRef.current?.click()}
+                  disabled={!user || submitting}
+                  aria-label="Upload video file from device"
+                  onClick={() => openVideoFilePicker()}
                 >
                   <Paperclip className="size-4" />
                 </Button>
@@ -1381,34 +1379,44 @@ export const VideoVariationWorkspace = forwardRef<
                   />
                 )}
                 <div className="ml-auto flex shrink-0 items-center gap-1 pr-0.5 sm:gap-1.5 sm:pr-1">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    className={cn(
-                      "h-8 shrink-0 rounded-full border border-white/25 px-2 text-[11px] font-medium text-white hover:bg-white/10 sm:px-2.5 sm:text-xs",
-                      sourceMode === "upload" && "border-white/40 bg-white/15",
-                    )}
-                    onClick={() => setSourceMode("upload")}
-                    disabled={!user || submitting}
-                  >
-                    Upload
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    className={cn(
-                      "h-8 shrink-0 rounded-full border border-white/25 px-2 text-[11px] font-medium text-white hover:bg-white/10 sm:px-2.5 sm:text-xs",
-                      sourceMode === "url" && "border-white/40 bg-white/15",
-                    )}
-                    onClick={() => setSourceMode("url")}
-                    disabled={!user || submitting}
-                  >
-                    YouTube
-                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      type="button"
+                      disabled={!user || submitting}
+                      className={cn(
+                        "inline-flex h-8 shrink-0 items-center gap-1 rounded-full border border-white/25 px-2 text-[11px] font-medium text-white outline-none hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-[#8800DC]/50 disabled:pointer-events-none disabled:opacity-40 sm:px-2.5 sm:text-xs",
+                        sourceMode === "upload" && "border-white/40 bg-white/15",
+                        sourceMode === "url" && "border-white/40 bg-white/15",
+                      )}
+                      aria-label="Choose video source"
+                    >
+                      {sourceMode === "upload" ? "Upload" : "YouTube"}
+                      <ChevronDown className="size-3.5 opacity-80" aria-hidden />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent
+                      align="end"
+                      className="min-w-[200px] border-white/10 bg-[#1a1024] text-white"
+                    >
+                      <DropdownMenuLabel className="text-xs text-white/55">
+                        Video source
+                      </DropdownMenuLabel>
+                      <DropdownMenuItem
+                        className="cursor-pointer text-white focus:bg-white/10 focus:text-white"
+                        onClick={() => openVideoFilePicker()}
+                      >
+                        Upload from device…
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        className="cursor-pointer text-white focus:bg-white/10 focus:text-white"
+                        onClick={() => selectYoutubeUrlSource()}
+                      >
+                        Paste YouTube URL…
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                   {sourceMode === "url" ? (
                     <input
+                      ref={youtubeUrlRef}
                       type="url"
                       aria-label="YouTube URL"
                       className="h-8 w-[min(200px,32vw)] shrink-0 rounded-lg border border-white/20 bg-white/5 px-2 text-xs text-white outline-none placeholder:text-white/40 focus-visible:ring-2 focus-visible:ring-[#8800DC]/40 sm:w-[min(260px,28vw)]"
@@ -1422,9 +1430,27 @@ export const VideoVariationWorkspace = forwardRef<
                       className="max-w-[72px] shrink-0 truncate text-[10px] text-white/45 sm:max-w-[100px] sm:text-[11px] md:max-w-[140px]"
                       title={videoFile?.name ?? undefined}
                     >
-                      {videoFile?.name ?? "No file"}
+                      {videoFile?.name ?? "No file yet"}
                     </span>
                   )}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      type="button"
+                      disabled={!user}
+                      className="inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-white/30 text-white outline-none hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-[#8800DC]/50 disabled:pointer-events-none disabled:opacity-40"
+                      aria-label="Workspace settings"
+                    >
+                      <Settings className="size-4" />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent
+                      align="end"
+                      className="max-h-[min(72dvh,520px)] w-[min(calc(100vw-32px),280px)] overflow-y-auto border-white/10 bg-[#1a1024] p-2 text-white"
+                    >
+                      <div className="dark">
+                        <SettingsRail {...settingsRailProps} />
+                      </div>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                   <Button
                     type="button"
                     size="icon"
@@ -1483,24 +1509,20 @@ export const VideoVariationWorkspace = forwardRef<
             </div>
           </div>
         </div>
-
-        <div
-          id="video-settings-rail"
-          className="relative z-[1] hidden w-[280px] shrink-0 border-l border-white bg-[rgba(198,108,255,0.08)] lg:block"
-        >
-          {settingsRail}
-        </div>
       </div>
 
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
         <DialogContent
+          id="video-settings-dialog"
           showCloseButton
           className="fixed right-auto bottom-0 left-1/2 top-auto max-h-[min(88dvh,640px)] w-full max-w-full translate-x-[-50%] translate-y-0 overflow-y-auto rounded-t-2xl rounded-b-none border-white/15 bg-[#12081c] p-6 text-white sm:max-w-md"
         >
           <DialogHeader>
             <DialogTitle>Settings</DialogTitle>
           </DialogHeader>
-          {settingsRail}
+          <div className="dark">
+            <SettingsRail {...settingsRailProps} />
+          </div>
         </DialogContent>
       </Dialog>
 

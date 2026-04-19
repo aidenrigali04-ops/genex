@@ -43,6 +43,16 @@ const supabase = createClient(supabaseUrl, serviceKey, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
+/** @param {unknown} raw */
+function normalizeShotsFromDb(raw) {
+  if (!raw || !Array.isArray(raw) || raw.length < 3) return null;
+  return raw.map((sh) => ({
+    keyword: String(sh.keyword ?? "nature landscape"),
+    duration: Math.min(8, Math.max(3, Math.round(Number(sh.duration) || 5))),
+    caption: String(sh.caption ?? "").slice(0, 200),
+  }));
+}
+
 async function setStatus(id, fields) {
   const { error } = await supabase
     .from("text_video_jobs")
@@ -69,7 +79,7 @@ async function claimQueuedJob() {
     .update({ status: "planning" })
     .eq("id", next.id)
     .eq("status", "queued")
-    .select("id, script, voice_id, user_id")
+    .select("id, script, voice_id, user_id, shot_plan")
     .maybeSingle();
 
   if (error || !claimed) return null;
@@ -86,7 +96,8 @@ async function processJob(job) {
   const downloadedClips = [];
 
   try {
-    const shots = await planShots(job.script);
+    const fromDb = normalizeShotsFromDb(job.shot_plan);
+    const shots = fromDb ?? (await planShots(job.script));
     const planForDb = shots.map((s) => ({
       keyword: s.keyword,
       duration: s.duration,

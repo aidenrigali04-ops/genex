@@ -13,11 +13,30 @@ const generationIdSchema = z.union([
   z.string().regex(/^\d+$/, "generationId must be a UUID or numeric id"),
 ]);
 
-const bodySchema = z.object({
-  script: z.string().min(20).max(8000),
-  generationId: generationIdSchema.optional(),
-  voiceId: z.string().min(1).max(128).optional(),
+const shotPlanEntrySchema = z.object({
+  keyword: z.string().min(1).max(200),
+  duration: z.coerce.number().int().min(3).max(8),
+  caption: z.string().min(1).max(500),
 });
+
+const bodySchema = z
+  .object({
+    script: z.string().min(20).max(8000),
+    generationId: generationIdSchema.optional(),
+    voiceId: z.string().min(1).max(128).optional(),
+    shotPlan: z.array(shotPlanEntrySchema).min(3).max(24).optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (!data.shotPlan?.length) return;
+    const sum = data.shotPlan.reduce((s, sh) => s + sh.duration, 0);
+    if (sum < 30 || sum > 90) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Shot plan total duration must be between 30 and 90 seconds.",
+        path: ["shotPlan"],
+      });
+    }
+  });
 
 type CreditRow = {
   success: boolean;
@@ -106,6 +125,14 @@ export async function POST(req: Request) {
     creditsRemaining = creditRow.remaining;
   }
 
+  const shotPlanForInsert = parsed.data.shotPlan?.length
+    ? parsed.data.shotPlan.map((s) => ({
+        keyword: s.keyword,
+        duration: s.duration,
+        caption: s.caption,
+      }))
+    : null;
+
   const { data: job, error } = await supabase
     .from("text_video_jobs")
     .insert({
@@ -114,6 +141,7 @@ export async function POST(req: Request) {
       script: parsed.data.script,
       voice_id: voiceId,
       credit_cost: TEXT_VIDEO_CREDIT_COST,
+      ...(shotPlanForInsert ? { shot_plan: shotPlanForInsert } : {}),
     })
     .select("id, status, created_at, credit_cost")
     .single();
