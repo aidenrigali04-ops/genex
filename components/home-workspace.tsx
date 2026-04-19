@@ -28,11 +28,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Label } from "@/components/ui/label";
+import { deriveClipTitle, parseClipPackageSections } from "@/lib/clip-package";
 import {
-  deriveClipTitle,
-  parseClipPackageSections,
-  parseFormatTagsFromCreatorSignals,
-} from "@/lib/clip-package";
+  buildUserMessageSummary,
+  type ClipTurn,
+  type LiveClipTurnSnapshot,
+} from "@/lib/clip-turn";
 import { MAX_CLIP_SOURCE_CHARS } from "@/lib/clip-model-input";
 import {
   FREE_DAILY_CREDITS,
@@ -40,7 +41,6 @@ import {
   UNLIMITED_CREDITS_SENTINEL,
 } from "@/lib/credits-config";
 import { type GenerationPresetId } from "@/lib/generation-presets";
-import { isEmptyStoredClipPackageV1 } from "@/lib/generation-output";
 import { decrementGuestCredit, readGuestCreditsRemaining } from "@/lib/guest-credits";
 import { extractPlatformSection } from "@/lib/parse-generation-output";
 import {
@@ -140,6 +140,9 @@ export function HomeWorkspace({
   const [error, setError] = useState<string | null>(authError ?? null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [clips, setClips] = useState(initialClipPackages);
+  const [turns, setTurns] = useState<ClipTurn[]>([]);
+  const [liveTurnSnapshot, setLiveTurnSnapshot] =
+    useState<LiveClipTurnSnapshot | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const pendingGenerationContextRef = useRef<GenerationContextV1 | null>(null);
@@ -173,41 +176,18 @@ export function HomeWorkspace({
     if (user) setSignInOpen(false);
   }, [user]);
 
-  const clipPackageBody = useMemo(() => {
-    const extracted = extractPlatformSection(
-      streamedText,
-      "clip_package",
-      CLIP_PLATFORMS,
-    );
-    if (extracted.trim()) return extracted;
-    if (/TOP CLIP MOMENTS/i.test(streamedText)) return streamedText.trim();
-    return "";
-  }, [streamedText]);
-
-  const parsedClipPackage = useMemo(
-    () => parseClipPackageSections(clipPackageBody),
-    [clipPackageBody],
-  );
-
-  const verticalPreviewText = useMemo(() => {
-    const script = parsedClipPackage.script.trim();
-    if (script) return script;
-    const pack = clipPackageBody.trim();
-    if (pack) return pack;
-    const stitched = [parsedClipPackage.moments, parsedClipPackage.hooks, parsedClipPackage.cta]
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .join("\n\n");
-    if (stitched) return stitched;
-    const raw = streamedText.trim();
-    if (raw && !isEmptyStoredClipPackageV1(raw)) return raw;
-    return "";
-  }, [clipPackageBody, parsedClipPackage, streamedText]);
-
-  const clipFormatTags = useMemo(
-    () => parseFormatTagsFromCreatorSignals(parsedClipPackage.creator_signals),
-    [parsedClipPackage.creator_signals],
-  );
+  useEffect(() => {
+    setTurns((prev) => {
+      if (prev.length === 0) return prev;
+      const last = prev[prev.length - 1];
+      if (last.generationId) return prev;
+      const row = clips.find((c) => c.output.trim() === last.rawText.trim());
+      if (!row) return prev;
+      return prev.map((t, i) =>
+        i === prev.length - 1 ? { ...t, generationId: row.id } : t,
+      );
+    });
+  }, [clips]);
 
   const getElapsed = (ts?: number) => {
     if (!ts || startTsRef.current == null) return null;
@@ -253,6 +233,11 @@ export function HomeWorkspace({
     startTsRef.current = null;
     setGenerationSteps([]);
     setStreamedText("");
+    setLiveTurnSnapshot({
+      userMessage: buildUserMessageSummary(text, url, uploadFile, inputMode),
+      inputMode,
+      preset,
+    });
 
     try {
       let res: Response;
@@ -501,6 +486,42 @@ export function HomeWorkspace({
         setError(
           "No text came back from the model. Check the browser Network tab for /api/generate, confirm OPENAI_API_KEY on the server, and try again.",
         );
+      } else if (!streamFatal && accumulated.trim()) {
+        const extracted = extractPlatformSection(
+          accumulated,
+          "clip_package",
+          CLIP_PLATFORMS,
+        ).trim();
+        const rawBody =
+          extracted ||
+          (/TOP CLIP MOMENTS/i.test(accumulated) ? accumulated.trim() : "");
+        const pkg = parseClipPackageSections(
+          rawBody.length > 0 ? rawBody : accumulated,
+        );
+        setTurns((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            userMessage: buildUserMessageSummary(
+              text,
+              url,
+              uploadFile,
+              inputMode,
+            ),
+            inputMode,
+            preset,
+            timestamp: new Date(),
+            parsedClipPackage: pkg,
+            rawText: accumulated,
+            generationId: null,
+            generationContext: lastClipGenerationContext,
+          },
+        ]);
+        setText("");
+        setUrl("");
+        setUploadFile(null);
+        setStreamedText("");
+        setGenerationSteps([]);
       }
 
       router.refresh();
@@ -511,6 +532,7 @@ export function HomeWorkspace({
         setError(e instanceof Error ? e.message : "Something went wrong.");
       }
     } finally {
+      setLiveTurnSnapshot(null);
       setFetchingYoutubeTranscript(false);
       setLoading(false);
       setTimeout(() => setProgress(0), 400);
@@ -518,6 +540,7 @@ export function HomeWorkspace({
   }, [
     creditsUnlimited,
     inputMode,
+    lastClipGenerationContext,
     preset,
     router,
     text,
@@ -525,6 +548,10 @@ export function HomeWorkspace({
     uploadFile,
     user,
   ]);
+
+  const handleStopGeneration = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
 
   const copyText = async (id: string, body: string) => {
     try {
@@ -555,23 +582,60 @@ export function HomeWorkspace({
     [clips],
   );
 
-  const clipOriginalPromptSummary = useMemo(() => {
-    if (inputMode === "text") return text.trim();
-    if (inputMode === "url") return url.trim();
-    if (uploadFile) return `File: ${uploadFile.name}`;
-    return "";
-  }, [inputMode, text, url, uploadFile]);
-
-  /** Match saved `generations` row to the output currently shown (list is newest-first). */
-  const textRatingGenerationId = useMemo(() => {
-    if (!streamedText.trim()) return undefined;
-    const t = streamedText.trim();
-    const row = clips.find((c) => c.output.trim() === t);
-    return row?.id;
-  }, [streamedText, clips]);
-
   const openClip = (clip: ClipPackageHistoryItem) => {
-    setStreamedText(clip.output);
+    const extracted = extractPlatformSection(
+      clip.output,
+      "clip_package",
+      CLIP_PLATFORMS,
+    ).trim();
+    const rawBody =
+      extracted ||
+      (/TOP CLIP MOMENTS/i.test(clip.output) ? clip.output.trim() : "");
+    const pkg = parseClipPackageSections(
+      rawBody.length > 0 ? rawBody : clip.output,
+    );
+
+    let mode: "text" | "url" | "file" = "text";
+    let userMessage = "Saved clip";
+    if (clip.inputUrl?.startsWith("file:")) {
+      mode = "text";
+      userMessage = buildUserMessageSummary(
+        clip.inputText ?? "",
+        "",
+        null,
+        "text",
+      );
+    } else if (clip.inputUrl) {
+      mode = "url";
+      userMessage = buildUserMessageSummary("", clip.inputUrl, null, "url");
+    } else {
+      userMessage = buildUserMessageSummary(
+        clip.inputText ?? "",
+        "",
+        null,
+        "text",
+      );
+    }
+
+    setTurns([
+      {
+        id: crypto.randomUUID(),
+        userMessage,
+        inputMode: mode,
+        preset: null,
+        timestamp: new Date(clip.createdAt),
+        parsedClipPackage: pkg,
+        rawText: clip.output,
+        generationId: clip.id,
+        generationContext: isGenerationContextV1(clip.generationContext)
+          ? clip.generationContext
+          : null,
+      },
+    ]);
+    setStreamedText("");
+    setGenerationSteps([]);
+    setLiveTurnSnapshot(null);
+
     const gc = clip.generationContext;
     setLastClipGenerationContext(isGenerationContextV1(gc) ? gc : null);
     setUploadFile(null);
@@ -589,12 +653,6 @@ export function HomeWorkspace({
       setUrl("");
     }
     setError(null);
-    requestAnimationFrame(() => {
-      document.getElementById("output-section")?.scrollIntoView({
-        behavior: "smooth",
-        block: "start",
-      });
-    });
   };
 
   const sidebarRecentItems = myClipCards.slice(0, 12).map((clip) => ({
@@ -677,6 +735,7 @@ export function HomeWorkspace({
 
   const showClipHub =
     workspaceTab === "clip" &&
+    turns.length === 0 &&
     !loading &&
     !streamedText.trim() &&
     !refinementOpen &&
@@ -892,6 +951,8 @@ export function HomeWorkspace({
             ) : (
               <div className="min-h-0 min-w-0 flex-1 overflow-hidden bg-transparent">
                 <AdaClipWorkspace
+                  turns={turns}
+                  liveTurnSnapshot={liveTurnSnapshot}
                   inputMode={inputMode}
                   onInputModeChange={(mode) => {
                     setInputMode(mode);
@@ -910,6 +971,7 @@ export function HomeWorkspace({
                   loading={loading}
                   canSubmit={canSubmit}
                   onSubmit={() => setRefinementOpen(true)}
+                  onStop={handleStopGeneration}
                   maxUploadMb={Math.round(MAX_MEDIA_UPLOAD_BYTES / (1024 * 1024))}
                   generationSteps={generationSteps}
                   getElapsed={getElapsed}
@@ -917,15 +979,9 @@ export function HomeWorkspace({
                   fetchingYoutubeTranscript={fetchingYoutubeTranscript}
                   progress={progress}
                   streamedText={streamedText}
-                  parsedClipPackage={parsedClipPackage}
-                  clipFormatTags={clipFormatTags}
-                  verticalPreviewText={verticalPreviewText}
                   copiedId={copiedId}
                   onCopy={copyText}
                   onRegenerate={() => setRefinementOpen(true)}
-                  textRatingGenerationId={textRatingGenerationId}
-                  lastClipGenerationContext={lastClipGenerationContext}
-                  clipOriginalPromptSummary={clipOriginalPromptSummary}
                   variant="adaKit"
                   onTextVideoCreditsRemainingChange={(n) => {
                     if (!creditsUnlimited) setCreditsRemaining(n);
@@ -955,6 +1011,19 @@ export function HomeWorkspace({
                     void runGeneration();
                   }}
                   onRefinementCancel={() => setRefinementOpen(false)}
+                  onExamplePrompt={(prompt, mode) => {
+                    if (mode === "url") {
+                      setInputMode("url");
+                      setUrl(prompt);
+                      setText("");
+                    } else {
+                      setInputMode("text");
+                      setText(prompt);
+                      setUrl("");
+                    }
+                    setUploadFile(null);
+                    window.setTimeout(() => setRefinementOpen(true), 400);
+                  }}
                 />
               </div>
             )}

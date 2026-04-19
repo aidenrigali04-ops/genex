@@ -16,6 +16,8 @@ type Props = {
   mode: "video" | "clip";
   /** Dark glass styling when embedded in Ada kit clip shell. */
   variant?: "default" | "adaKit";
+  /** Tighter chrome for inline chat action rows (clip turns). */
+  compact?: boolean;
   /** For fork actions */
   videoJobId?: string | null;
   originalPrompt: string;
@@ -43,6 +45,7 @@ const VIDEO_CHIPS = [
 export function GenerationFeedbackPanel({
   mode,
   variant = "default",
+  compact = false,
   videoJobId,
   originalPrompt,
   generationContext,
@@ -212,32 +215,47 @@ export function GenerationFeedbackPanel({
   return (
     <section
       className={cn(
-        "mt-6 space-y-4 rounded-2xl border p-5",
+        "rounded-2xl border",
+        compact ? "mt-0 space-y-2 p-3" : "mt-6 space-y-4 p-5",
         kit
           ? "border-white/14 bg-white/[0.06] font-[family-name:var(--font-instrument-sans)] text-white backdrop-blur-sm outline outline-1 -outline-offset-1 outline-white/10"
           : "rounded-ada-card border-ada-border bg-ada-card",
       )}
     >
       <div>
-        <h3
-          className={cn(
-            "text-lg font-semibold",
-            kit
-              ? "font-[family-name:var(--font-instrument-serif)] text-xl font-normal tracking-[0.36px] text-white"
-              : "text-ada-primary",
-          )}
-        >
-          AI Feedback
-        </h3>
-        <p className={cn("text-sm", kit ? "text-white/55" : "text-muted-foreground")}>
-          Ask the strategist about these results. Each message uses{" "}
-          <strong className={kit ? "text-white/90" : undefined}>1 credit</strong> (signed-in
-          users).
-        </p>
+        {compact ? (
+          <p
+            className={cn(
+              "text-xs font-semibold tracking-wide",
+              kit ? "text-white/80" : "text-ada-primary",
+            )}
+          >
+            AI feedback · 1 credit / message (signed-in)
+          </p>
+        ) : (
+          <h3
+            className={cn(
+              "text-lg font-semibold",
+              kit
+                ? "font-[family-name:var(--font-instrument-serif)] text-xl font-normal tracking-[0.36px] text-white"
+                : "text-ada-primary",
+            )}
+          >
+            AI Feedback
+          </h3>
+        )}
+        {!compact ? (
+          <p className={cn("text-sm", kit ? "text-white/55" : "text-muted-foreground")}>
+            Ask the strategist about these results. Each message uses{" "}
+            <strong className={kit ? "text-white/90" : undefined}>1 credit</strong> (signed-in
+            users).
+          </p>
+        ) : null}
         {ctxSummary ? (
           <p
             className={cn(
-              "mt-2 rounded-xl border px-3 py-2 text-xs",
+              "rounded-xl border px-3 py-2 text-xs",
+              compact ? "mt-1.5" : "mt-2",
               kit
                 ? "border-white/16 bg-black/30 text-white/75"
                 : "text-muted-foreground border-[#E8E4F8] bg-[#F0EFFE]/60 dark:border-white/10 dark:bg-zinc-900/40",
@@ -258,12 +276,18 @@ export function GenerationFeedbackPanel({
 
       <div
         className={cn(
-          "flex max-h-72 flex-col gap-3 overflow-y-auto rounded-xl p-3",
+          "flex flex-col gap-3 overflow-y-auto rounded-xl p-3",
+          compact ? "max-h-48" : "max-h-72",
           kit ? "border border-white/10 bg-black/25" : "rounded-ada-input bg-ada-app",
         )}
       >
         {messages.length === 0 ? (
-          <p className={cn("text-sm", kit ? "text-white/50" : "text-muted-foreground")}>
+          <p
+            className={cn(
+              compact ? "text-xs" : "text-sm",
+              kit ? "text-white/50" : "text-muted-foreground",
+            )}
+          >
             Ask anything about pacing, hooks, platform fit, or rewrites.
           </p>
         ) : (
@@ -289,7 +313,12 @@ export function GenerationFeedbackPanel({
         )}
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div
+        className={cn(
+          "flex gap-2",
+          compact ? "max-w-full flex-nowrap overflow-x-auto pb-1" : "flex-wrap",
+        )}
+      >
         {chips.map((c) => (
           <Button
             key={c}
@@ -297,7 +326,7 @@ export function GenerationFeedbackPanel({
             size="sm"
             variant="outline"
             className={cn(
-              "rounded-full text-xs",
+              "shrink-0 rounded-full text-xs",
               kit
                 ? "border-white/32 bg-transparent text-white/85 hover:border-white/50 hover:bg-white/10 hover:text-white"
                 : "rounded-ada-pill border-ada-border text-ada-secondary hover:border-ada-border-active hover:text-ada-primary",
@@ -338,14 +367,15 @@ export function GenerationFeedbackPanel({
       <div className="space-y-2">
         <Label
           htmlFor="feedback-input"
-          className={kit ? "text-white/65" : undefined}
+          className={cn(kit ? "text-white/65" : undefined, compact && "text-xs")}
         >
           Ask AI about these results…
         </Label>
         <textarea
           id="feedback-input"
           className={cn(
-            "min-h-[80px] w-full resize-none rounded-xl border px-3 py-2 text-sm outline-none transition-colors",
+            "w-full resize-none rounded-xl border px-3 py-2 text-sm outline-none transition-colors",
+            compact ? "min-h-[56px]" : "min-h-[80px]",
             kit
               ? "border-white/20 bg-black/30 text-white placeholder:text-white/45 focus:border-white/40"
               : "rounded-ada-input border-ada-border bg-ada-input text-ada-primary placeholder:text-ada-disabled focus:border-ada-focus",

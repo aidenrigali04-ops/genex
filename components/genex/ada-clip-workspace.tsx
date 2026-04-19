@@ -1,24 +1,23 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { Sparkles } from "lucide-react";
+import { Link2, Paperclip } from "lucide-react";
 
-import { AdaInputCard } from "@/components/genex/ada-input-card";
-import { AdaOutputPanel } from "@/components/genex/ada-output-panel";
+import { AdaComposer } from "@/components/genex/ada-composer";
+import { AdaEmptyState } from "@/components/genex/ada-empty-state";
+import { AdaLiveTurn } from "@/components/genex/ada-live-turn";
+import { AdaTurn } from "@/components/genex/ada-turn";
 import { RefinementChatPanel } from "@/components/refinement-chat-panel";
-import {
-  Progress,
-  ProgressLabel,
-  ProgressValue,
-} from "@/components/ui/progress";
-import type { ClipSectionMap } from "@/lib/clip-package";
-import type { PlatformId } from "@/lib/platforms";
 import type { GenerationContextV1 } from "@/lib/generation-context";
 import type { GenerationPresetId } from "@/lib/generation-presets";
+import type { ClipTurn, LiveClipTurnSnapshot } from "@/lib/clip-turn";
+import type { PlatformId } from "@/lib/platforms";
 import type { GenerationUiStep } from "@/lib/generation-stream-protocol";
 import { cn } from "@/lib/utils";
 
 export type AdaClipWorkspaceProps = {
+  turns: ClipTurn[];
+  liveTurnSnapshot: LiveClipTurnSnapshot | null;
   inputMode: "text" | "url" | "file";
   onInputModeChange: (m: "text" | "url" | "file") => void;
   text: string;
@@ -34,6 +33,7 @@ export type AdaClipWorkspaceProps = {
   loading: boolean;
   canSubmit: boolean;
   onSubmit: () => void;
+  onStop: () => void;
   maxUploadMb: number;
   generationSteps: GenerationUiStep[];
   getElapsed: (ts?: number) => string | null;
@@ -41,15 +41,9 @@ export type AdaClipWorkspaceProps = {
   fetchingYoutubeTranscript: boolean;
   progress: number;
   streamedText: string;
-  parsedClipPackage: ClipSectionMap;
-  clipFormatTags: string[];
-  verticalPreviewText: string;
   copiedId: string | null;
   onCopy: (id: string, body: string) => void;
   onRegenerate: () => void;
-  textRatingGenerationId?: string;
-  lastClipGenerationContext: GenerationContextV1 | null;
-  clipOriginalPromptSummary: string;
   variant?: "default" | "adaKit";
   onTextVideoCreditsRemainingChange?: (remaining: number) => void;
   refinementOpen?: boolean;
@@ -57,12 +51,12 @@ export type AdaClipWorkspaceProps = {
   refinementInputSummary?: string;
   onRefinementConfirm?: (ctx: GenerationContextV1) => void;
   onRefinementCancel?: () => void;
+  onExamplePrompt?: (prompt: string, mode: "text" | "url") => void;
 };
 
-const MAGENTA_ACTIVE =
-  "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] shadow-[0_0_12px_rgba(203,45,206,0.35)]";
-
 export function AdaClipWorkspace({
+  turns,
+  liveTurnSnapshot,
   inputMode,
   onInputModeChange,
   text,
@@ -78,6 +72,7 @@ export function AdaClipWorkspace({
   loading,
   canSubmit,
   onSubmit,
+  onStop,
   maxUploadMb,
   generationSteps,
   getElapsed,
@@ -85,15 +80,9 @@ export function AdaClipWorkspace({
   fetchingYoutubeTranscript,
   progress,
   streamedText,
-  parsedClipPackage,
-  clipFormatTags,
-  verticalPreviewText,
   copiedId,
   onCopy,
   onRegenerate,
-  textRatingGenerationId,
-  lastClipGenerationContext,
-  clipOriginalPromptSummary,
   variant = "default",
   onTextVideoCreditsRemainingChange,
   refinementOpen = false,
@@ -101,308 +90,191 @@ export function AdaClipWorkspace({
   refinementInputSummary = "",
   onRefinementConfirm,
   onRefinementCancel,
+  onExamplePrompt,
 }: AdaClipWorkspaceProps) {
   const kit = variant === "adaKit";
-  const endRef = useRef<HTMLDivElement>(null);
-
-  const userLine =
-    clipOriginalPromptSummary.trim() ||
-    (inputMode === "url" ? url.trim() : "") ||
-    (uploadFile ? `File: ${uploadFile.name}` : "") ||
-    (inputMode === "text" ? text.trim().slice(0, 2000) : "");
-
-  const showUserBubble =
-    Boolean(userLine) &&
-    (refinementOpen ||
-      loading ||
-      generationSteps.length > 0 ||
-      Boolean(streamedText.trim()));
-
-  const showIdleHint =
-    !refinementOpen &&
-    !loading &&
-    generationSteps.length === 0 &&
-    !streamedText.trim() &&
-    !error;
+  const threadRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const id = requestAnimationFrame(() => {
-      endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    });
-    return () => cancelAnimationFrame(id);
+    const el = threadRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
   }, [
+    turns,
     streamedText,
-    generationSteps.length,
     loading,
-    refinementOpen,
     error,
-    refinementInputSummary,
+    refinementOpen,
+    liveTurnSnapshot,
+    generationSteps.length,
   ]);
 
-  const userBubbleClass = kit
-    ? "max-w-[min(100%,85%)] whitespace-pre-wrap rounded-[20px_4px_20px_20px] bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)] px-4 py-3.5 text-[15px] leading-snug text-white shadow-[0_16px_32px_rgba(136,1,220,0.22)] outline outline-1 -outline-offset-1 outline-white/25"
-    : "max-w-[min(100%,85%)] whitespace-pre-wrap rounded-2xl rounded-br-md border border-ada-border bg-ada-card px-4 py-3.5 text-[15px] leading-snug text-ada-primary shadow-md ring-1 ring-ada-border/25";
+  const handleExampleClick = (prompt: string, mode: "text" | "url") => {
+    onExamplePrompt?.(prompt, mode);
+  };
 
-  const assistantShell = kit
-    ? "w-full max-w-[min(100%,920px)] space-y-3.5 rounded-[20px_20px_20px_4px] border border-white/15 bg-white/[0.08] p-4 pb-5 shadow-[0_12px_32px_rgba(0,0,0,0.28)] outline outline-1 -outline-offset-1 outline-white/15"
-    : "w-full max-w-[min(100%,920px)] space-y-3.5 rounded-2xl rounded-bl-md border border-ada-border bg-ada-card p-4 pb-5 shadow-md ring-1 ring-ada-border/30";
+  const liveUserBubble = liveTurnSnapshot && loading && (
+    <div className="flex justify-end">
+      <div
+        className={cn(
+          "max-w-[85%] rounded-[18px] rounded-br-[4px] border px-4 py-3",
+          kit
+            ? "border-white/14 bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)] text-white shadow-[0_12px_28px_rgba(136,1,220,0.22)]"
+            : "border-[var(--ada-border)] bg-[var(--ada-bg-elevated)]",
+        )}
+      >
+        {liveTurnSnapshot.inputMode !== "text" ? (
+          <div className="mb-2 flex items-center gap-1.5">
+            {liveTurnSnapshot.inputMode === "url" ? (
+              <Link2
+                className={cn(
+                  "h-3 w-3",
+                  kit ? "text-white/90" : "text-[var(--ada-accent)]",
+                )}
+              />
+            ) : (
+              <Paperclip
+                className={cn(
+                  "h-3 w-3",
+                  kit ? "text-white/90" : "text-[var(--ada-accent)]",
+                )}
+              />
+            )}
+            <span
+              className={cn(
+                "text-[10px] font-medium tracking-wide uppercase",
+                kit ? "text-white/80" : "text-[var(--ada-accent)]",
+              )}
+            >
+              {liveTurnSnapshot.inputMode}
+            </span>
+          </div>
+        ) : null}
+        <p
+          className={cn(
+            "text-sm leading-relaxed break-words",
+            kit ? "text-white" : "text-[var(--ada-text-primary)]",
+          )}
+        >
+          {liveTurnSnapshot.userMessage}
+        </p>
+        {liveTurnSnapshot.preset ? (
+          <div className="mt-2">
+            <span
+              className={cn(
+                "rounded-full px-2 py-0.5 text-[10px] font-medium",
+                kit
+                  ? "bg-white/20 text-white"
+                  : "bg-[var(--ada-accent)]/20 text-[var(--ada-accent-hover)]",
+              )}
+            >
+              {liveTurnSnapshot.preset.replace(/_/g, " ")}
+            </span>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
 
   return (
     <div
       className={cn(
-        "flex h-full min-h-0 flex-col",
-        kit && "font-[family-name:var(--font-instrument-sans)] text-white",
+        "relative flex h-full min-h-0 flex-col",
+        kit
+          ? "bg-[#0A050F] font-[family-name:var(--font-instrument-sans)] text-white"
+          : "bg-[var(--ada-bg-app)]",
       )}
     >
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain scroll-pb-8 px-4 py-5 sm:px-6">
-        <div className="mx-auto flex max-w-[920px] flex-col gap-5">
-          {showIdleHint ? (
-            <div
-              className={cn(
-                "flex min-h-[36vh] flex-col items-center justify-center gap-4 rounded-2xl border border-dashed px-6 py-14 text-center",
-                kit
-                  ? "border-white/12 bg-white/[0.02] text-white/50"
-                  : "border-ada-border bg-ada-sidebar/30 text-ada-secondary",
-              )}
-            >
-              <Sparkles
-                className={cn("size-11 stroke-[1.25]", kit ? "text-white/30" : "text-ada-disabled")}
-                aria-hidden
-              />
-              <div className="max-w-sm space-y-2">
-                <p className={cn("text-sm font-medium", kit ? "text-white/70" : "text-ada-primary")}>
-                  Clip workspace
-                </p>
-                <p className="text-sm leading-relaxed">
-                  Use the composer below. You will answer a few quick questions, then your TikTok ·
-                  Reels · Shorts package streams here in one thread.
-                </p>
-              </div>
-            </div>
-          ) : null}
-
-          {showUserBubble ? (
-            <div className="flex justify-end">
-              <div className={userBubbleClass}>{userLine}</div>
-            </div>
-          ) : null}
-
-          {refinementOpen && !loading && onRefinementConfirm ? (
-            <div className="flex w-full justify-start">
-              <div className="w-full max-w-[min(100%,920px)]">
-                <RefinementChatPanel
-                  active={refinementOpen}
-                  kind="text_generation"
-                  platformIds={refinementPlatformIds}
-                  inputSummary={refinementInputSummary}
-                  variant={variant}
-                  embedInChat
-                  className="max-h-none min-h-0"
-                  onConfirm={onRefinementConfirm}
-                  onCancel={onRefinementCancel}
-                />
-              </div>
-            </div>
-          ) : null}
-
-          {loading || generationSteps.length > 0 ? (
-            <div className="flex w-full justify-start">
-              <div className={assistantShell}>
-                <div
-                  className={cn(
-                    "flex items-center gap-2 border-b pb-2",
-                    kit ? "border-white/10" : "border-ada-border",
-                  )}
-                >
-                  <div
-                    className={cn(
-                      "flex size-8 shrink-0 items-center justify-center rounded-full shadow-[0_0_16px_rgba(203,45,206,0.24)]",
-                      kit
-                        ? "bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)]"
-                        : "bg-ada-accent",
-                    )}
-                  >
-                    <Sparkles className="size-4 text-white" aria-hidden />
-                  </div>
-                  <span
-                    className={cn(
-                      "text-xs font-medium tracking-wide",
-                      kit ? "text-[#E8B4FF]" : "text-ada-accent-hover",
-                    )}
-                  >
-                    GenEx
-                  </span>
-                </div>
-
-                {kit ? (
-                  <div
-                    className="h-12 w-full overflow-hidden rounded-xl opacity-95 ring-1 ring-white/10"
-                    style={{
-                      background:
-                        "linear-gradient(112deg, rgba(54,0,170,0.5) 0%, rgba(136,0,220,0.38) 48%, rgba(164,0,167,0.45) 100%)",
-                    }}
-                    aria-hidden
-                  />
-                ) : (
-                  <div
-                    className="h-2.5 w-full max-w-md rounded-full bg-linear-to-r from-ada-accent/25 via-ada-accent/10 to-transparent"
-                    aria-hidden
-                  />
-                )}
-
-                <div
-                  className={cn(
-                    "divide-y overflow-hidden rounded-xl border",
-                    kit
-                      ? "divide-white/10 border-white/12 bg-black/20"
-                      : "divide-ada-border border-ada-border bg-ada-sidebar/60",
-                  )}
-                >
-                  {generationSteps.map((s, i) => (
-                    <div key={`${s.id}-${i}`} className="flex items-center gap-3 px-3 py-2">
-                      <div
-                        className={cn(
-                          "flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold",
-                          i === generationSteps.length - 1 && loading
-                            ? kit
-                              ? cn(MAGENTA_ACTIVE, "animate-pulse text-white")
-                              : "animate-pulse bg-ada-accent text-white"
-                            : kit
-                              ? "bg-white/10 text-white/45"
-                              : "bg-ada-elevated text-ada-disabled",
-                        )}
-                      >
-                        {i === generationSteps.length - 1 && loading ? "…" : "✓"}
-                      </div>
-                      <span
-                        className={cn(
-                          "flex-1 text-xs",
-                          i === generationSteps.length - 1 && loading
-                            ? kit
-                              ? "font-medium text-white"
-                              : "font-medium text-ada-primary"
-                            : kit
-                              ? "text-white/45"
-                              : "text-ada-disabled",
-                        )}
-                      >
-                        {s.label}
-                      </span>
-                      {getElapsed(s.ts) ? (
-                        <span
-                          className={cn(
-                            "tabular-nums text-[10px]",
-                            kit ? "text-white/40" : "text-ada-disabled",
-                          )}
-                        >
-                          {getElapsed(s.ts)}
-                        </span>
-                      ) : null}
-                    </div>
-                  ))}
-                  {loading && generationSteps.length === 0 ? (
-                    <div
-                      className={cn(
-                        "animate-pulse px-3 py-2.5 text-xs",
-                        kit ? "text-white/45" : "text-ada-disabled",
-                      )}
-                    >
-                      Connecting…
-                    </div>
-                  ) : null}
-                </div>
-
-                {loading ? (
-                  <div className="space-y-2">
-                    <Progress
-                      value={fetchingYoutubeTranscript ? 18 : progress}
-                      className="w-full"
-                      trackClassName={kit ? "bg-white/12" : undefined}
-                      indicatorClassName={
-                        kit
-                          ? "bg-[linear-gradient(90deg,#D31CD7_0%,#8800DC_100%)]"
-                          : undefined
-                      }
-                    >
-                      <div className="flex w-full items-center justify-between gap-2">
-                        <ProgressLabel
-                          className={kit ? "text-xs font-medium text-white/85" : undefined}
-                        >
-                          {fetchingYoutubeTranscript
-                            ? "YouTube"
-                            : (generationSteps.at(-1)?.label ?? "Generating")}
-                        </ProgressLabel>
-                        <ProgressValue
-                          className={kit ? "text-xs text-white/55 tabular-nums" : undefined}
-                        />
-                      </div>
-                    </Progress>
-                    <p className={cn("text-xs", kit ? "text-white/50" : "text-ada-secondary")}>
-                      {fetchingYoutubeTranscript
-                        ? "Fetching captions before generation…"
-                        : generationSteps.length > 0
-                          ? "Streaming your clip package…"
-                          : "Connecting to the server…"}
-                    </p>
-                  </div>
-                ) : null}
-              </div>
-            </div>
-          ) : null}
-
-          {error ? (
-            <div className="flex justify-start">
-              <div
-                className={cn(
-                  "max-w-[min(100%,92%)] rounded-2xl border px-4 py-3.5 text-sm leading-relaxed",
-                  kit
-                    ? "border-red-400/40 bg-red-950/55 text-red-50 shadow-[0_8px_24px_rgba(0,0,0,0.35)]"
-                    : "border-ada-error/35 bg-ada-error/10 text-ada-error shadow-sm",
-                )}
-                role="alert"
-              >
-                <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide opacity-90">
-                  Something went wrong
-                </span>
-                {error}
-              </div>
-            </div>
-          ) : null}
-
-          {streamedText.trim() ? (
-            <AdaOutputPanel
-              loading={loading}
-              streamedText={streamedText}
-              parsedClipPackage={parsedClipPackage}
-              clipFormatTags={clipFormatTags}
-              verticalPreviewText={verticalPreviewText}
-              copiedId={copiedId}
-              onCopy={onCopy}
-              onRegenerate={onRegenerate}
-              canRegenerate={canSubmit && !loading}
-              generationId={textRatingGenerationId}
-              generationContext={lastClipGenerationContext}
-              originalPrompt={clipOriginalPromptSummary}
+      <div
+        ref={threadRef}
+        className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain"
+        style={{ scrollBehavior: "smooth" }}
+      >
+        <div
+          className={cn(
+            "mx-auto w-full max-w-3xl space-y-8 px-4 py-6",
+            "pb-[180px]",
+          )}
+        >
+          {turns.length === 0 && !loading && !refinementOpen ? (
+            <AdaEmptyState
               variant={variant}
-              onTextVideoCreditsRemainingChange={onTextVideoCreditsRemainingChange}
-              chatEmbedded
+              onExampleClick={handleExampleClick}
             />
           ) : null}
 
-          <div ref={endRef} className="h-2 shrink-0 scroll-mt-28" aria-hidden />
+          {turns.map((turn, i) => (
+            <AdaTurn
+              key={turn.id}
+              turn={turn}
+              isLast={i === turns.length - 1}
+              copiedId={copiedId}
+              onCopy={onCopy}
+              onRegenerate={onRegenerate}
+              onTextVideoCreditsRemainingChange={onTextVideoCreditsRemainingChange}
+              variant={variant}
+            />
+          ))}
+
+          {refinementOpen && !loading && onRefinementConfirm ? (
+            <div className="w-full">
+              <RefinementChatPanel
+                active={refinementOpen}
+                kind="text_generation"
+                platformIds={refinementPlatformIds}
+                inputSummary={refinementInputSummary}
+                variant={variant}
+                embedInChat
+                className="max-h-none min-h-0"
+                onConfirm={onRefinementConfirm}
+                onCancel={onRefinementCancel}
+              />
+            </div>
+          ) : null}
+
+          {liveUserBubble}
+
+          {loading ? (
+            <AdaLiveTurn
+              streamedText={streamedText}
+              generationSteps={generationSteps}
+              progress={progress}
+              fetchingYoutubeTranscript={fetchingYoutubeTranscript}
+              getElapsed={getElapsed}
+              copiedId={copiedId}
+              onCopy={onCopy}
+              variant={variant}
+            />
+          ) : null}
+
+          {error ? (
+            <div
+              className={cn(
+                "rounded-[10px] border px-5 py-4 text-sm",
+                kit
+                  ? "border-red-400/35 bg-red-950/50 text-red-50"
+                  : "border-[var(--ada-error)]/30 bg-[var(--ada-error)]/10 text-[var(--ada-error)]",
+              )}
+              role="alert"
+            >
+              {error}
+            </div>
+          ) : null}
+
+          <div className="h-2 shrink-0" aria-hidden />
         </div>
       </div>
 
-      <footer
+      <div
         className={cn(
-          "shrink-0 border-t px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6",
+          "absolute right-0 bottom-0 left-0 px-4 pt-6 pb-4",
           kit
-            ? "border-white/10 bg-[#0A050F]/90 backdrop-blur-xl supports-backdrop-filter:bg-[#0A050F]/80"
-            : "border-ada-border bg-ada-app/95 backdrop-blur-md supports-backdrop-filter:bg-ada-app/85",
+            ? "bg-gradient-to-t from-[#0A050F] via-[#0A050F] to-transparent"
+            : "bg-gradient-to-t from-[var(--ada-bg-app)] via-[var(--ada-bg-app)] to-transparent",
         )}
       >
-        <div className="mx-auto w-full max-w-[920px] pb-0.5">
-          <AdaInputCard
+        <div className="mx-auto w-full max-w-3xl">
+          <AdaComposer
             inputMode={inputMode}
             onInputModeChange={onInputModeChange}
             text={text}
@@ -418,12 +290,21 @@ export function AdaClipWorkspace({
             loading={loading}
             canSubmit={canSubmit}
             onSubmit={onSubmit}
+            onStop={onStop}
             maxUploadMb={maxUploadMb}
             variant={variant}
             refinementActive={refinementOpen}
           />
+          <p
+            className={cn(
+              "mt-2 text-center text-[10px]",
+              kit ? "text-white/35" : "text-[var(--ada-text-disabled)]",
+            )}
+          >
+            GenEx can make mistakes. Review clips before posting.
+          </p>
         </div>
-      </footer>
+      </div>
     </div>
   );
 }
