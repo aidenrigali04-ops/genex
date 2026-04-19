@@ -1,4 +1,4 @@
-import { createWriteStream } from "node:fs";
+import { createWriteStream, writeFileSync } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 
@@ -45,8 +45,12 @@ function formatElevenLabsHttpError(res, rawBody) {
 /**
  * Generate a voiceover MP3 for the full script (ElevenLabs streaming).
  * Uses HTTPS to https://api.elevenlabs.io only; never log the API key.
+ *
+ * @param {string} script
+ * @param {string} [voiceId]
+ * @param {string} outputPath
  */
-export async function generateVoiceover(script, voiceId, outputPath) {
+async function generateElevenLabsVoiceover(script, voiceId, outputPath) {
   const key = elevenLabsKey();
   if (!key) {
     throw new Error(
@@ -91,4 +95,46 @@ export async function generateVoiceover(script, voiceId, outputPath) {
   }
 
   await pipeline(Readable.fromWeb(res.body), createWriteStream(outputPath));
+}
+
+/**
+ * @param {string} script
+ * @param {string} outputPath
+ */
+async function generateOpenAIVoiceover(script, outputPath) {
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey) {
+    throw new Error(
+      "OPENAI_API_KEY is not set; cannot fall back to OpenAI TTS after ElevenLabs failure.",
+    );
+  }
+  const { default: OpenAI } = await import("openai");
+  const openai = new OpenAI({ apiKey });
+  const response = await openai.audio.speech.create({
+    model: "tts-1-hd",
+    voice: "nova",
+    input: script.trim().slice(0, 4096),
+    response_format: "mp3",
+  });
+  const buffer = Buffer.from(await response.arrayBuffer());
+  writeFileSync(outputPath, buffer);
+}
+
+/**
+ * Generate a voiceover MP3 for the full script.
+ * Tries ElevenLabs first; on blocked-account style failures, falls back to OpenAI TTS.
+ */
+export async function generateVoiceover(script, voiceId, outputPath) {
+  try {
+    await generateElevenLabsVoiceover(script, voiceId, outputPath);
+  } catch (err) {
+    if (/unusual activity|401|free tier/i.test(String(err))) {
+      console.warn(
+        "[voiceover] ElevenLabs blocked, falling back to OpenAI TTS",
+      );
+      await generateOpenAIVoiceover(script, outputPath);
+    } else {
+      throw err;
+    }
+  }
 }

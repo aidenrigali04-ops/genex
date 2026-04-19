@@ -5,6 +5,7 @@ import { planShots } from "@/worker/text-video/shot-planner.js";
 
 const bodySchema = z.object({
   script: z.string().min(20).max(8000),
+  hookStyle: z.string().min(1).max(64).optional(),
 });
 
 export async function POST(req: Request) {
@@ -30,7 +31,9 @@ export async function POST(req: Request) {
   }
 
   try {
-    const shots = await planShots(parsed.data.script);
+    const shots = await planShots(parsed.data.script, {
+      hookStyle: parsed.data.hookStyle,
+    });
     return Response.json({ shots });
   } catch (e) {
     const message =

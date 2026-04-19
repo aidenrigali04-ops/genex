@@ -24,6 +24,7 @@ const bodySchema = z
     script: z.string().min(20).max(8000),
     generationId: generationIdSchema.optional(),
     voiceId: z.string().min(1).max(128).optional(),
+    hookStyle: z.string().min(1).max(64).optional(),
     shotPlan: z.array(shotPlanEntrySchema).min(3).max(24).optional(),
   })
   .superRefine((data, ctx) => {
@@ -141,6 +142,7 @@ export async function POST(req: Request) {
       script: parsed.data.script,
       voice_id: voiceId,
       credit_cost: TEXT_VIDEO_CREDIT_COST,
+      ...(parsed.data.hookStyle ? { hook_style: parsed.data.hookStyle } : {}),
       ...(shotPlanForInsert ? { shot_plan: shotPlanForInsert } : {}),
     })
     .select("id, status, created_at, credit_cost")

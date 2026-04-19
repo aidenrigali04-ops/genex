@@ -52,6 +52,8 @@ type Props = {
   script: string;
   hooks: string;
   generationId?: string;
+  /** Passed to shot planner (e.g. viral, curiosity, contrarian). */
+  hookStyle?: string;
   onCreditChange?: (n: number) => void;
   variant?: "default" | "adaKit";
 };
@@ -60,6 +62,7 @@ export function TextToVideoLauncher({
   script,
   hooks,
   generationId,
+  hookStyle = "viral",
   onCreditChange,
   variant = "default",
 }: Props) {
@@ -72,6 +75,8 @@ export function TextToVideoLauncher({
   const [previewBusy, setPreviewBusy] = useState(false);
   const [outputUrl, setOutputUrl] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  /** Server `error_message` while status is `fetching` — reused as a progress hint, not an error. */
+  const [fetchHint, setFetchHint] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -113,6 +118,7 @@ export function TextToVideoLauncher({
     setStatus("previewing");
     setPreviewBusy(true);
     setErrorMsg(null);
+    setFetchHint(null);
     setOutputUrl(null);
     setShotPreview(null);
     setJobId(null);
@@ -121,7 +127,7 @@ export function TextToVideoLauncher({
       const res = await fetch("/api/text-video-jobs/preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ script: voScript }),
+        body: JSON.stringify({ script: voScript, hookStyle }),
       });
       const data = (await res.json()) as {
         shots?: TextVideoShotPreview[];
@@ -166,6 +172,7 @@ export function TextToVideoLauncher({
     if (!shotPreview?.length) return;
     setStatus("queued");
     setErrorMsg(null);
+    setFetchHint(null);
     setOutputUrl(null);
 
     try {
@@ -176,6 +183,7 @@ export function TextToVideoLauncher({
           script: voScript,
           generationId,
           voiceId,
+          hookStyle,
           shotPlan: shotPreview,
         }),
       });
@@ -225,7 +233,14 @@ export function TextToVideoLauncher({
       const next = (job.status ?? "queued") as JobStatus;
       setStatus(next);
 
+      if (next === "fetching") {
+        setFetchHint(job.error_message?.trim() || null);
+      } else {
+        setFetchHint(null);
+      }
+
       if (next === "complete" && job.output_url) {
+        setFetchHint(null);
         setOutputUrl(job.output_url);
         if (pollRef.current) {
           clearInterval(pollRef.current);
@@ -233,6 +248,7 @@ export function TextToVideoLauncher({
         }
       }
       if (next === "failed") {
+        setFetchHint(null);
         setErrorMsg(job.error_message ?? job.error ?? "Something went wrong.");
         if (pollRef.current) {
           clearInterval(pollRef.current);
@@ -530,6 +546,7 @@ export function TextToVideoLauncher({
                     setStatus("idle");
                     setShotPreview(null);
                     setErrorMsg(null);
+                    setFetchHint(null);
                   }}
                   className={cn(
                     "w-full py-1 text-center text-[11px] font-medium transition-colors",
@@ -571,6 +588,16 @@ export function TextToVideoLauncher({
                 style={{ width: `${runningProgress}%` }}
               />
             </div>
+            {status === "fetching" && fetchHint ? (
+              <p
+                className={cn(
+                  "text-[10px] animate-pulse",
+                  kit ? "text-white/40" : "text-ada-disabled",
+                )}
+              >
+                {fetchHint}
+              </p>
+            ) : null}
           </div>
         ) : null}
 
@@ -610,6 +637,7 @@ export function TextToVideoLauncher({
                   setOutputUrl(null);
                   setJobId(null);
                   setShotPreview(null);
+                  setFetchHint(null);
                 }}
                 className={cn(
                   "flex-1 rounded-lg border py-2 text-xs font-medium transition-colors",
@@ -643,6 +671,7 @@ export function TextToVideoLauncher({
                 setErrorMsg(null);
                 setJobId(null);
                 setShotPreview(null);
+                setFetchHint(null);
               }}
               className={cn(
                 "w-full rounded-lg border py-2 text-xs font-medium transition-colors",

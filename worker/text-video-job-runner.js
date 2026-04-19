@@ -14,6 +14,7 @@ import { fetchPexelsClip, downloadToFile } from "./text-video/pexels-fetch.js";
 import { generateVoiceover } from "./text-video/voiceover.js";
 import { buildAssFromShotPlan } from "./text-video/captions.js";
 import { assembleVideo } from "./text-video/assembler.js";
+import { getAudioDuration } from "./text-video/ffprobe-duration.js";
 
 const BUCKET = "text-video-outputs";
 
@@ -21,7 +22,9 @@ const BUCKET = "text-video-outputs";
 function normalizeShotsFromDb(raw) {
   if (!raw || !Array.isArray(raw) || raw.length < 3) return null;
   return raw.map((sh) => ({
-    keyword: String(sh.keyword ?? "nature landscape"),
+    keyword: String(
+      sh.keyword ?? "person talking smartphone vertical energetic",
+    ),
     duration: Math.min(8, Math.max(3, Math.round(Number(sh.duration) || 5))),
     caption: String(sh.caption ?? "").slice(0, 200),
   }));
@@ -72,7 +75,7 @@ async function setStatus(supabase, id, fields) {
 
 /**
  * @param {SupabaseClient} supabase
- * @param {{ id: string; script: string; voice_id: string; user_id: string; shot_plan?: unknown }} job
+ * @param {{ id: string; script: string; voice_id: string; user_id: string; shot_plan?: unknown; hook_style?: string | null }} job
  */
 export async function processTextVideoJob(supabase, job) {
   const tmpDir = path.join(os.tmpdir(), `tv_${job.id}`);
@@ -84,43 +87,82 @@ export async function processTextVideoJob(supabase, job) {
   const downloadedClips = [];
 
   try {
-    const fromDb = normalizeShotsFromDb(job.shot_plan);
-    const shots = fromDb ?? (await planShots(job.script));
-    const planForDb = shots.map((s) => ({
+    let shots =
+      normalizeShotsFromDb(job.shot_plan) ??
+      (await planShots(job.script, {
+        hookStyle: job.hook_style ?? undefined,
+      }));
+
+    const planInitial = shots.map((s) => ({
       keyword: s.keyword,
       duration: s.duration,
       caption: s.caption,
     }));
     await supabase
       .from("text_video_jobs")
-      .update({ shot_plan: planForDb })
+      .update({ shot_plan: planInitial })
       .eq("id", job.id);
 
-    await setStatus(supabase, job.id, { status: "fetching" });
-
-    for (let i = 0; i < shots.length; i++) {
-      const shot = shots[i];
-      const clipPath = path.join(tmpDir, `clip_${i}.mp4`);
-
-      let pexelsResult;
-      try {
-        pexelsResult = await fetchPexelsClip(shot.keyword, shot.duration);
-      } catch {
-        pexelsResult = await fetchPexelsClip(
-          "cinematic nature landscape",
-          shot.duration,
-        );
-      }
-
-      await downloadToFile(pexelsResult.url, clipPath);
-      downloadedClips.push(clipPath);
-      shots[i] = { ...shot, localPath: clipPath };
-    }
-
+    // 1. Voiceover first (timing source of truth)
     const fullScript = shots.map((s) => s.caption).join(" ");
     await generateVoiceover(fullScript, job.voice_id, voPath);
 
+    // 2. Actual VO duration
+    const voDuration = await getAudioDuration(voPath);
+
+    // 3. Rescale shot lengths to match VO (captions + b-roll align)
+    const totalPlanned = shots.reduce(
+      (s, sh) => s + (Number(sh.duration) || 0),
+      0,
+    );
+    if (totalPlanned <= 0) {
+      throw new Error("Shot plan has zero total duration");
+    }
+    const scaleFactor = voDuration / totalPlanned;
+    shots = shots.map((sh) => ({
+      ...sh,
+      duration: Math.max(2, (Number(sh.duration) || 0) * scaleFactor),
+    }));
+
+    const planScaled = shots.map((s) => ({
+      keyword: s.keyword,
+      duration: s.duration,
+      caption: s.caption,
+    }));
+    await supabase
+      .from("text_video_jobs")
+      .update({ shot_plan: planScaled })
+      .eq("id", job.id);
+
+    // 4. Captions from rescaled timings
     buildAssFromShotPlan(shots, assPath);
+
+    await setStatus(supabase, job.id, { status: "fetching" });
+
+    const clipResults = await Promise.all(
+      shots.map(async (shot, i) => {
+        const clipPath = path.join(tmpDir, `clip_${i}.mp4`);
+        let pexelsResult;
+        try {
+          pexelsResult = await fetchPexelsClip(shot.keyword, shot.duration);
+        } catch {
+          pexelsResult = await fetchPexelsClip(
+            "person talking camera vertical office",
+            shot.duration,
+          );
+        }
+        await downloadToFile(pexelsResult.url, clipPath);
+        await setStatus(supabase, job.id, {
+          status: "fetching",
+          error_message: `Fetching footage ${i + 1} of ${shots.length}…`,
+        });
+        return { i, clipPath, shot: { ...shot, localPath: clipPath } };
+      }),
+    );
+    for (const { i, clipPath, shot } of clipResults) {
+      shots[i] = shot;
+      downloadedClips.push(clipPath);
+    }
 
     await setStatus(supabase, job.id, { status: "assembling" });
     await assembleVideo({
@@ -128,6 +170,7 @@ export async function processTextVideoJob(supabase, job) {
       voiceoverPath: voPath,
       assPath,
       outputPath: finalPath,
+      outputDuration: voDuration,
     });
 
     await setStatus(supabase, job.id, { status: "uploading" });
@@ -157,6 +200,7 @@ export async function processTextVideoJob(supabase, job) {
       status: "complete",
       output_url: signedData?.signedUrl ?? null,
       storage_path: storagePath,
+      error_message: null,
     });
   } catch (err) {
     console.error(`[text-video] Job ${job.id} failed:`, err);
