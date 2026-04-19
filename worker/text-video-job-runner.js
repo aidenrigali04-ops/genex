@@ -75,7 +75,7 @@ async function setStatus(supabase, id, fields) {
 
 /**
  * @param {SupabaseClient} supabase
- * @param {{ id: string; script: string; voice_id: string; user_id: string; shot_plan?: unknown; hook_style?: string | null }} job
+ * @param {{ id: string; script: string; voice_id: string; user_id: string; shot_plan?: unknown; hook_style?: string | null; clip_engine?: unknown }} job
  */
 export async function processTextVideoJob(supabase, job) {
   const tmpDir = path.join(os.tmpdir(), `tv_${job.id}`);
@@ -90,10 +90,19 @@ export async function processTextVideoJob(supabase, job) {
   try {
     // ── STEP 1: Plan shots ──────────────────────────────────────
     const fromDb = normalizeShotsFromDb(job.shot_plan);
+    const clipEngine =
+      job.clip_engine && typeof job.clip_engine === "object"
+        ? /** @type {{ planner_context_block?: string }} */ (job.clip_engine)
+        : null;
+    const clipCtx =
+      typeof clipEngine?.planner_context_block === "string"
+        ? clipEngine.planner_context_block
+        : null;
     let shots =
       fromDb ??
       (await planShots(job.script, {
         hookStyle: job.hook_style ?? undefined,
+        clipEngineContext: clipCtx,
       }));
     await supabase
       .from("text_video_jobs")

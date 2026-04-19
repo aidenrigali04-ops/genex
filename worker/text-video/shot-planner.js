@@ -16,7 +16,7 @@ function getOpenAI() {
 }
 
 /**
- * @typedef {{ hookStyle?: string | null }} PlanShotsOptions
+ * @typedef {{ hookStyle?: string | null, clipEngineContext?: string | null }} PlanShotsOptions
  */
 
 /** After parsing shots, deduplicate overlapping keyword roots (first token). */
@@ -106,6 +106,7 @@ function enforceVisualArc(shots) {
  */
 export async function planShots(script, options = {}) {
   const hookStyle = options.hookStyle?.trim() || null;
+  const clipEngineContext = options.clipEngineContext?.trim() || null;
   const openai = getOpenAI();
   const systemPrompt = `You are a professional short-form video director with 
 10 years of TikTok and Reels editing experience.
@@ -165,7 +166,7 @@ Output ONLY valid JSON: {"shots":[...]} — no prose, no markdown, no code block
 
   const wordCount = script.trim().split(/\s+/).filter(Boolean).length;
   const estimatedDuration = Math.round(wordCount / 2.5); // ~150 wpm
-  const userMessage = `Hook style: ${hookStyle ?? "viral"}
+  const userMessage = `${clipEngineContext ? `${clipEngineContext}\n\n` : ""}Hook style: ${hookStyle ?? "viral"}
 
 Estimated spoken duration: ~${estimatedDuration}s
 Word count: ${wordCount}

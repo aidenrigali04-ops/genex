@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { isUnlimitedCreditsModeServer } from "@/lib/credits-config";
 import { createClient } from "@/lib/supabase/server";
+import { runTextVideoClipEngine } from "@/lib/text-video-clip-engine";
 
 const TEXT_VIDEO_CREDIT_COST = parseInt(
   process.env.TEXT_VIDEO_CREDIT_COST ?? "5",
@@ -99,6 +100,46 @@ export async function POST(req: Request) {
     process.env.ELEVENLABS_VOICE_ID ?? "21m00Tcm4TlvDq8ikWAM";
   const voiceId = parsed.data.voiceId ?? defaultVoice;
 
+  const shotPlanForInsert = parsed.data.shotPlan?.length
+    ? parsed.data.shotPlan.map((s) => ({
+        keyword: s.keyword,
+        duration: s.duration,
+        caption: s.caption,
+      }))
+    : null;
+
+  const { data: recentScripts, error: recentErr } = await supabase
+    .from("text_video_jobs")
+    .select("script")
+    .eq("user_id", userId)
+    .eq("status", "complete")
+    .order("created_at", { ascending: false })
+    .limit(5);
+
+  if (recentErr) {
+    console.warn("[text-video-jobs] recent_scripts:", recentErr.message);
+  }
+
+  const clipBundle = await runTextVideoClipEngine({
+    script: parsed.data.script,
+    recentScriptExcerpts: (recentScripts ?? []).map((r) => String(r.script ?? "")),
+  });
+
+  if (!clipBundle.evaluated.pass) {
+    return Response.json(
+      {
+        error: "clip_engine_rejected",
+        message: clipBundle.evaluated.notes.join(" "),
+        details: clipBundle.evaluated.notes,
+      },
+      { status: 422 },
+    );
+  }
+
+  if (clipBundle.evaluated.notes.length > 0) {
+    console.info("[text-video-jobs] clip_engine_notes", clipBundle.evaluated.notes);
+  }
+
   let creditsRemaining: number | undefined;
 
   if (!isUnlimitedCreditsModeServer()) {
@@ -153,13 +194,10 @@ export async function POST(req: Request) {
     creditsRemaining = creditRow.remaining;
   }
 
-  const shotPlanForInsert = parsed.data.shotPlan?.length
-    ? parsed.data.shotPlan.map((s) => ({
-        keyword: s.keyword,
-        duration: s.duration,
-        caption: s.caption,
-      }))
-    : null;
+  const resolvedHook =
+    parsed.data.hookStyle?.trim() ||
+    clipBundle.hook_style_resolved ||
+    undefined;
 
   const { data: job, error } = await supabase
     .from("text_video_jobs")
@@ -169,7 +207,8 @@ export async function POST(req: Request) {
       script: parsed.data.script,
       voice_id: voiceId,
       credit_cost: TEXT_VIDEO_CREDIT_COST,
-      ...(parsed.data.hookStyle ? { hook_style: parsed.data.hookStyle } : {}),
+      clip_engine: clipBundle,
+      ...(resolvedHook ? { hook_style: resolvedHook } : {}),
       ...(shotPlanForInsert ? { shot_plan: shotPlanForInsert } : {}),
     })
     .select("id, status, created_at, credit_cost")
