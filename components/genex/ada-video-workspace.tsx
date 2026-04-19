@@ -5,26 +5,23 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import {
   AlertCircle,
   ArrowUp,
+  Bird,
   Check,
+  ChevronLeft,
+  ChevronRight,
+  Clapperboard,
   Clock,
   Copy,
-  Crown,
   Download,
-  Image,
   Info,
   Loader2,
   Menu,
-  MessageSquare,
   Mic,
-  Music,
   Paperclip,
   Pause,
   Play,
   Scissors,
-  Search,
-  Settings,
   Sparkles,
-  User,
   Video,
   Zap,
 } from "lucide-react";
@@ -43,24 +40,12 @@ const DEFAULT_TEXT_VIDEO_CREDITS = Number(
   process.env.NEXT_PUBLIC_TEXT_VIDEO_CREDIT_COST ?? "5",
 );
 
-const MAIN_NAV = [
-  { id: "search" as const, label: "Search", Icon: Search },
-  { id: "chat" as const, label: "AI Chat", Icon: MessageSquare },
-  { id: "voice" as const, label: "Voiceover", Icon: Mic },
-  { id: "image" as const, label: "Image", Icon: Image },
-  { id: "video" as const, label: "Video", Icon: Video },
-  { id: "music" as const, label: "Music", Icon: Music },
-];
-
-const BOTTOM_NAV = [
-  { id: "upgrade" as const, label: "Upgrade plan", Icon: Crown },
-  { id: "settings" as const, label: "Settings", Icon: Settings },
-  { id: "account" as const, label: "My account", Icon: User },
+const VIDEO_WORKSPACE_NAV = [
+  { id: "clip_my_video" as const, label: "Clip My Video", Icon: Video },
+  { id: "generate_video" as const, label: "Generate Video", Icon: Clapperboard },
 ] as const;
 
-export type AdaVideoShellNavId =
-  | (typeof MAIN_NAV)[number]["id"]
-  | (typeof BOTTOM_NAV)[number]["id"];
+export type AdaVideoShellNavId = (typeof VIDEO_WORKSPACE_NAV)[number]["id"];
 
 export type AdaVideoWorkspaceProps = {
   userId: string | null;
@@ -121,27 +106,23 @@ const SCRIPT_MIN_LEN = 20;
 const EXAMPLE_PROMPTS = [
   {
     id: "1",
-    prompt: "Clip the best moments from this podcast episode",
-    thumb:
-      "linear-gradient(145deg, #1a0a2e 0%, #3d2060 40%, #6b2d7a 100%), linear-gradient(220deg, rgba(211,28,215,0.35) 0%, transparent 55%)",
+    prompt: "Gorgeous abandoned medieval mansion in a fairytale forest",
+    thumb: "https://picsum.photos/seed/ada-mansion/280/220",
   },
   {
     id: "2",
-    prompt: "Find the viral-worthy moments from this long video",
-    thumb:
-      "linear-gradient(145deg, #0f1729 0%, #1e3a5f 45%, #2d4a7c 100%), linear-gradient(160deg, rgba(136,0,220,0.3) 0%, transparent 50%)",
+    prompt: "Give me photo of a man working in an office in a big city.",
+    thumb: "https://picsum.photos/seed/ada-office/280/220",
   },
   {
     id: "3",
-    prompt: "Extract all the hooks from this YouTube video",
-    thumb:
-      "linear-gradient(145deg, #1a1030 0%, #4a1e5c 50%, #7a2d6a 100%), linear-gradient(200deg, rgba(255,200,100,0.2) 0%, transparent 45%)",
+    prompt: "Give me photo of a majestic peacock rising in the sky",
+    thumb: "https://picsum.photos/seed/ada-peacock/280/220",
   },
   {
     id: "4",
-    prompt: "Turn this interview into short-form clips",
-    thumb:
-      "linear-gradient(145deg, #0d2818 0%, #1a4d32 50%, #2d6a45 100%), linear-gradient(180deg, rgba(100,200,120,0.25) 0%, transparent 55%)",
+    prompt: "Give me a nice scenery of a girl playing in a green field",
+    thumb: "https://picsum.photos/seed/ada-field/280/220",
   },
 ] as const;
 
@@ -242,18 +223,12 @@ function ElapsedTimer({ startedAt }: { startedAt: string }): JSX.Element {
 type AdaVideoSidebarProps = {
   activeTab: AdaVideoShellNavId;
   onTabChange: (id: AdaVideoShellNavId) => void;
-  onUpgrade?: () => void;
-  onSettings?: () => void;
-  onAccount?: () => void;
   className?: string;
 };
 
 function AdaVideoSidebar({
   activeTab,
   onTabChange,
-  onUpgrade,
-  onSettings,
-  onAccount,
   className,
 }: AdaVideoSidebarProps): JSX.Element {
   return (
@@ -281,11 +256,11 @@ function AdaVideoSidebar({
       </div>
 
       <nav
-        className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto py-5"
-        aria-label="Main navigation"
+        className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto py-5"
+        aria-label="Video workspace"
       >
         <ul className="flex flex-col gap-3 px-3">
-          {MAIN_NAV.map((item) => {
+          {VIDEO_WORKSPACE_NAV.map((item) => {
             const active = activeTab === item.id;
             const Icon = item.Icon;
             return (
@@ -300,38 +275,6 @@ function AdaVideoSidebar({
                       : "hover:bg-white/8",
                   )}
                   aria-current={active ? "page" : undefined}
-                >
-                  <Icon className="h-5 w-5 shrink-0" aria-hidden />
-                  <span>{item.label}</span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-
-        <div className="mx-3 border-t border-white" aria-hidden />
-
-        <ul className="flex flex-col gap-3 px-3">
-          {BOTTOM_NAV.map((item) => {
-            const Icon = item.Icon;
-            return (
-              <li key={item.id}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (item.id === "upgrade") {
-                      onUpgrade?.();
-                      return;
-                    }
-                    if (item.id === "settings") {
-                      onSettings?.();
-                      return;
-                    }
-                    if (item.id === "account") {
-                      onAccount?.();
-                    }
-                  }}
-                  className="flex w-full items-center gap-3 rounded-[32px] px-4 py-1 text-left text-base font-normal leading-[36px] text-white transition-all hover:bg-white/8"
                 >
                   <Icon className="h-5 w-5 shrink-0" aria-hidden />
                   <span>{item.label}</span>
@@ -369,9 +312,8 @@ function AdaVideoHeader({
             <Menu className="size-6" aria-hidden />
           </button>
         ) : null}
-        <h1 className="truncate font-[family-name:var(--font-instrument-serif)] text-[36px] font-normal tracking-[0.36px] text-white">
-          Clip a Video
-        </h1>
+        <h1 className="sr-only">Clip a video</h1>
+        <div className="min-w-0 flex-1" aria-hidden />
       </div>
       <div className="flex shrink-0 items-center gap-3">
         <button
@@ -429,15 +371,16 @@ function AdaVideoInputBar({
     (inputMode === "url" ? !urlValue.trim() : textValue.trim().length < SCRIPT_MIN_LEN);
 
   return (
-    <div className="w-full px-5 pb-5 pt-5 sm:px-[100px]">
-      <div className="flex items-center gap-3">
-        <div className="flex flex-1 items-center gap-3 rounded-[22px] border border-white/16 bg-white/12 p-1.5">
+    <div className="w-full">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-3 rounded-[22px] border border-white/16 bg-white/12 p-1.5">
           <button
             type="button"
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[22px] border border-white/32 text-white transition-colors hover:bg-white/10"
-            aria-label="Attach file or YouTube URL"
+            disabled
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[22px] border border-white/32 text-white opacity-50 transition-colors hover:bg-white/10"
+            aria-label="Voice input (coming soon)"
           >
-            <Paperclip className="h-4 w-4" aria-hidden />
+            <Mic className="h-4 w-4" aria-hidden />
           </button>
           <input
             type={inputMode === "url" ? "url" : "text"}
@@ -447,24 +390,23 @@ function AdaVideoInputBar({
                 ? onUrlChange(e.target.value)
                 : onTextChange(e.target.value)
             }
-            placeholder="Paste a YouTube URL or describe your video idea..."
+            placeholder="Message Ada..."
             className="min-w-0 flex-1 bg-transparent text-[14px] font-normal leading-[20px] tracking-[0.14px] text-white outline-none placeholder:text-white/64"
           />
           <div className="flex shrink-0 items-center gap-2">
             <button
               type="button"
-              disabled
-              className="flex h-8 w-8 items-center justify-center rounded-[22px] border border-white/32 text-white opacity-50 transition-colors hover:bg-white/10"
-              aria-label="Voice input (coming soon)"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[22px] border border-white/32 text-white transition-colors hover:bg-white/10"
+              aria-label="Attach file or YouTube URL"
             >
-              <Mic className="h-4 w-4" aria-hidden />
+              <Paperclip className="h-4 w-4" aria-hidden />
             </button>
             <button
               type="button"
               disabled={disabled}
               onClick={() => void onSubmit()}
-              className="flex h-8 w-8 items-center justify-center rounded-[32px] bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
-              aria-label={isSubmitting || activeJob ? "Generating" : "Clip my video"}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[32px] bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
+              aria-label={isSubmitting || activeJob ? "Generating…" : "Send clip request"}
             >
               {isSubmitting || activeJob ? (
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
@@ -513,6 +455,71 @@ function AdaVideoInputBar({
           ) : null}
         </p>
       ) : null}
+    </div>
+  );
+}
+
+type AdaVideoControlDockProps = {
+  selectedVoice: string;
+  onVoiceChange: (id: string) => void;
+  inputMode: "url" | "text";
+  onInputModeChange: (m: "url" | "text") => void;
+  inputBarProps: AdaVideoInputBarProps;
+};
+
+function AdaVideoControlDock({
+  selectedVoice,
+  onVoiceChange,
+  inputMode,
+  onInputModeChange,
+  inputBarProps,
+}: AdaVideoControlDockProps): JSX.Element {
+  return (
+    <div className="shrink-0 border-t border-white/10 bg-[#0A050F]/95 px-5 pb-5 pt-4 backdrop-blur-md sm:px-[100px]">
+      <p className="mb-2 text-[12px] font-normal uppercase leading-[24px] tracking-[0.12px] text-white/50">
+        Voice
+      </p>
+      <div className="-mx-1 mb-4 flex gap-2 overflow-x-auto px-1 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {VOICE_OPTIONS.map((v) => {
+          const sel = selectedVoice === v.id;
+          return (
+            <button
+              key={v.id}
+              type="button"
+              onClick={() => onVoiceChange(v.id)}
+              className={cn(
+                "shrink-0 rounded-[32px] border px-3 py-2 text-left transition-all",
+                sel
+                  ? "border-[#D31CD7]/60 bg-[linear-gradient(5deg,rgba(211,28,215,0.15)_0%,rgba(136,0,220,0.12)_100%)] shadow-[0_0_16px_rgba(203,45,206,0.15)]"
+                  : "border-white/12 hover:border-white/24 hover:bg-white/6",
+              )}
+            >
+              <p className={cn("text-[13px] font-medium", sel ? "text-white" : "text-white/70")}>{v.label}</p>
+              <p className={cn("max-w-[140px] truncate text-[11px]", sel ? "text-white/60" : "text-white/30")}>
+                {v.desc}
+              </p>
+            </button>
+          );
+        })}
+      </div>
+      <div className="mb-3 flex flex-wrap justify-center gap-2">
+        {(["url", "text"] as const).map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            onClick={() => onInputModeChange(mode)}
+            className={cn(
+              "rounded-full px-4 py-1.5 text-[12px] font-medium transition-colors",
+              inputMode === mode
+                ? "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] text-white shadow-[0_0_16px_rgba(203,45,206,0.2)]"
+                : "border border-white/20 text-white/60 hover:bg-white/10",
+            )}
+          >
+            {mode === "url" ? "YouTube URL" : "My idea"}
+          </button>
+        ))}
+      </div>
+      <AdaVideoInputBar {...inputBarProps} />
     </div>
   );
 }
@@ -694,8 +701,6 @@ export function AdaVideoWorkspace({
   onUpgrade,
   headerTrailing,
   onSidebarNavigate,
-  onWorkspaceSettings,
-  onWorkspaceAccount,
   variant = "default",
 }: AdaVideoWorkspaceProps): JSX.Element {
   const kit = variant === "adaKit";
@@ -938,9 +943,10 @@ export function AdaVideoWorkspace({
 
   const handleShellNav = useCallback(
     (id: AdaVideoShellNavId): void => {
-      if (id === "video") return;
-      if (id === "upgrade" || id === "settings" || id === "account") return;
-      onSidebarNavigate?.(id);
+      if (id === "clip_my_video") return;
+      if (id === "generate_video") {
+        onSidebarNavigate?.(id);
+      }
     },
     [onSidebarNavigate],
   );
@@ -964,15 +970,14 @@ export function AdaVideoWorkspace({
     activeJob !== null || jobHistory.length > 0;
 
   const sidebarProps: AdaVideoSidebarProps = {
-    activeTab: "video",
+    activeTab: "clip_my_video",
     onTabChange: (id) => {
       handleShellNav(id);
       setShellMenuOpen(false);
     },
-    onUpgrade,
-    onSettings: onWorkspaceSettings,
-    onAccount: onWorkspaceAccount,
   };
+
+  const examplePromptsRowRef = useRef<HTMLDivElement>(null);
 
   const inputBarProps: AdaVideoInputBarProps = {
     inputMode,
@@ -980,7 +985,9 @@ export function AdaVideoWorkspace({
     textValue,
     onUrlChange: setUrlValue,
     onTextChange: setTextValue,
-    onSubmit: handleGenerate,
+    onSubmit: () => {
+      void handleGenerate();
+    },
     isSubmitting,
     activeJob,
     creditsOk,
@@ -1222,298 +1229,198 @@ export function AdaVideoWorkspace({
             <div className="flex flex-1 items-center justify-center">
               <Loader2 className="size-10 animate-spin text-white/40" aria-hidden />
             </div>
-          ) : emptyStateA ? (
-            <div className="flex flex-1 flex-col items-center justify-between overflow-hidden px-6 sm:px-[120px]">
-              <div className="flex flex-1 flex-col items-center justify-center gap-6 py-8">
-                <div className="relative flex h-[120px] w-[120px] items-center justify-center">
-                  <div className="absolute inset-0 rounded-full bg-[#3600AA] opacity-80 blur-[25px]" />
-                  <div className="absolute h-[100px] w-[115px] rotate-[60deg] rounded-full bg-[#6800BA] opacity-60 blur-[20px]" />
-                  <div className="absolute h-[80px] w-[90px] -rotate-[66deg] rounded-full bg-[#A400A7] opacity-60 blur-[15px]" />
-                  <div className="relative z-10 flex h-[80px] w-[80px] items-center justify-center rounded-full bg-white/12 shadow-[0_8px_20px_rgba(0,0,0,0.16)]">
-                    <Sparkles className="size-8 rotate-[12deg] text-white" aria-hidden />
-                  </div>
-                </div>
-
-                <h2 className="max-w-3xl text-center font-[family-name:var(--font-instrument-serif)] text-[36px] font-normal tracking-[0.36px] text-white">
-                  Hi, How can I help you today?
-                </h2>
-
-                <div className="relative w-full max-w-full">
-                  <div className="flex gap-4 overflow-x-auto pb-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                    {EXAMPLE_PROMPTS.map((ex) => (
-                      <button
-                        key={ex.id}
-                        type="button"
-                        onClick={() => {
-                          setInputMode("text");
-                          setTextValue(ex.prompt);
-                        }}
-                        className="group relative h-[220px] w-[280px] shrink-0 overflow-hidden rounded-2xl border border-[rgba(10,5,15,0.16)]"
-                        style={{
-                          background: ex.thumb,
-                          backgroundSize: "cover",
-                          backgroundPosition: "center",
-                        }}
-                        aria-label={`Use prompt: ${ex.prompt}`}
-                      >
-                        <div className="pointer-events-none absolute inset-0 bg-black/10 transition-colors group-hover:bg-black/5" />
-                        <div className="absolute inset-x-0 bottom-0 p-3">
-                          <div className="rounded-xl bg-[rgba(10,5,15,0.16)] px-3 py-[10px] backdrop-blur-[50px]">
-                            <p className="text-left text-[16px] font-medium leading-[24px] tracking-[0.16px] text-white">
-                              {ex.prompt}
-                            </p>
-                          </div>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                  <div
-                    className="pointer-events-none absolute inset-y-0 left-0 z-[2] w-16 bg-linear-to-r from-[#21062A] to-transparent"
-                    aria-hidden
-                  />
-                  <div
-                    className="pointer-events-none absolute inset-y-0 right-0 z-[2] w-16 bg-linear-to-l from-[#1D0625] to-transparent"
-                    aria-hidden
-                  />
-                </div>
-
-                <div className="flex flex-wrap items-center justify-center gap-2">
-                  {(["url", "text"] as const).map((mode) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      onClick={() => setInputMode(mode)}
-                      className={cn(
-                        "rounded-full px-4 py-1.5 text-[12px] font-medium transition-colors",
-                        inputMode === mode
-                          ? "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] text-white shadow-[0_0_16px_rgba(203,45,206,0.2)]"
-                          : "border border-white/20 text-white/60 hover:bg-white/10",
-                      )}
-                    >
-                      {mode === "url" ? "YouTube URL" : "My idea"}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <AdaVideoInputBar {...inputBarProps} />
-            </div>
           ) : (
-            <div className="grid min-h-0 flex-1 grid-cols-1 gap-6 overflow-hidden px-6 py-6 lg:grid-cols-[400px_1fr] lg:px-[120px]">
-              <div className="flex min-h-0 flex-col gap-4 overflow-y-auto lg:sticky lg:top-0 lg:max-h-full lg:self-start">
-                <div className="space-y-4 rounded-2xl border border-white/16 bg-white/12 p-5">
-                  <p className="font-[family-name:var(--font-instrument-serif)] text-[18px] font-normal tracking-[0.36px] text-white">
-                    Got a video idea?
-                  </p>
-                  <p className="text-[12px] font-normal leading-[24px] tracking-[0.12px] text-white/50">
-                    Drop a YouTube URL or describe your idea — Ada handles the rest.
-                  </p>
-                  <div className="flex gap-1 rounded-full border border-white/16 bg-white/12 p-1" role="tablist" aria-label="Input source">
-                    {(["url", "text"] as const).map((mode) => (
-                      <button
-                        key={mode}
-                        type="button"
-                        role="tab"
-                        aria-selected={inputMode === mode}
-                        onClick={() => setInputMode(mode)}
-                        className={cn(
-                          "flex-1 rounded-full py-1.5 text-xs font-medium transition-colors",
-                          inputMode === mode
-                            ? "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] text-white shadow-[0_0_12px_rgba(203,45,206,0.2)]"
-                            : "text-white/55 hover:bg-white/10 hover:text-white/90",
-                        )}
-                      >
-                        {mode === "url" ? "YouTube URL" : "My Idea"}
-                      </button>
-                    ))}
-                  </div>
-                  {inputMode === "url" ? (
-                    <input
-                      type="url"
-                      value={urlValue}
-                      onChange={(e) => setUrlValue(e.target.value)}
-                      placeholder="https://youtube.com/watch?v=..."
-                      className="w-full rounded-[22px] border border-white/16 bg-white/12 px-3 py-2.5 text-[14px] text-white outline-none placeholder:text-white/64 focus-visible:ring-2 focus-visible:ring-[#D31CD7]/40"
-                    />
-                  ) : (
-                    <textarea
-                      value={textValue}
-                      onChange={(e) => setTextValue(e.target.value)}
-                      placeholder="Describe your video idea…"
-                      rows={3}
-                      className="w-full resize-none rounded-[22px] border border-white/16 bg-white/12 px-3 py-2.5 text-[14px] text-white outline-none placeholder:text-white/64 focus-visible:ring-2 focus-visible:ring-[#D31CD7]/40"
-                    />
-                  )}
-                </div>
-
-                <div className="rounded-2xl border border-white/12 bg-white/8 p-4">
-                  <p className="mb-3 text-[12px] font-normal uppercase leading-[24px] tracking-[0.12px] text-white/50">
-                    Voice
-                  </p>
-                  <div className="grid grid-cols-2 gap-2">
-                    {VOICE_OPTIONS.map((v) => {
-                      const sel = selectedVoice === v.id;
-                      return (
-                        <button
-                          key={v.id}
-                          type="button"
-                          onClick={() => setSelectedVoice(v.id)}
-                          className={cn(
-                            "rounded-[32px] border px-3 py-2.5 text-left transition-all",
-                            sel
-                              ? "border-[#D31CD7]/60 bg-[linear-gradient(5deg,rgba(211,28,215,0.15)_0%,rgba(136,0,220,0.12)_100%)] shadow-[0_0_16px_rgba(203,45,206,0.15)]"
-                              : "border-white/12 hover:border-white/24 hover:bg-white/6",
-                          )}
-                        >
-                          <p className={cn("text-[13px] font-medium", sel ? "text-white" : "text-white/70")}>
-                            {v.label}
-                          </p>
-                          <p className={cn("text-[11px]", sel ? "text-white/60" : "text-white/30")}>
-                            {v.desc}
-                          </p>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <button
-                    type="button"
-                    disabled={
-                      !userId ||
-                      isSubmitting ||
-                      activeJob !== null ||
-                      !creditsOk ||
-                      (inputMode === "url"
-                        ? !urlValue.trim()
-                        : textValue.trim().length < SCRIPT_MIN_LEN)
-                    }
-                    onClick={() => void handleGenerate()}
-                    className="flex w-full items-center justify-center gap-2 rounded-[32px] bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] py-3.5 text-[14px] font-medium leading-[24px] tracking-[0.14px] text-white shadow-[0_0_20px_rgba(203,45,206,0.24)] transition-all hover:shadow-[0_0_28px_rgba(203,45,206,0.36)] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    {isSubmitting || activeJob ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                        Clipping…
-                      </>
-                    ) : (
-                      <>
-                        <Scissors className="h-4 w-4" aria-hidden />
-                        Clip my video
-                      </>
-                    )}
-                  </button>
-                  {!creditsOk ? (
-                    <p className="text-center text-[11px] text-amber-300">
-                      Not enough credits —{" "}
-                      <button type="button" className="underline" onClick={() => onUpgrade?.()}>
-                        upgrade
-                      </button>
-                    </p>
-                  ) : (
-                    <p className="text-center text-[12px] text-white/40">Uses {creditCost} credits per video</p>
-                  )}
-                  {submitError ? (
-                    <p className="text-center text-xs text-[var(--ada-error)]" role="alert">
-                      {submitError}
-                      {submitError.toLowerCase().includes("credit") ? (
-                        <> — no credits were charged.</>
-                      ) : null}
-                    </p>
-                  ) : null}
-                </div>
-              </div>
-
-              <div className="flex min-h-0 flex-col gap-4 overflow-y-auto pb-8">
-                {activeJob && activeJobData ? (
-                  <div className="overflow-hidden rounded-2xl border border-[#D31CD7]/30 bg-[linear-gradient(135deg,rgba(211,28,215,0.08)_0%,rgba(136,0,220,0.06)_100%)] p-5">
-                    <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <div className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-[#D31CD7]" />
-                        <span className="text-[14px] font-medium leading-[24px] text-white">
-                          {statusInfo.label}
-                        </span>
-                        <ElapsedTimer startedAt={activeJobData.created_at} />
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => void handleCancel()}
-                        className="rounded-[32px] border border-white/20 px-3 py-1 text-[12px] text-white/50 transition-colors hover:border-red-500/40 hover:text-red-400"
-                        aria-label="Cancel video generation"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-
-                    <div className="mb-4 grid grid-cols-4 gap-2">
-                      {STEP_HINTS.map((hint, i) => {
-                        const hintIdx = stepOrderIndex(hint.status);
-                        const done = statusIdx >= 0 && hintIdx >= 0 && hintIdx < statusIdx;
-                        const active = hint.status === statusKey;
-                        return (
-                          <Fragment key={hint.status}>
-                            <div className="flex flex-col items-center gap-1.5 text-center">
-                              <div
-                                className={cn(
-                                  "flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-medium transition-all",
-                                  done
-                                    ? "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] text-white"
-                                    : active
-                                      ? "animate-pulse border-2 border-[#D31CD7] text-[#D31CD7]"
-                                      : "border border-white/20 text-white/30",
-                                )}
-                              >
-                                {done ? <Check className="h-3.5 w-3.5" aria-hidden /> : i + 1}
-                              </div>
-                              <span
-                                className={cn(
-                                  "text-center text-[10px] font-medium leading-[16px] tracking-[0.1px]",
-                                  done ? "text-[#D31CD7]" : active ? "text-white/80" : "text-white/25",
-                                )}
-                              >
-                                {hint.label}
-                              </span>
-                            </div>
-                          </Fragment>
-                        );
-                      })}
-                    </div>
-
-                    <div className="h-1 w-full overflow-hidden rounded-full bg-white/10">
+            <>
+              <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-6 py-6 sm:px-[120px] sm:py-5">
+                {emptyStateA ? (
+                  <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-5">
+                    <div className="relative mx-auto h-[200px] w-[180px] shrink-0">
                       <div
-                        className="h-full rounded-full bg-[linear-gradient(90deg,#D31CD7_0%,#8800DC_100%)] transition-all duration-700 ease-out"
-                        style={{ width: `${progressPct}%` }}
+                        className="pointer-events-none absolute left-0 top-0 h-[200px] w-[180px] scale-110 opacity-90 blur-[25px]"
+                        aria-hidden
+                      >
+                        <div className="absolute left-[6px] top-4 h-[166px] w-[155px] rounded-full bg-[#3600AA]" />
+                        <div className="absolute left-[72px] top-0 h-[146px] w-[136px] rotate-[60deg] rounded-full bg-[#6800BA]" />
+                        <div className="absolute left-10 top-[102px] h-[116px] w-[107px] -rotate-[66deg] rounded-full bg-[#A400A7]" />
+                      </div>
+                      <div className="absolute left-[30px] top-10 z-10 flex h-[120px] w-[120px] items-center justify-center rounded-full bg-white/12 shadow-[0_8px_20px_rgba(0,0,0,0.16)]">
+                        <Bird className="size-8 rotate-[15deg] text-white" aria-hidden />
+                      </div>
+                    </div>
+
+                    <h2 className="max-w-3xl self-stretch text-center font-[family-name:var(--font-instrument-serif)] text-[36px] font-normal tracking-[0.36px] text-white">
+                      Hi, How can I help you today?
+                    </h2>
+
+                    <div className="relative w-full max-w-full overflow-hidden">
+                      <div
+                        ref={examplePromptsRowRef}
+                        className="flex justify-center gap-4 overflow-x-auto pb-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                      >
+                        {EXAMPLE_PROMPTS.map((ex) => (
+                          <button
+                            key={ex.id}
+                            type="button"
+                            onClick={() => {
+                              setInputMode("text");
+                              setTextValue(ex.prompt);
+                            }}
+                            className="group relative flex h-[220px] w-[280px] shrink-0 flex-col justify-end gap-2 overflow-hidden rounded-2xl border border-[rgba(10,5,15,0.16)] p-3"
+                            style={{
+                              backgroundImage: `url(${ex.thumb})`,
+                              backgroundSize: "cover",
+                              backgroundPosition: "center",
+                            }}
+                            aria-label={`Use prompt: ${ex.prompt}`}
+                          >
+                            <div className="pointer-events-none absolute inset-0 bg-black/10 transition-colors group-hover:bg-black/5" />
+                            <div className="relative z-[1] w-full rounded-xl bg-[rgba(10,5,15,0.16)] px-3 py-[10px] backdrop-blur-[50px]">
+                              <p className="text-left text-[16px] font-medium leading-[24px] tracking-[0.16px] text-white">
+                                {ex.prompt}
+                              </p>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                      <div
+                        className="pointer-events-none absolute inset-y-0 left-0 z-[2] w-16 bg-linear-to-r from-[#21062A] to-transparent"
+                        aria-hidden
+                      />
+                      <div
+                        className="pointer-events-none absolute inset-y-0 right-0 z-[2] w-16 bg-linear-to-l from-[#1D0625] to-transparent"
+                        aria-hidden
                       />
                     </div>
 
-                    {progressHint ? (
-                      <p className="mt-2 text-[11px] italic text-white/40">{progressHint}</p>
-                    ) : null}
+                    <div className="flex w-full max-w-3xl justify-between px-1">
+                      <button
+                        type="button"
+                        className="rounded-full p-1 text-white/64 transition-colors hover:bg-white/10 hover:text-white"
+                        aria-label="Scroll suggestions left"
+                        onClick={() =>
+                          examplePromptsRowRef.current?.scrollBy({
+                            left: -296,
+                            behavior: "smooth",
+                          })
+                        }
+                      >
+                        <ChevronLeft className="size-6" aria-hidden />
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-full p-1 text-white/64 transition-colors hover:bg-white/10 hover:text-white"
+                        aria-label="Scroll suggestions right"
+                        onClick={() =>
+                          examplePromptsRowRef.current?.scrollBy({
+                            left: 296,
+                            behavior: "smooth",
+                          })
+                        }
+                      >
+                        <ChevronRight className="size-6" aria-hidden />
+                      </button>
+                    </div>
                   </div>
-                ) : null}
+                ) : (
+                  <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 pb-4">
+                    {activeJob && activeJobData ? (
+                      <div className="overflow-hidden rounded-2xl border border-[#D31CD7]/30 bg-[linear-gradient(135deg,rgba(211,28,215,0.08)_0%,rgba(136,0,220,0.06)_100%)] p-5">
+                        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-[#D31CD7]" />
+                            <span className="text-[14px] font-medium leading-[24px] text-white">
+                              {statusInfo.label}
+                            </span>
+                            <ElapsedTimer startedAt={activeJobData.created_at} />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void handleCancel()}
+                            className="rounded-[32px] border border-white/20 px-3 py-1 text-[12px] text-white/50 transition-colors hover:border-red-500/40 hover:text-red-400"
+                            aria-label="Cancel video generation"
+                          >
+                            Cancel
+                          </button>
+                        </div>
 
-                {activeTerminalNote && !activeJob ? (
-                  <div
-                    className="rounded-2xl border border-white/16 bg-white/12 px-4 py-3 text-sm text-white/80"
-                    role="status"
-                  >
-                    {activeTerminalNote}
-                    {activeTerminalNote.toLowerCase().includes("fail") ? (
-                      <span className="mt-1 block text-[10px] text-white/40">No credits were charged.</span>
+                        <div className="mb-4 grid grid-cols-4 gap-2">
+                          {STEP_HINTS.map((hint, i) => {
+                            const hintIdx = stepOrderIndex(hint.status);
+                            const done = statusIdx >= 0 && hintIdx >= 0 && hintIdx < statusIdx;
+                            const active = hint.status === statusKey;
+                            return (
+                              <Fragment key={hint.status}>
+                                <div className="flex flex-col items-center gap-1.5 text-center">
+                                  <div
+                                    className={cn(
+                                      "flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-medium transition-all",
+                                      done
+                                        ? "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] text-white"
+                                        : active
+                                          ? "animate-pulse border-2 border-[#D31CD7] text-[#D31CD7]"
+                                          : "border border-white/20 text-white/30",
+                                    )}
+                                  >
+                                    {done ? <Check className="h-3.5 w-3.5" aria-hidden /> : i + 1}
+                                  </div>
+                                  <span
+                                    className={cn(
+                                      "text-center text-[10px] font-medium leading-[16px] tracking-[0.1px]",
+                                      done ? "text-[#D31CD7]" : active ? "text-white/80" : "text-white/25",
+                                    )}
+                                  >
+                                    {hint.label}
+                                  </span>
+                                </div>
+                              </Fragment>
+                            );
+                          })}
+                        </div>
+
+                        <div className="h-1 w-full overflow-hidden rounded-full bg-white/10">
+                          <div
+                            className="h-full rounded-full bg-[linear-gradient(90deg,#D31CD7_0%,#8800DC_100%)] transition-all duration-700 ease-out"
+                            style={{ width: `${progressPct}%` }}
+                          />
+                        </div>
+
+                        {progressHint ? (
+                          <p className="mt-2 text-[11px] italic text-white/40">{progressHint}</p>
+                        ) : null}
+                      </div>
                     ) : null}
+
+                    {activeTerminalNote && !activeJob ? (
+                      <div
+                        className="rounded-2xl border border-white/16 bg-white/12 px-4 py-3 text-sm text-white/80"
+                        role="status"
+                      >
+                        {activeTerminalNote}
+                        {activeTerminalNote.toLowerCase().includes("fail") ? (
+                          <span className="mt-1 block text-[10px] text-white/40">No credits were charged.</span>
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    <p className="text-[12px] font-semibold uppercase tracking-[0.12em] text-white/40">Your clips</p>
+
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                      {jobHistory.map((job) => (
+                        <VideoClipCard key={job.id} job={job} />
+                      ))}
+                    </div>
                   </div>
-                ) : null}
-
-                <p className="text-[12px] font-semibold uppercase tracking-[0.12em] text-white/40">Your clips</p>
-
-                <div className="grid grid-cols-2 gap-4 xl:grid-cols-3 2xl:grid-cols-4">
-                  {jobHistory.map((job) => (
-                    <VideoClipCard key={job.id} job={job} />
-                  ))}
-                </div>
+                )}
               </div>
-            </div>
+
+              <AdaVideoControlDock
+                selectedVoice={selectedVoice}
+                onVoiceChange={setSelectedVoice}
+                inputMode={inputMode}
+                onInputModeChange={setInputMode}
+                inputBarProps={inputBarProps}
+              />
+            </>
           )}
         </div>
       </div>

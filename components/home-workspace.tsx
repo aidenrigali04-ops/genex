@@ -1044,7 +1044,7 @@ export function HomeWorkspace({
                     </div>
                   }
                   onSidebarNavigate={(id) => {
-                    if (id !== "video") {
+                    if (id === "generate_video") {
                       setWorkspaceTab("clip");
                       setMobileNavOpen(false);
                     }
