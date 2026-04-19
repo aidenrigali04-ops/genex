@@ -269,7 +269,7 @@ function AdaVideoSidebar({
             <Sparkles className="size-5 text-white" aria-hidden />
           </div>
           <span className="font-[family-name:var(--font-instrument-serif)] text-[36px] font-normal leading-[48px] tracking-[0.36px] text-white">
-            GenEx
+            Ada
           </span>
         </div>
         <div className="flex items-center gap-0.5 opacity-60" aria-hidden>
@@ -488,7 +488,7 @@ function AdaVideoInputBar({
       <div className="mt-3 flex items-center justify-center gap-2">
         <Info className="h-4 w-4 shrink-0 text-white/64" aria-hidden />
         <p className="text-center text-[12px] font-normal leading-[24px] tracking-[0.12px] text-white/64">
-          GenEx is beta release and may give incorrect or harmful info
+          Ada is beta release and may give incorrect or harmful info
         </p>
       </div>
 
@@ -1306,7 +1306,7 @@ export function AdaVideoWorkspace({
                     Got a video idea?
                   </p>
                   <p className="text-[12px] font-normal leading-[24px] tracking-[0.12px] text-white/50">
-                    Drop a YouTube URL or describe your idea — GenEx handles the rest.
+                    Drop a YouTube URL or describe your idea — Ada handles the rest.
                   </p>
                   <div className="flex gap-1 rounded-full border border-white/16 bg-white/12 p-1" role="tablist" aria-label="Input source">
                     {(["url", "text"] as const).map((mode) => (
