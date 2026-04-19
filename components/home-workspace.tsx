@@ -833,35 +833,37 @@ export function HomeWorkspace({
         </Dialog>
 
         <main className="relative z-[1] flex min-w-0 flex-1 flex-col overflow-hidden">
-          <AdaFigmaMainHeader
-            menuButton={
-              <button
-                type="button"
-                className="shrink-0 text-white/80 hover:text-white lg:hidden"
-                aria-label="Open menu"
-                onClick={() => setMobileNavOpen(true)}
-              >
-                ☰
-              </button>
-            }
-            title={hubTitle}
-            recentTrigger={recentDropdown}
-            trailing={
-              <div className="flex items-center gap-2">
-                {user ? (
-                  <span className="hidden text-[10px] text-white/50 md:inline">
-                    {totalClipCount} saved
-                  </span>
-                ) : null}
-                {figmaCreditsPill}
-                {accountMenu}
-              </div>
-            }
-          />
+          {workspaceTab !== "video" ? (
+            <AdaFigmaMainHeader
+              menuButton={
+                <button
+                  type="button"
+                  className="shrink-0 text-white/80 hover:text-white lg:hidden"
+                  aria-label="Open menu"
+                  onClick={() => setMobileNavOpen(true)}
+                >
+                  ☰
+                </button>
+              }
+              title={hubTitle}
+              recentTrigger={recentDropdown}
+              trailing={
+                <div className="flex items-center gap-2">
+                  {user ? (
+                    <span className="hidden text-[10px] text-white/50 md:inline">
+                      {totalClipCount} saved
+                    </span>
+                  ) : null}
+                  {figmaCreditsPill}
+                  {accountMenu}
+                </div>
+              }
+            />
+          ) : null}
 
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             {workspaceTab === "video" ? (
-              <div className="flex-1 overflow-y-auto p-4 lg:p-6">
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                 <VideoVariationWorkspace
                   ref={videoWorkspaceRef}
                   hideMarketingTitle
@@ -872,6 +874,7 @@ export function HomeWorkspace({
                   onOpenBuy={() => setBuyOpen(true)}
                   onOpenSignIn={() => setSignInOpen(true)}
                   onJobFinished={onVideoJobFinished}
+                  onOpenMobileNav={() => setMobileNavOpen(true)}
                 />
               </div>
             ) : showClipHub ? (
@@ -934,6 +937,9 @@ export function HomeWorkspace({
                   lastClipGenerationContext={lastClipGenerationContext}
                   clipOriginalPromptSummary={clipOriginalPromptSummary}
                   variant="adaKit"
+                  onTextVideoCreditsRemainingChange={(n) => {
+                    if (!creditsUnlimited) setCreditsRemaining(n);
+                  }}
                 />
               </div>
             )}

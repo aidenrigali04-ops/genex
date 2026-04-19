@@ -19,27 +19,43 @@ import { RatingWidget } from "@/components/rating-widget";
 import { LazyVideoPlayer } from "@/components/lazy-video-player";
 import { SettingsRail } from "@/components/genex/settings-rail";
 import { RefinementChatDialog } from "@/components/refinement-chat-dialog";
-import { Button, buttonVariants } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Progress,
   ProgressLabel,
   ProgressValue,
 } from "@/components/ui/progress";
+import {
+  ArrowRight,
+  ArrowUp,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
+  Download,
+  Film,
+  Menu,
+  MessageSquare,
+  Mic,
+  Paperclip,
+  RefreshCw,
+  Settings,
+  Share2,
+  SlidersHorizontal,
+  Sparkles,
+} from "lucide-react";
+
 import type { VideoVariationItem, VideoJobStatus } from "@/lib/video-job-types";
 import { VIDEO_JOB_CREDIT_COST } from "@/lib/video-job-cost";
 import type { GenerationContextV1 } from "@/lib/generation-context";
@@ -55,6 +71,8 @@ type Props = {
   onOpenBuy: () => void;
   onOpenSignIn: () => void;
   onJobFinished: () => void;
+  /** Opens the app navigation drawer on small screens (dashboard shell). */
+  onOpenMobileNav?: () => void;
   /** When embedded in the global landing shell, omit the internal marketing hero. */
   hideMarketingTitle?: boolean;
 };
@@ -83,6 +101,30 @@ const VIDEO_REFINEMENT_PLATFORMS: PlatformId[] = [
   "tiktok",
   "youtube_shorts",
   "clip_package",
+];
+
+/** Figma 82-2990 — video hub suggestion tiles (gradient “thumbnails” + prompt). */
+const VIDEO_HUB_CAROUSEL_CARDS: { prompt: string; thumb: string }[] = [
+  {
+    prompt: "Man on a motorbike on the highway",
+    thumb:
+      "linear-gradient(145deg, #1a1038 0%, #2d1b4e 50%, #4a2c6a 100%), linear-gradient(200deg, rgba(211,28,215,0.25) 0%, transparent 50%)",
+  },
+  {
+    prompt: "Girls playing volleyball on the beach",
+    thumb:
+      "linear-gradient(145deg, #0d2840 0%, #1e5070 45%, #3a7a9c 100%), linear-gradient(165deg, rgba(255,180,120,0.22) 0%, transparent 55%)",
+  },
+  {
+    prompt: "Bears on the forest hunting by the river",
+    thumb:
+      "linear-gradient(145deg, #0f2818 0%, #1a3d28 48%, #2d5a38 100%), linear-gradient(190deg, rgba(80,140,90,0.3) 0%, transparent 50%)",
+  },
+  {
+    prompt: "Help with a homework assignment.",
+    thumb:
+      "linear-gradient(145deg, #2a1a40 0%, #4a3080 50%, #6b48a8 100%), linear-gradient(210deg, rgba(136,0,220,0.28) 0%, transparent 48%)",
+  },
 ];
 
 async function postVideoJobUrlJson(params: {
@@ -485,6 +527,7 @@ export const VideoVariationWorkspace = forwardRef<
     onOpenBuy,
     onOpenSignIn,
     onJobFinished,
+    onOpenMobileNav,
     hideMarketingTitle = false,
   } = props;
   const [sourceMode, setSourceMode] = useState<"upload" | "url">("upload");
@@ -492,6 +535,7 @@ export const VideoVariationWorkspace = forwardRef<
   const [youtubeUrl, setYoutubeUrl] = useState("");
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const videoHubCarouselRef = useRef<HTMLDivElement>(null);
 
   const [uploadPct, setUploadPct] = useState(0);
   const [finishingOnServer, setFinishingOnServer] = useState(false);
@@ -506,6 +550,7 @@ export const VideoVariationWorkspace = forwardRef<
   const [refinementOpen, setRefinementOpen] = useState(false);
   const [jobGenerationContext, setJobGenerationContext] =
     useState<GenerationContextV1 | null>(null);
+  const [lastSubmittedPrompt, setLastSubmittedPrompt] = useState("");
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const failedToastJobIdRef = useRef<string | null>(null);
@@ -615,13 +660,14 @@ export const VideoVariationWorkspace = forwardRef<
     return stopPoll;
   }, [jobId, fetchJob]);
 
-  const resetJobUi = () => {
+  const resetJobUi = (opts?: { keepSubmittedPrompt?: boolean }) => {
     stopPoll();
     setJobId(null);
     setJobStatus(null);
     setVariations([]);
     setJobPartialNotice(null);
     setJobGenerationContext(null);
+    if (!opts?.keepSubmittedPrompt) setLastSubmittedPrompt("");
     setJobAwaitingUploadLink(false);
     setUploadPct(0);
     failedToastJobIdRef.current = null;
@@ -672,6 +718,7 @@ export const VideoVariationWorkspace = forwardRef<
     setUploadPct(0);
     setFinishingOnServer(false);
     resetJobUi();
+    setLastSubmittedPrompt(prompt.trim());
     setJobGenerationContext(ctx);
 
     try {
@@ -726,6 +773,45 @@ export const VideoVariationWorkspace = forwardRef<
     ? "Unlimited (test)"
     : `${creditsRemaining} left`;
 
+  const chatTitle = useMemo(() => {
+    const t = lastSubmittedPrompt.trim() || prompt.trim();
+    if (!t) return "Video";
+    return t.length > 56 ? `${t.slice(0, 56)}…` : t;
+  }, [lastSubmittedPrompt, prompt]);
+
+  const userInitials = useMemo(() => {
+    const e = user?.email?.trim();
+    if (!e) return "?";
+    const local = e.split("@")[0] ?? e;
+    if (local.length >= 2) return local.slice(0, 2).toUpperCase();
+    return local.slice(0, 1).toUpperCase();
+  }, [user]);
+
+  const handleSurprisePrompt = useCallback(() => {
+    const ideas = [
+      "Turn the most emotional beats into 5 vertical clips with bold hooks and captions.",
+      "Extract surprising moments, add fast cuts, and optimize for TikTok retention.",
+      "Make five Shorts that each open with a pattern interrupt, then deliver one clear takeaway.",
+      "Create cinematic trailer-style clips from this footage with punchy on-screen text.",
+      "Find five standalone mic-drop moments and stack tight captions for Reels.",
+    ];
+    setPrompt(ideas[Math.floor(Math.random() * ideas.length)]!);
+  }, []);
+
+  const scrollVideoHubCarousel = useCallback((dir: -1 | 1) => {
+    const el = videoHubCarouselRef.current;
+    if (!el) return;
+    el.scrollBy({ left: dir * 296, behavior: "smooth" });
+  }, []);
+
+  const showPreGenerationHub =
+    !jobId && !lastSubmittedPrompt.trim() && !submitting;
+
+  const firstCompletedVariation = useMemo(
+    () => variations.find((v) => !v.error && v.url) ?? null,
+    [variations],
+  );
+
   const settingsRail = (
     <SettingsRail
       mode="video"
@@ -735,155 +821,240 @@ export const VideoVariationWorkspace = forwardRef<
   );
 
   return (
-    <div className={cn(hideMarketingTitle ? "space-y-6" : "space-y-10")}>
-      {!hideMarketingTitle ? (
-        <section className="space-y-3">
-          <h1 className="text-3xl font-semibold tracking-tight text-[#0F0A1E] sm:text-4xl dark:text-white">
-            Video-first AI editor
-          </h1>
-          <p className="text-muted-foreground max-w-2xl text-base sm:text-lg">
-            Upload a video or paste YouTube, describe the edit in plain English,
-            and get five short-form variations for TikTok and Reels.
-          </p>
-          <p className="text-muted-foreground text-sm">
-            Usually <strong>2–4 minutes</strong> end-to-end.
-          </p>
-        </section>
-      ) : null}
+    <div
+      className={cn(
+        "relative flex min-h-0 flex-1 flex-col overflow-hidden bg-[#0A050F] text-white",
+        !hideMarketingTitle && "min-h-[520px]",
+      )}
+    >
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="absolute -left-[40%] top-[-18%] h-[520px] w-[900px] rotate-[-13deg] bg-[#180532] opacity-90 blur-[120px]" />
+        <div className="absolute -right-[25%] bottom-[-30%] h-[640px] w-[1100px] rotate-[148deg] bg-[#300537] opacity-80 blur-[140px]" />
+        <div className="absolute -left-[20%] bottom-[-35%] h-[480px] w-[1400px] rotate-[-57deg] bg-[#230639] opacity-75 blur-[130px]" />
+      </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[240px_minmax(0,1fr)_208px]">
-        <div className="space-y-6 lg:min-w-0">
-          <div className="flex justify-end lg:hidden">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="rounded-full border-[#E8E4F8]"
-              aria-label="Open settings"
-              onClick={() => setSettingsOpen(true)}
-            >
-              Settings
-            </Button>
-          </div>
+      <div className="relative z-[1] flex min-h-0 flex-1 flex-row">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col font-[family-name:var(--font-instrument-sans)]">
+          <header className="flex h-20 shrink-0 items-center justify-between gap-4 border-b border-white px-4 backdrop-blur-[50px] sm:px-6">
+            <h1 className="min-w-0 truncate font-[family-name:var(--font-instrument-serif)] text-2xl font-normal tracking-[0.36px] text-white sm:text-4xl">
+              {showPreGenerationHub ? "New Video" : chatTitle}
+            </h1>
+            <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+              {onOpenMobileNav ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="lg:hidden rounded-full text-white hover:bg-white/10"
+                  aria-label="Open menu"
+                  onClick={() => onOpenMobileNav()}
+                >
+                  <Menu className="size-5" />
+                </Button>
+              ) : null}
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="lg:hidden rounded-full text-white hover:bg-white/10"
+                aria-label="Open settings"
+                onClick={() => setSettingsOpen(true)}
+              >
+                <Settings className="size-5" />
+              </Button>
+              {showPreGenerationHub ? null : (
+                <>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="hidden items-center gap-2 rounded-full border border-transparent bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)] px-4 text-white shadow-[0_0_20px_rgba(203,45,206,0.24)] hover:opacity-95 sm:inline-flex"
+                    onClick={() => {
+                      resetJobUi();
+                      setPrompt("");
+                      setYoutubeUrl("");
+                      setVideoFile(null);
+                      if (fileRef.current) fileRef.current.value = "";
+                    }}
+                  >
+                    <Sparkles className="size-5" />
+                    New
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="inline-flex items-center gap-2 rounded-full border border-transparent bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)] px-3 text-white shadow-[0_0_20px_rgba(203,45,206,0.24)] hover:opacity-95 sm:hidden"
+                    onClick={() => {
+                      resetJobUi();
+                      setPrompt("");
+                      setYoutubeUrl("");
+                      setVideoFile(null);
+                      if (fileRef.current) fileRef.current.value = "";
+                    }}
+                  >
+                    <Sparkles className="size-4" />
+                    New
+                  </Button>
+                </>
+              )}
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="rounded-full border-white/40 bg-transparent text-sm font-medium tracking-wide text-white hover:bg-white/10"
+                onClick={() => toast.message("Recent generations will live here soon.")}
+              >
+                Recent
+              </Button>
+            </div>
+          </header>
 
-          <section className="space-y-6">
+          <div
+            id="video-output"
+            className={cn(
+              "min-h-0 flex-1 px-4 py-5 sm:px-10 sm:py-6 lg:px-[clamp(24px,8vw,140px)]",
+              showPreGenerationHub
+                ? "flex min-h-0 flex-col overflow-hidden"
+                : "overflow-y-auto",
+            )}
+          >
+            {!hideMarketingTitle && !showPreGenerationHub ? (
+              <p className="mb-6 max-w-2xl text-sm leading-relaxed text-white/70">
+                Upload a video or paste YouTube, describe the edit in plain English, and get five
+                short-form variations for TikTok and Reels. Usually{" "}
+                <strong className="text-white/90">2–4 minutes</strong> end-to-end.
+              </p>
+            ) : null}
+
             {!user ? (
-              <p className="rounded-xl border border-[#E8E4F8] bg-[#FAFAFC] px-4 py-3 text-sm font-medium text-[#0F0A1E] dark:border-white/10 dark:bg-zinc-900/60 dark:text-zinc-100">
+              <p
+                className="mb-6 rounded-2xl border border-white/20 bg-white/5 px-4 py-3 text-sm text-white/90"
+                role="status"
+              >
                 Sign in to generate video variations
               </p>
             ) : null}
 
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant={sourceMode === "upload" ? "default" : "outline"}
-                className={cn(
-                  sourceMode === "upload" &&
-                    "bg-[#6C47FF] text-white hover:bg-[#5835E8] genex-cta-glow",
-                )}
-                onClick={() => setSourceMode("upload")}
-                disabled={!user || submitting}
-              >
-                Upload video
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant={sourceMode === "url" ? "default" : "outline"}
-                className={cn(
-                  sourceMode === "url" &&
-                    "bg-[#6C47FF] text-white hover:bg-[#5835E8] genex-cta-glow",
-                )}
-                onClick={() => setSourceMode("url")}
-                disabled={!user || submitting}
-              >
-                YouTube URL
-              </Button>
-            </div>
+            {error ? (
+              <p className="mb-4 text-sm text-red-300" role="alert">
+                {error}
+              </p>
+            ) : null}
 
-            {sourceMode === "upload" ? (
-              <div className="space-y-2">
-                <Label>Video file (MP4 or MOV — max 500 MB)</Label>
-                <input
-                  ref={fileRef}
-                  type="file"
-                  accept=".mp4,.mov,video/mp4,video/quicktime"
-                  className="sr-only"
-                  disabled={!user || submitting}
-                  onChange={(e) => setVideoFile(e.target.files?.[0] ?? null)}
-                />
-                <div className="rounded-2xl border border-dashed border-[#C4BAF0] bg-[#FAFAFC] p-4 dark:border-violet-500/25 dark:bg-zinc-900/40">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={!user || submitting}
-                      onClick={() => fileRef.current?.click()}
+            {showPreGenerationHub ? (
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-8 px-2 py-4 sm:px-6">
+                  <div className="relative flex h-[200px] w-[180px] shrink-0 items-center justify-center">
+                    <div
+                      className="pointer-events-none absolute inset-0 scale-110 opacity-90 blur-[25px]"
+                      aria-hidden
                     >
-                      Choose file
-                    </Button>
-                    <span className="text-muted-foreground text-sm">
-                      {videoFile?.name ?? "No file selected"}
-                    </span>
+                      <div className="absolute left-[6%] top-[8%] h-[83%] w-[86%] rounded-full bg-[#3600AA]" />
+                      <div className="absolute right-[-20%] top-[-5%] h-[73%] w-[76%] rotate-[60deg] rounded-full bg-[#6800BA]" />
+                      <div className="absolute bottom-[-5%] left-[22%] h-[58%] w-[60%] -rotate-[66deg] rounded-full bg-[#A400A7]" />
+                    </div>
+                    <div className="relative flex size-[120px] items-center justify-center rounded-full bg-white/12 shadow-[0_8px_20px_rgba(0,0,0,0.16)] ring-1 ring-white/10">
+                      <Film
+                        className="size-14 rotate-[15deg] text-white"
+                        strokeWidth={1.25}
+                        aria-hidden
+                      />
+                    </div>
+                  </div>
+                  <h2
+                    className="max-w-3xl px-4 text-center font-[family-name:var(--font-instrument-serif)] text-3xl tracking-[0.36px] text-white sm:text-4xl"
+                    style={{ fontWeight: 400 }}
+                  >
+                    Hi, How can I help you today?
+                  </h2>
+                </div>
+
+                <div className="relative shrink-0 pb-2">
+                  <div
+                    className="pointer-events-none absolute inset-y-0 left-0 z-[2] w-12 bg-[linear-gradient(90deg,#21062A_0%,rgba(33,6,42,0)_100%)] sm:w-20"
+                    aria-hidden
+                  />
+                  <div
+                    className="pointer-events-none absolute inset-y-0 right-0 z-[2] w-12 bg-[linear-gradient(270deg,#1D0625_0%,rgba(29,6,37,0)_100%)] sm:w-20"
+                    aria-hidden
+                  />
+
+                  <div
+                    ref={videoHubCarouselRef}
+                    className="flex snap-x snap-mandatory gap-4 overflow-x-auto pb-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                  >
+                    {VIDEO_HUB_CAROUSEL_CARDS.map(({ prompt: cardPrompt, thumb }) => (
+                      <button
+                        key={cardPrompt}
+                        type="button"
+                        onClick={() => setPrompt(cardPrompt)}
+                        className="group relative flex h-[220px] w-[280px] shrink-0 snap-start flex-col justify-end overflow-hidden rounded-2xl p-3 text-left outline outline-1 -outline-offset-1 outline-[rgba(10,5,15,0.16)] transition-transform hover:scale-[1.02]"
+                        style={{ background: thumb }}
+                      >
+                        <div className="pointer-events-none absolute inset-0 bg-black/15 transition-colors group-hover:bg-black/5" />
+                        <div className="relative flex items-center gap-2 rounded-xl bg-[rgba(10,5,15,0.16)] px-3 py-2.5 backdrop-blur-[50px]">
+                          <p
+                            className="min-w-0 flex-1 text-base leading-6 tracking-[0.16px] text-white"
+                            style={{ fontWeight: 500 }}
+                          >
+                            {cardPrompt}
+                          </p>
+                          <span
+                            className="flex size-10 shrink-0 items-center justify-center rounded-full bg-white text-[#0A050F]"
+                            aria-hidden
+                          >
+                            <ArrowRight className="size-4" strokeWidth={2} />
+                          </span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="mt-1 flex justify-between px-2 sm:px-4">
+                    <button
+                      type="button"
+                      className="flex size-6 items-center justify-center text-white/60 transition-colors hover:text-white"
+                      aria-label="Scroll suggestions left"
+                      onClick={() => scrollVideoHubCarousel(-1)}
+                    >
+                      <ChevronLeft className="size-6" strokeWidth={1.5} />
+                    </button>
+                    <button
+                      type="button"
+                      className="flex size-6 items-center justify-center text-white/60 transition-colors hover:text-white"
+                      aria-label="Scroll suggestions right"
+                      onClick={() => scrollVideoHubCarousel(1)}
+                    >
+                      <ChevronRight className="size-6" strokeWidth={1.5} />
+                    </button>
                   </div>
                 </div>
               </div>
             ) : (
-              <div className="space-y-2">
-                <Label htmlFor="yt-url">YouTube URL</Label>
-                <input
-                  id="yt-url"
-                  type="url"
-                  className="h-12 w-full max-w-xl rounded-xl border border-[#E8E4F8] bg-white px-4 text-base outline-none ring-[#6C47FF]/25 focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-zinc-950"
-                  placeholder="https://www.youtube.com/watch?v=…"
-                  value={youtubeUrl}
-                  onChange={(e) => setYoutubeUrl(e.target.value)}
-                  disabled={!user || submitting}
-                />
+              <>
+            {lastSubmittedPrompt.trim() ? (
+              <div className="mb-6 flex w-full flex-col items-end gap-2">
+                <div className="flex max-w-[min(100%,600px)] items-end gap-3">
+                  <div className="min-w-0 rounded-[20px_4px_20px_20px] bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)] p-4 shadow-[0_16px_24px_rgba(136,1,220,0.16)] outline outline-1 -outline-offset-1 outline-white/25">
+                    <div className="mb-2 flex items-center gap-2 text-sm text-white">
+                      <MessageSquare className="size-4 shrink-0 opacity-95" />
+                      <span className="tracking-wide">Message</span>
+                    </div>
+                    <p className="text-sm leading-5 tracking-wide text-white">{lastSubmittedPrompt}</p>
+                  </div>
+                  <div
+                    className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[#CCC1F0] text-xs font-semibold text-[#2d1b4e]"
+                    aria-hidden
+                  >
+                    {userInitials}
+                  </div>
+                </div>
               </div>
-            )}
-
-            <div className="space-y-2">
-              <Label htmlFor="video-prompt">What do you want?</Label>
-              <textarea
-                id="video-prompt"
-                className="min-h-[160px] w-full max-w-3xl resize-y rounded-xl border border-[#E8E4F8] bg-white px-4 py-3 text-base outline-none ring-[#6C47FF]/25 focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-zinc-950"
-                placeholder="Describe what you want: e.g. 'Grab the 5 most climactic moments from this vlog and create short clips I can post on TikTok to promote my YouTube'"
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                disabled={!user || submitting}
-              />
-            </div>
-
-            {hasInput ? (
-              <div
-                className={cn(
-                  "flex flex-wrap items-center gap-2 rounded-xl border px-4 py-3 text-sm",
-                  "border-[#E8E4F8] bg-[#FAFAFC] text-[#6B6B8A]",
-                  "dark:border-white/10 dark:bg-white/4 dark:text-white/55",
-                )}
-              >
-                <span>⚡ {VIDEO_JOB_CREDIT_COST} credits</span>
-                <span className="text-[#C4BAF0] dark:text-white/25">·</span>
-                <span>~2–5 min</span>
-                <span className="text-[#C4BAF0] dark:text-white/25">·</span>
-                <span>5 variations from your footage</span>
-              </div>
-            ) : null}
-
-            {user && !creditsUnlimited ? (
-              <p className="text-sm text-amber-700 dark:text-amber-400/90">
-                This will use <strong>{VIDEO_JOB_CREDIT_COST} credits</strong>{" "}
-                ({creditsRemaining} remaining). You will confirm before submit.
-              </p>
             ) : null}
 
             {submitting && uploadPct > 0 && uploadPct < 99 ? (
-              <div className="max-w-md space-y-1">
+              <div className="mb-4 max-w-md space-y-1">
                 <Progress value={uploadPct}>
-                  <div className="flex w-full justify-between text-xs">
+                  <div className="flex w-full justify-between text-xs text-white/80">
                     <ProgressLabel>Uploading to app</ProgressLabel>
                     <ProgressValue />
                   </div>
@@ -891,232 +1062,432 @@ export const VideoVariationWorkspace = forwardRef<
               </div>
             ) : null}
             {submitting && finishingOnServer ? (
-              <div className="max-w-md space-y-2">
+              <div className="mb-4 max-w-md space-y-2">
                 <Progress value={99}>
-                  <div className="flex w-full justify-between text-xs">
+                  <div className="flex w-full justify-between text-xs text-white/80">
                     <ProgressLabel>Finishing on server</ProgressLabel>
                     <ProgressValue />
                   </div>
                 </Progress>
-                <p className="text-muted-foreground text-xs">
-                  Large files upload straight to storage, then the app links the job. That step
-                  can take a bit before status updates below.
+                <p className="text-xs text-white/55">
+                  Large files upload straight to storage, then the app links the job. That step can
+                  take a bit before status updates below.
                 </p>
               </div>
             ) : null}
 
-            {error ? (
-              <p className="text-destructive text-sm" role="alert">
-                {error}
+            {(submitting ||
+              (jobId &&
+                jobStatus &&
+                jobStatus !== "complete" &&
+                jobStatus !== "failed")) ? (
+              <div className="mb-6 flex w-full justify-center">
+                <div className="inline-flex items-center gap-2 rounded-xl border border-white/60 px-3 py-2 text-sm text-white">
+                  <span className="size-4 animate-pulse rounded-full border border-white" />
+                  Generating…
+                </div>
+              </div>
+            ) : null}
+
+            {user && jobId && jobStatus ? (
+              <div className="mb-8 flex w-full flex-col items-start gap-3">
+                <div className="flex max-w-[min(100%,640px)] items-end gap-3">
+                  <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)] shadow-[0_0_20px_rgba(203,45,206,0.24)]">
+                    <Film className="size-5 text-white" />
+                  </div>
+                  <div className="min-w-0 flex-1 rounded-[20px_20px_20px_4px] bg-white/[0.08] p-4 shadow-[0_12px_24px_rgba(11,6,16,0.24)] outline outline-1 -outline-offset-1 outline-white/25">
+                    <div className="mb-3 flex items-center gap-2">
+                      <span className="size-3.5 rounded-sm bg-[#C717D8]" aria-hidden />
+                      <span className="text-sm font-medium tracking-wide text-[#C717D8]">Video</span>
+                    </div>
+
+                    {jobStatus === "failed" ? (
+                      <p className="text-sm text-red-300">
+                        This job failed. Check the toast for details.
+                      </p>
+                    ) : jobStatus === "complete" && variations.length > 0 ? (
+                      <VariationPreviewRegistryProvider>
+                        <div className="space-y-4">
+                          <p className="text-sm leading-5 tracking-wide text-white">
+                            Here are your short-form cuts — preview each variation, download the
+                            ones you like, or open settings to fine-tune defaults.
+                          </p>
+                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            {variations.map((v, idx) => {
+                              const num = v.variation_number ?? idx + 1;
+                              const previewInstanceId = `${jobId}-var-${idx}`;
+                              return (
+                                <div
+                                  key={v.url ? `${v.url}::${num}` : `${jobId}-var-${idx}-${num}`}
+                                  className="overflow-hidden rounded-lg bg-black/40 ring-1 ring-white/10"
+                                >
+                                  <p className="truncate px-2 pt-2 text-xs font-medium text-white/80">
+                                    {v.label}
+                                    <span className="text-white/50"> · Variation {num}</span>
+                                    {v.style_note ? (
+                                      <span className="text-white/45"> — {v.style_note}</span>
+                                    ) : null}
+                                  </p>
+                                  <div className="px-0 pb-2 pt-1">
+                                    {v.error ? (
+                                      <div className="mx-2 flex min-h-[160px] flex-col justify-center gap-2 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-4 text-xs text-red-200">
+                                        <p className="font-medium">This variation failed.</p>
+                                        <p className="wrap-break-word font-mono text-[10px] text-red-100/80">
+                                          {v.error}
+                                        </p>
+                                      </div>
+                                    ) : (
+                                      <VariationHoverVideo
+                                        src={v.url}
+                                        instanceId={previewInstanceId}
+                                      />
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-3 border-t border-white/10 pt-3">
+                            {firstCompletedVariation ? (
+                              <>
+                                <button
+                                  type="button"
+                                  className="inline-flex size-9 items-center justify-center rounded-xl text-white hover:bg-white/10"
+                                  aria-label="Copy first variation link"
+                                  onClick={() => {
+                                    void navigator.clipboard.writeText(firstCompletedVariation.url);
+                                    toast.success("Link copied");
+                                  }}
+                                >
+                                  <Copy className="size-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="inline-flex size-9 items-center justify-center rounded-xl text-white hover:bg-white/10"
+                                  aria-label="Share first variation"
+                                  onClick={() => {
+                                    void navigator.clipboard.writeText(firstCompletedVariation.url);
+                                    toast.success("Link copied for sharing");
+                                  }}
+                                >
+                                  <Share2 className="size-3.5" />
+                                </button>
+                              </>
+                            ) : null}
+                            <DropdownMenu>
+                              <DropdownMenuTrigger
+                                type="button"
+                                className="inline-flex items-center gap-2 rounded-xl px-1 py-1.5 text-sm text-white hover:bg-white/10"
+                              >
+                                <Download className="size-3.5" />
+                                Download
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent
+                                align="start"
+                                className="border-white/10 bg-[#1a1024] text-white"
+                              >
+                                {variations
+                                  .filter((v) => !v.error && v.url)
+                                  .map((v, idx) => {
+                                    const num = v.variation_number ?? idx + 1;
+                                    return (
+                                      <DropdownMenuItem
+                                        key={`dl-${v.url}-${num}`}
+                                        className="cursor-pointer text-white focus:bg-white/10 focus:text-white"
+                                        onClick={() => {
+                                          const a = document.createElement("a");
+                                          a.href = v.url;
+                                          a.target = "_blank";
+                                          a.rel = "noreferrer";
+                                          a.download = "";
+                                          document.body.appendChild(a);
+                                          a.click();
+                                          a.remove();
+                                        }}
+                                      >
+                                        Variation {num}
+                                      </DropdownMenuItem>
+                                    );
+                                  })}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-2 rounded-xl px-1 py-1.5 text-sm text-white hover:bg-white/10"
+                              onClick={() => {
+                                if (!user) {
+                                  onOpenSignIn();
+                                  return;
+                                }
+                                resetJobUi({ keepSubmittedPrompt: true });
+                                setRefinementOpen(true);
+                              }}
+                            >
+                              <RefreshCw className="size-3.5" />
+                              Regenerate
+                            </button>
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-2 rounded-xl px-1 py-1.5 text-sm text-white hover:bg-white/10"
+                              onClick={() => {
+                                setSettingsOpen(true);
+                                document
+                                  .getElementById("video-settings-rail")
+                                  ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                              }}
+                            >
+                              <SlidersHorizontal className="size-3.5" />
+                              Customize
+                            </button>
+                          </div>
+
+                          {jobStatus === "complete" && jobPartialNotice ? (
+                            <div
+                              className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"
+                              role="status"
+                            >
+                              <p className="font-medium">Some variations did not finish</p>
+                              <p className="mt-1 text-amber-50/90">{jobPartialNotice}</p>
+                            </div>
+                          ) : null}
+
+                          {jobId ? (
+                            <div className="rounded-xl bg-black/50 px-4 py-3 ring-1 ring-white/10">
+                              <RatingWidget kind="video" jobId={jobId} />
+                            </div>
+                          ) : null}
+                          <GenerationFeedbackPanel
+                            mode="video"
+                            videoJobId={jobId}
+                            originalPrompt={prompt}
+                            generationContext={jobGenerationContext}
+                            variationsOutput={formatVariationsForFeedback(variations)}
+                            onCreditsUpdated={setCreditsRemaining}
+                            onVideoForked={(newId) => {
+                              stopPoll();
+                              setJobId(newId);
+                              setJobStatus("queued");
+                              setVariations([]);
+                              setJobPartialNotice(null);
+                              setJobGenerationContext(null);
+                              failedToastJobIdRef.current = null;
+                            }}
+                          />
+                        </div>
+                      </VariationPreviewRegistryProvider>
+                    ) : (
+                      <>
+                        <p className="mb-3 text-sm text-white/70">{PIPELINE_STEPS.join(" → ")}</p>
+                        <div className="max-w-xl space-y-2">
+                          <Progress value={pipelineProgressValue}>
+                            <div className="flex w-full justify-between text-xs text-white/80">
+                              <ProgressLabel>{pipelineHeadline}</ProgressLabel>
+                              <ProgressValue />
+                            </div>
+                          </Progress>
+                        </div>
+                        {jobStatus === "queued" && jobAwaitingUploadLink ? (
+                          <p className="mt-3 text-sm text-white/60" role="status">
+                            Linking your upload to this job… The worker starts only after the file is
+                            attached. If this stays here, check that the finalize step completed
+                            (Network tab) or try submitting again.
+                          </p>
+                        ) : null}
+                        <ol className="mt-4 flex flex-wrap gap-x-3 gap-y-2 text-sm text-white/55">
+                          {PIPELINE_STEPS.map((label, i) => (
+                            <li
+                              key={label}
+                              className={cn(
+                                "flex items-center gap-1.5",
+                                activeStepIndex >= i && "font-medium text-white",
+                              )}
+                            >
+                              <span
+                                className={cn(
+                                  "size-2 rounded-full",
+                                  activeStepIndex >= i ? "bg-[#D31CD7]" : "bg-white/25",
+                                )}
+                              />
+                              {label}
+                            </li>
+                          ))}
+                        </ol>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : user ? (
+              <p className="text-sm text-white/55">Describe your edit below to start a new run.</p>
+            ) : null}
+              </>
+            )}
+          </div>
+
+          <div className="shrink-0 border-t border-white/10 px-4 pb-5 pt-3 sm:px-10 lg:px-[clamp(24px,6vw,100px)]">
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".mp4,.mov,video/mp4,video/quicktime"
+              className="sr-only"
+              disabled={!user || submitting}
+              onChange={(e) => setVideoFile(e.target.files?.[0] ?? null)}
+            />
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch">
+              <div className="flex min-h-[52px] min-w-0 flex-1 items-center gap-2 overflow-x-auto rounded-[22px] border border-white/15 bg-white/10 p-1.5 pl-2 outline outline-1 -outline-offset-1 outline-white/15 sm:gap-3">
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="size-8 shrink-0 rounded-full border border-white/30 text-white hover:bg-white/10"
+                  disabled={!user || submitting || sourceMode !== "upload"}
+                  aria-label="Attach video file"
+                  onClick={() => fileRef.current?.click()}
+                >
+                  <Paperclip className="size-4" />
+                </Button>
+                {showPreGenerationHub ? (
+                  <input
+                    id="video-prompt"
+                    type="text"
+                    className="min-h-[44px] flex-1 bg-transparent py-2 text-sm leading-5 tracking-[0.14px] text-white outline-none placeholder:text-white/60 disabled:opacity-50"
+                    placeholder="Message Ada…"
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    disabled={!user || submitting}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSubmit();
+                      }
+                    }}
+                  />
+                ) : (
+                  <textarea
+                    id="video-prompt"
+                    rows={2}
+                    className="max-h-32 min-h-[44px] flex-1 resize-y bg-transparent py-2 text-sm leading-5 tracking-wide text-white outline-none placeholder:text-white/60 disabled:opacity-50"
+                    placeholder="Message Ada…"
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    disabled={!user || submitting}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey && (e.metaKey || e.ctrlKey)) {
+                        e.preventDefault();
+                        handleSubmit();
+                      }
+                    }}
+                  />
+                )}
+                <div className="ml-auto flex shrink-0 items-center gap-1 pr-0.5 sm:gap-1.5 sm:pr-1">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className={cn(
+                      "h-8 shrink-0 rounded-full border border-white/25 px-2 text-[11px] font-medium text-white hover:bg-white/10 sm:px-2.5 sm:text-xs",
+                      sourceMode === "upload" && "border-white/40 bg-white/15",
+                    )}
+                    onClick={() => setSourceMode("upload")}
+                    disabled={!user || submitting}
+                  >
+                    Upload
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className={cn(
+                      "h-8 shrink-0 rounded-full border border-white/25 px-2 text-[11px] font-medium text-white hover:bg-white/10 sm:px-2.5 sm:text-xs",
+                      sourceMode === "url" && "border-white/40 bg-white/15",
+                    )}
+                    onClick={() => setSourceMode("url")}
+                    disabled={!user || submitting}
+                  >
+                    YouTube
+                  </Button>
+                  {sourceMode === "url" ? (
+                    <input
+                      type="url"
+                      aria-label="YouTube URL"
+                      className="h-8 w-[min(200px,32vw)] shrink-0 rounded-lg border border-white/20 bg-white/5 px-2 text-xs text-white outline-none placeholder:text-white/40 focus-visible:ring-2 focus-visible:ring-[#8800DC]/40 sm:w-[min(260px,28vw)]"
+                      placeholder="youtube.com/…"
+                      value={youtubeUrl}
+                      onChange={(e) => setYoutubeUrl(e.target.value)}
+                      disabled={!user || submitting}
+                    />
+                  ) : (
+                    <span
+                      className="max-w-[72px] shrink-0 truncate text-[10px] text-white/45 sm:max-w-[100px] sm:text-[11px] md:max-w-[140px]"
+                      title={videoFile?.name ?? undefined}
+                    >
+                      {videoFile?.name ?? "No file"}
+                    </span>
+                  )}
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="size-8 shrink-0 rounded-full border border-white/30 text-white hover:bg-white/10"
+                    aria-label="Voice input (soon)"
+                    disabled
+                  >
+                    <Mic className="size-4 opacity-50" />
+                  </Button>
+                  <Button
+                    type="button"
+                    size="icon"
+                    className="size-8 shrink-0 rounded-full bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)] text-white shadow-[0_0_20px_rgba(203,45,206,0.24)] hover:opacity-95 disabled:opacity-40"
+                    aria-label="Send"
+                    disabled={!user || submitting}
+                    onClick={() => handleSubmit()}
+                  >
+                    <ArrowUp className="size-4" />
+                  </Button>
+                </div>
+              </div>
+              {!showPreGenerationHub ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-[52px] shrink-0 rounded-full border-white/40 bg-transparent px-4 text-white hover:bg-white/10 sm:self-auto"
+                  onClick={handleSurprisePrompt}
+                  disabled={!user || submitting}
+                >
+                  <Sparkles className="mr-2 size-5" />
+                  Surprise me
+                </Button>
+              ) : null}
+            </div>
+
+            {hasInput ? (
+              <div className="mt-3 flex flex-wrap gap-2 text-xs text-white/55">
+                <span>⚡ {VIDEO_JOB_CREDIT_COST} credits</span>
+                <span className="text-white/25">·</span>
+                <span>~2–5 min</span>
+                <span className="text-white/25">·</span>
+                <span>5 variations from your footage</span>
+              </div>
+            ) : null}
+            {user && !creditsUnlimited ? (
+              <p className="mt-2 text-xs text-amber-200/90">
+                This will use <strong>{VIDEO_JOB_CREDIT_COST} credits</strong> ({creditsRemaining}{" "}
+                remaining). You will confirm before submit.
               </p>
             ) : null}
 
-            <Button
-              type="button"
-              size="lg"
-              className="w-full rounded-xl bg-[#6C47FF] font-semibold text-white shadow-md hover:bg-[#5835E8] genex-cta-glow sm:w-auto"
-              disabled={submitting}
-              onClick={() => handleSubmit()}
-            >
-              {submitting ? "Working…" : "Generate 5 variations"}
-            </Button>
-          </section>
-        </div>
-
-        <div className="min-w-0 space-y-6 lg:min-w-0">
-          <div className="flex justify-center lg:justify-start">
-            <span
-              id="video-output"
-              className="inline-flex items-center gap-2 rounded-full border border-[#E8E4F8] bg-white px-3 py-1 text-xs font-medium text-[#6B6B8A] dark:border-white/10 dark:bg-zinc-900"
-            >
-              English · Casual tone
-            </span>
+            <div className="mt-3 flex items-start gap-2 text-xs leading-6 tracking-wide text-white/60">
+              <span className="mt-1 inline-block size-3.5 shrink-0 rounded border border-white/50" />
+              <span>Ada is beta release and may give incorrect or harmful info</span>
+            </div>
           </div>
-
-          {user && jobId && jobStatus ? (
-            <section className="space-y-4 border-t border-[#E8E4F8] pt-6 dark:border-white/10">
-              <h2 className="text-xl font-semibold text-[#0F0A1E] dark:text-white">Status</h2>
-
-              {jobStatus !== "failed" ? (
-                <>
-                  <p className="text-muted-foreground text-sm">
-                    {PIPELINE_STEPS.join(" → ")}
-                  </p>
-                  <div className="max-w-xl space-y-2">
-                    <Progress value={pipelineProgressValue}>
-                      <div className="flex w-full justify-between text-xs">
-                        <ProgressLabel>{pipelineHeadline}</ProgressLabel>
-                        <ProgressValue />
-                      </div>
-                    </Progress>
-                  </div>
-                  {jobStatus === "complete" && jobPartialNotice ? (
-                    <div
-                      className="max-w-2xl rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100"
-                      role="status"
-                    >
-                      <p className="font-medium">Some variations did not finish</p>
-                      <p className="mt-1 text-amber-900/90 dark:text-amber-50/90">
-                        {jobPartialNotice}
-                      </p>
-                    </div>
-                  ) : null}
-                  {jobStatus === "queued" && jobAwaitingUploadLink ? (
-                    <p className="text-muted-foreground max-w-2xl text-sm" role="status">
-                      Linking your upload to this job… The worker starts only after the file is
-                      attached. If this stays here, check that the finalize step completed (Network
-                      tab) or try submitting again.
-                    </p>
-                  ) : null}
-                  <ol className="text-muted-foreground flex flex-wrap gap-x-3 gap-y-2 text-sm">
-                    {PIPELINE_STEPS.map((label, i) => (
-                      <li
-                        key={label}
-                        className={cn(
-                          "flex items-center gap-1.5",
-                          activeStepIndex >= i && "text-foreground font-medium",
-                        )}
-                      >
-                        <span
-                          className={cn(
-                            "size-2 rounded-full",
-                            activeStepIndex >= i
-                              ? "bg-[#6C47FF]"
-                              : "bg-muted-foreground/30",
-                          )}
-                        />
-                        {label}
-                      </li>
-                    ))}
-                  </ol>
-                </>
-              ) : (
-                <p className="text-destructive text-sm">
-                  This job failed. Check the toast for details.
-                </p>
-              )}
-
-              {variations.length > 0 && jobStatus === "complete" ? (
-                <VariationPreviewRegistryProvider>
-                  <div className="space-y-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <h3 className="text-lg font-semibold text-[#0F0A1E] dark:text-white">
-                        Your variations
-                      </h3>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="rounded-full border-[#E8E4F8]"
-                        onClick={() => {
-                          resetJobUi();
-                          setPrompt("");
-                          setYoutubeUrl("");
-                          setVideoFile(null);
-                          if (fileRef.current) fileRef.current.value = "";
-                        }}
-                      >
-                        Regenerate with different style
-                      </Button>
-                    </div>
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                      {variations.map((v, idx) => {
-                        const num = v.variation_number ?? idx + 1;
-                        const previewInstanceId = `${jobId}-var-${idx}`;
-                        return (
-                          <Card
-                            key={v.url ? `${v.url}::${num}` : `${jobId}-var-${idx}-${num}`}
-                            className="overflow-hidden border-[#E8E4F8] shadow-sm transition duration-200 hover:scale-[1.02] hover:shadow-md dark:border-white/10"
-                          >
-                            <CardHeader className="pb-2">
-                              <CardTitle className="text-base">{v.label}</CardTitle>
-                              <CardDescription>
-                                Variation {num}
-                                {v.style_note ? ` — ${v.style_note}` : ""}
-                              </CardDescription>
-                            </CardHeader>
-                            <CardContent className="space-y-2 px-0">
-                              {v.error ? (
-                                <div className="bg-destructive/10 text-destructive flex min-h-[200px] flex-col justify-center gap-2 rounded-lg border border-destructive/30 px-4 py-6 text-sm">
-                                  <p className="font-medium">This variation failed to render.</p>
-                                  <p className="text-muted-foreground font-mono text-xs wrap-break-word">
-                                    {v.error}
-                                  </p>
-                                </div>
-                              ) : (
-                                <VariationHoverVideo
-                                  src={v.url}
-                                  instanceId={previewInstanceId}
-                                />
-                              )}
-                            </CardContent>
-                            <CardFooter className="flex flex-wrap gap-2">
-                              {!v.error ? (
-                                <>
-                                  <a
-                                    href={v.url}
-                                    download
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className={cn(
-                                      buttonVariants({ variant: "secondary", size: "sm" }),
-                                      "inline-flex",
-                                    )}
-                                  >
-                                    Download
-                                  </a>
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => {
-                                      void navigator.clipboard.writeText(v.url);
-                                      toast.success("Link copied");
-                                    }}
-                                  >
-                                    Copy link
-                                  </Button>
-                                </>
-                              ) : null}
-                            </CardFooter>
-                          </Card>
-                        );
-                      })}
-                    </div>
-                    {jobId ? (
-                      <div className="rounded-xl bg-zinc-950 px-4 py-3 ring-1 ring-white/10">
-                        <RatingWidget kind="video" jobId={jobId} />
-                      </div>
-                    ) : null}
-                    <GenerationFeedbackPanel
-                      mode="video"
-                      videoJobId={jobId}
-                      originalPrompt={prompt}
-                      generationContext={jobGenerationContext}
-                      variationsOutput={formatVariationsForFeedback(variations)}
-                      onCreditsUpdated={setCreditsRemaining}
-                      onVideoForked={(newId) => {
-                        stopPoll();
-                        setJobId(newId);
-                        setJobStatus("queued");
-                        setVariations([]);
-                        setJobPartialNotice(null);
-                        setJobGenerationContext(null);
-                        failedToastJobIdRef.current = null;
-                      }}
-                    />
-                  </div>
-                </VariationPreviewRegistryProvider>
-              ) : null}
-            </section>
-          ) : (
-            <p className="text-muted-foreground text-sm lg:max-w-md">
-              Submit a job to see pipeline status and variations here.
-            </p>
-          )}
         </div>
 
-        <div id="video-settings-rail" className="hidden lg:block lg:min-w-0">
+        <div
+          id="video-settings-rail"
+          className="relative z-[1] hidden w-[280px] shrink-0 border-l border-white bg-[rgba(198,108,255,0.08)] lg:block"
+        >
           {settingsRail}
         </div>
       </div>
@@ -1124,7 +1495,7 @@ export const VideoVariationWorkspace = forwardRef<
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
         <DialogContent
           showCloseButton
-          className="fixed right-auto bottom-0 left-1/2 top-auto max-h-[min(88dvh,640px)] w-full max-w-full translate-x-[-50%] translate-y-0 overflow-y-auto rounded-t-2xl rounded-b-none border-[#E8E4F8] p-6 sm:max-w-md"
+          className="fixed right-auto bottom-0 left-1/2 top-auto max-h-[min(88dvh,640px)] w-full max-w-full translate-x-[-50%] translate-y-0 overflow-y-auto rounded-t-2xl rounded-b-none border-white/15 bg-[#12081c] p-6 text-white sm:max-w-md"
         >
           <DialogHeader>
             <DialogTitle>Settings</DialogTitle>
