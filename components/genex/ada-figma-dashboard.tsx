@@ -32,15 +32,15 @@ export function AdaFigmaAmbientBackground() {
       aria-hidden
     >
       <div
-        className="absolute -left-[20%] top-[-35%] h-[95%] w-[75%] -rotate-[13deg] bg-[#180532] opacity-70 blur-[100px]"
+        className="absolute -left-[18%] top-[-28%] h-[min(90vh,50rem)] w-[min(140vw,82rem)] -rotate-[13deg] rounded-[3rem] bg-[#180532] opacity-90 blur-[140px] shadow-[600px_600px_600px_rgba(24,5,50,0.12)]"
         style={{ transformOrigin: "top left" }}
       />
       <div
-        className="absolute -right-[30%] bottom-[-40%] h-[90%] w-[85%] rotate-[148deg] bg-[#300537] opacity-55 blur-[110px]"
+        className="absolute -right-[28%] bottom-[-38%] h-[min(88vh,48rem)] w-[min(130vw,80rem)] rotate-[148deg] rounded-[3rem] bg-[#300537] opacity-85 blur-[150px] shadow-[600px_600px_600px_rgba(48,5,55,0.1)]"
         style={{ transformOrigin: "top left" }}
       />
       <div
-        className="absolute -left-[45%] bottom-[-25%] h-[70%] w-[95%] -rotate-[57deg] bg-[#230639] opacity-50 blur-[95px]"
+        className="absolute left-[12%] bottom-[-42%] h-[min(72vh,42rem)] w-[min(120vw,78rem)] -rotate-[57deg] rounded-[3rem] bg-[#230639] opacity-80 blur-[130px] shadow-[600px_600px_600px_rgba(35,6,57,0.1)]"
         style={{ transformOrigin: "top left" }}
       />
     </div>
@@ -67,7 +67,7 @@ const MAIN_NAV: {
   label: string;
   icon: typeof FileText | typeof Video;
 }[] = [
-  { id: "video", label: "Make a Video", icon: Video },
+  { id: "video", label: "Clip a Video", icon: Video },
   { id: "clip", label: "Write Content", icon: FileText },
 ];
 

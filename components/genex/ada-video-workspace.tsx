@@ -391,22 +391,11 @@ export function AdaVideoWorkspace({
   const statusIdx = stepOrderIndex(statusKey);
 
   const rootClass = kit
-    ? "relative flex h-full min-h-0 flex-col overflow-hidden bg-[#0A050F] font-[family-name:var(--font-instrument-sans)] text-white"
+    ? "relative flex h-full min-h-0 flex-col overflow-hidden bg-transparent font-[family-name:var(--font-instrument-sans)] text-white"
     : "flex h-full min-h-0 flex-col bg-ada-app text-ada-primary";
 
   return (
     <div className={rootClass}>
-      {kit ? (
-        <div
-          className="pointer-events-none absolute inset-0 overflow-hidden"
-          aria-hidden
-        >
-          <div className="absolute -left-[20%] top-[-18%] h-[min(90vh,52rem)] w-[min(140vw,85rem)] -rotate-[13deg] rounded-[3rem] bg-[#180532] opacity-90 blur-[120px]" />
-          <div className="absolute -right-[25%] bottom-[-35%] h-[min(85vh,48rem)] w-[min(130vw,80rem)] rotate-[148deg] rounded-[3rem] bg-[#300537] opacity-85 blur-[120px]" />
-          <div className="absolute left-[15%] bottom-[-40%] h-[min(70vh,40rem)] w-[min(120vw,72rem)] -rotate-[57deg] rounded-[3rem] bg-[#230639] opacity-80 blur-[120px]" />
-        </div>
-      ) : null}
-
       <div className="relative z-[1] mx-auto grid h-full w-full max-w-5xl grid-cols-1 gap-6 overflow-hidden px-4 py-6 lg:grid-cols-[380px_1fr]">
         {/* Left column */}
         <div className="flex min-h-0 flex-col gap-4 lg:overflow-y-auto lg:pb-8">
@@ -581,7 +570,7 @@ export function AdaVideoWorkspace({
               ) : (
                 <>
                   <Zap className="size-4 shrink-0" aria-hidden />
-                  Make my video
+                  Clip my video
                 </>
               )}
             </button>
@@ -788,7 +777,7 @@ export function AdaVideoWorkspace({
                       kit ? "text-white/60 font-medium" : "font-medium text-ada-secondary",
                     )}
                   >
-                    Make my video
+                    Clip my video
                   </span>
                   . Done in under 2 minutes.
                 </p>
