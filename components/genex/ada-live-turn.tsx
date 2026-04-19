@@ -37,7 +37,7 @@ export type AdaLiveTurnProps = {
   fetchingYoutubeTranscript: boolean;
   getElapsed: (ts?: number) => string | null;
   copiedId: string | null;
-  onCopy: (id: string, body: string) => void;
+  onCopy: (id: string, body: string) => void | Promise<void>;
   variant?: "default" | "adaKit";
 };
 

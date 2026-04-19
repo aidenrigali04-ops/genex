@@ -59,7 +59,7 @@ async function generateElevenLabsVoiceover(script, voiceId, outputPath) {
   }
   const id = voiceId || process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
   const outputFormat =
-    process.env.ELEVENLABS_OUTPUT_FORMAT?.trim() || "mp3_44100_128";
+    process.env.ELEVENLABS_OUTPUT_FORMAT?.trim() || "mp3_44100_192";
   const params = new URLSearchParams({ output_format: outputFormat });
   const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(
     id,
@@ -76,11 +76,11 @@ async function generateElevenLabsVoiceover(script, voiceId, outputPath) {
     },
     body: JSON.stringify({
       text,
-      model_id: "eleven_multilingual_v2",
+      model_id: "eleven_turbo_v2_5",
       voice_settings: {
-        stability: 0.5,
-        similarity_boost: 0.75,
-        style: 0.3,
+        stability: 0.35,
+        similarity_boost: 0.85,
+        style: 0.45,
         use_speaker_boost: true,
       },
     }),

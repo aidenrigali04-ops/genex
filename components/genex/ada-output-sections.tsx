@@ -1,18 +1,27 @@
 "use client";
 
+import type { JSX } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Copy } from "lucide-react";
 
-import { CLIP_SECTIONS, type ClipSectionMap } from "@/lib/clip-package";
+import { trackAha, type AhaEvent } from "@/lib/analytics";
+import {
+  CLIP_SECTIONS,
+  parseHookStrength,
+  type ClipSectionMap,
+  type HookStrengthResult,
+} from "@/lib/clip-package";
+import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
 const SECTION_ACCENT: Record<string, string> = {
-  hooks: "#7B5CFA",
-  moments: "#22C55E",
-  script: "#9B6FFF",
-  cta: "#F59E0B",
-  creator_signals: "#3B82F6",
-  caption_hashtags: "#8B5CF6",
-  broll: "#06B6D4",
+  hooks: "var(--ada-accent)",
+  moments: "var(--ada-success)",
+  script: "var(--ada-accent-hover)",
+  cta: "var(--ada-warning)",
+  creator_signals: "var(--ada-border-focus)",
+  caption_hashtags: "var(--ada-accent)",
+  broll: "var(--ada-border-active)",
 };
 
 const SECTION_EMOJI: Record<string, string> = {
@@ -25,12 +34,64 @@ const SECTION_EMOJI: Record<string, string> = {
   broll: "🎥",
 };
 
+const STRENGTH_CONFIG = {
+  high: {
+    emoji: "🔥",
+    label: "High-hook potential",
+    color: "var(--ada-accent)",
+  },
+  strong: {
+    emoji: "⚡",
+    label: "Strong opener",
+    color: "var(--ada-accent-hover)",
+  },
+  solid: {
+    emoji: "✓",
+    label: "Solid hook",
+    color: "var(--ada-text-secondary)",
+  },
+} as const;
+
+function HookStrengthBadge({
+  result,
+}: {
+  result: HookStrengthResult;
+}): JSX.Element {
+  const cfg = STRENGTH_CONFIG[result.strength];
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium uppercase tracking-widest"
+      style={{
+        color: cfg.color,
+        border: `1px solid ${cfg.color}`,
+        opacity: 0.85,
+      }}
+      title={result.reason}
+    >
+      {cfg.emoji} {cfg.label}
+    </span>
+  );
+}
+
+function copyEventForSection(sectionId: string): AhaEvent | null {
+  switch (sectionId) {
+    case "hooks":
+      return "copy_hook";
+    case "caption_hashtags":
+      return "copy_caption";
+    case "script":
+      return "copy_script";
+    default:
+      return null;
+  }
+}
+
 export type AdaOutputSectionsProps = {
   parsedClipPackage: ClipSectionMap;
   loading: boolean;
   streamedText: string;
   copiedId: string | null;
-  onCopy: (id: string, body: string) => void;
+  onCopy: (id: string, body: string) => void | Promise<void>;
   variant?: "default" | "adaKit";
 };
 
@@ -41,8 +102,49 @@ export function AdaOutputSections({
   copiedId,
   onCopy,
   variant = "default",
-}: AdaOutputSectionsProps) {
+}: AdaOutputSectionsProps): JSX.Element {
   const kit = variant === "adaKit";
+  const supabase = useMemo(() => createClient(), []);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [sectionCopiedId, setSectionCopiedId] = useState<string | null>(null);
+  const copyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void supabase.auth.getUser().then(({ data }) => {
+      if (cancelled) return;
+      setUserId(data.user?.id ?? null);
+    });
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUserId(session?.user?.id ?? null);
+    });
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
+  }, [supabase]);
+
+  useEffect(() => {
+    return () => {
+      if (copyResetTimerRef.current) {
+        clearTimeout(copyResetTimerRef.current);
+        copyResetTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  const hookStrengthResult = useMemo(
+    () => parseHookStrength(parsedClipPackage.creator_signals ?? ""),
+    [parsedClipPackage.creator_signals],
+  );
+
+  const visibleSections = useMemo(
+    () =>
+      CLIP_SECTIONS.filter((s) => parsedClipPackage[s.id]?.trim()?.length),
+    [parsedClipPackage],
+  );
 
   if (loading && !streamedText.trim()) {
     return (
@@ -63,16 +165,47 @@ export function AdaOutputSections({
 
   return (
     <div className="space-y-4">
-      {CLIP_SECTIONS.map((section) => {
+      {visibleSections.map((section, index) => {
         const content = parsedClipPackage[section.id];
         if (!content?.trim()) return null;
-        const accent = SECTION_ACCENT[section.id] ?? "#7B5CFA";
+        const accent = SECTION_ACCENT[section.id] ?? "var(--ada-accent)";
         const emoji = SECTION_EMOJI[section.id] ?? "•";
+        const isCopied =
+          sectionCopiedId === section.id || copiedId === section.id;
+
+        const handleCopy = (): void => {
+          void (async () => {
+            try {
+              await Promise.resolve(onCopy(section.id, content));
+            } catch {
+              return;
+            }
+            if (copyResetTimerRef.current) {
+              clearTimeout(copyResetTimerRef.current);
+            }
+            setSectionCopiedId(section.id);
+            copyResetTimerRef.current = setTimeout(() => {
+              setSectionCopiedId(null);
+              copyResetTimerRef.current = null;
+            }, 2000);
+            const evt = copyEventForSection(section.id);
+            if (evt && userId) {
+              void trackAha(supabase, userId, evt);
+            }
+          })();
+        };
 
         return (
-          <div key={section.id} className="group">
+          <div
+            key={section.id}
+            className="group animate-fadeIn"
+            style={{
+              animationDelay: `${index * 80}ms`,
+              animationFillMode: "both",
+            }}
+          >
             <div className="mb-2 flex items-center justify-between gap-2">
-              <div className="flex min-w-0 items-center gap-2">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <div
                   className="h-2 w-2 shrink-0 rounded-full"
                   style={{ backgroundColor: accent }}
@@ -83,10 +216,14 @@ export function AdaOutputSections({
                 >
                   {emoji} {section.label}
                 </span>
+                {section.id === "hooks" && hookStrengthResult ? (
+                  <HookStrengthBadge result={hookStrengthResult} />
+                ) : null}
               </div>
               <button
                 type="button"
-                onClick={() => void onCopy(section.id, content)}
+                onClick={handleCopy}
+                aria-label={isCopied ? "Copied to clipboard" : `Copy ${section.label}`}
                 className={cn(
                   "flex shrink-0 items-center gap-1 rounded-[6px] border border-transparent px-2 py-1 text-[10px] opacity-0 transition-all group-hover:opacity-100",
                   kit
@@ -94,8 +231,14 @@ export function AdaOutputSections({
                     : "text-[var(--ada-text-disabled)] hover:border-[var(--ada-border)] hover:text-[var(--ada-text-secondary)]",
                 )}
               >
-                {copiedId === section.id ? "✓" : <Copy className="h-3 w-3" />}
-                {copiedId === section.id ? "Copied" : "Copy"}
+                {isCopied ? (
+                  <span aria-hidden>✓ Copied</span>
+                ) : (
+                  <>
+                    <Copy className="h-3 w-3" aria-hidden />
+                    <span>Copy</span>
+                  </>
+                )}
               </button>
             </div>
 
@@ -104,13 +247,13 @@ export function AdaOutputSections({
                 "text-sm leading-relaxed whitespace-pre-wrap pl-4",
                 kit ? "text-white/95" : "text-[var(--ada-text-primary)]",
                 loading
-                  ? "border-l-2 border-dashed py-0.5"
-                  : "rounded-r-lg border py-2 pr-2",
+                  ? kit
+                    ? "border-l-2 border-dashed border-white/30 py-0.5"
+                    : "border-l-2 border-dashed border-[var(--ada-accent)]/35 py-0.5"
+                  : kit
+                    ? "rounded-r-lg border border-white/15 bg-white/[0.06] py-2 pr-2"
+                    : "rounded-r-lg border border-[var(--ada-border)] bg-[var(--ada-accent-subtle)] py-2 pr-2",
               )}
-              style={{
-                borderColor: loading ? `${accent}40` : `${accent}28`,
-                backgroundColor: loading ? "transparent" : `${accent}08`,
-              }}
             >
               {content}
               {loading ? (

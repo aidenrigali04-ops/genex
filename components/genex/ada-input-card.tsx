@@ -1,8 +1,9 @@
 "use client";
 
-import { useRef, type KeyboardEvent } from "react";
-import { ArrowUp, Link2, Paperclip, Upload } from "lucide-react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { Loader2 } from "lucide-react";
 
+import type { ClipInputMode } from "@/lib/clip-package";
 import type { GenerationPresetId } from "@/lib/generation-presets";
 import { cn } from "@/lib/utils";
 
@@ -19,8 +20,13 @@ const PRESET_CHIPS: { id: GenerationPresetId; label: string }[] = [
   { id: "contrarian", label: "🔥 Contrarian" },
 ];
 
-const MAGENTA_BTN =
-  "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] shadow-[0_0_20px_rgba(203,45,206,0.24)]";
+const KIT_SELECTED_TAB =
+  "bg-[var(--ada-accent)] text-white shadow-md shadow-[var(--ada-accent)]/25";
+const KIT_SELECTED_MODEL =
+  "bg-[var(--ada-accent)] text-white shadow-md shadow-[var(--ada-accent)]/25";
+
+/** `null` = YouTube-first (URL field only; no secondary path). */
+export type AdaInputSecondaryTab = "upload" | "podcast" | "scratch" | null;
 
 export type AdaInputCardProps = {
   inputMode: "text" | "url" | "file";
@@ -43,7 +49,21 @@ export type AdaInputCardProps = {
   variant?: "default" | "adaKit";
   /** When true, primary submit is disabled (refinement Q&A is in progress below). */
   refinementActive?: boolean;
+  /** Drives clip-package section ordering in the output surface. */
+  onClipInputModeChange?: (mode: ClipInputMode) => void;
+  /** Parent or network error — always shown in a dismissible-style banner when set. */
+  errorMessage?: string | null;
+  /** Credits charged for the primary clip-package action (default 1). */
+  clipPackageCreditCost?: number;
 };
+
+function secondaryTabFromInputMode(
+  mode: "text" | "url" | "file",
+): AdaInputSecondaryTab {
+  if (mode === "text") return "scratch";
+  if (mode === "file") return "upload";
+  return null;
+}
 
 export function AdaInputCard({
   inputMode,
@@ -64,16 +84,82 @@ export function AdaInputCard({
   maxUploadMb,
   variant = "default",
   refinementActive = false,
+  onClipInputModeChange,
+  errorMessage = null,
+  clipPackageCreditCost = 1,
 }: AdaInputCardProps) {
   const fileRef = useRef<HTMLInputElement>(null);
   const kit = variant === "adaKit";
+  const [secondaryTab, setSecondaryTab] = useState<AdaInputSecondaryTab>(() =>
+    secondaryTabFromInputMode(inputMode),
+  );
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSecondaryTab(secondaryTabFromInputMode(inputMode));
+  }, [inputMode]);
+
+  useEffect(() => {
+    if (!onClipInputModeChange) return;
+    const clipMode: ClipInputMode =
+      secondaryTab === "scratch" ? "generate_first" : "clip_first";
+    onClipInputModeChange(clipMode);
+  }, [secondaryTab, onClipInputModeChange]);
+
+  useEffect(() => {
+    if (secondaryTab === "scratch") {
+      onInputModeChange("text");
+    } else if (secondaryTab === "upload" || secondaryTab === "podcast") {
+      onInputModeChange("file");
+    } else {
+      onInputModeChange("url");
+    }
+  }, [secondaryTab, onInputModeChange]);
+
+  const displayedError = errorMessage ?? localError;
+
+  const pickSecondaryTab = (tab: AdaInputSecondaryTab) => {
+    setLocalError(null);
+    setSecondaryTab(tab);
+    if (tab === "scratch") {
+      onUrlChange("");
+      onFileChange(null);
+    } else if (tab === null) {
+      onFileChange(null);
+      onTextChange("");
+    } else if (tab === "upload" || tab === "podcast") {
+      onUrlChange("");
+      onTextChange("");
+    }
+  };
+
+  const handleSubmit = () => {
+    setLocalError(null);
+    try {
+      onSubmit();
+    } catch (e) {
+      setLocalError(
+        e instanceof Error ? e.message : "Something went wrong. Try again.",
+      );
+    }
+  };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
-      if (canSubmit && !loading && !refinementActive) onSubmit();
+      if (canSubmit && !loading && !refinementActive) handleSubmit();
     }
   };
+
+  const creditLabel =
+    secondaryTab === "scratch"
+      ? `Generate clip package · ${clipPackageCreditCost} credit${clipPackageCreditCost === 1 ? "" : "s"}`
+      : `Find clips · ${clipPackageCreditCost} credit${clipPackageCreditCost === 1 ? "" : "s"}`;
+
+  const fileAccept =
+    secondaryTab === "podcast"
+      ? ".flac,.m4a,.mp3,.mp4,.mpeg,.mpga,.mov,.m4v,.oga,.ogg,.wav,.webm"
+      : ".flac,.m4a,.mp3,.mp4,.mpeg,.mpga,.mov,.m4v,.oga,.ogg,.wav,.webm,.txt,.md,.markdown,.csv,.srt,.vtt,.json";
 
   return (
     <div
@@ -86,38 +172,10 @@ export function AdaInputCard({
     >
       <div
         className={cn(
-          "flex items-center justify-between gap-2 px-3 py-2",
+          "flex items-center justify-end gap-2 px-3 py-2",
           kit ? "border-b border-white/12" : "border-b border-ada-border",
         )}
       >
-        <div className="flex items-center gap-1">
-          {(["text", "url", "file"] as const).map((mode) => {
-            const Icon = mode === "url" ? Link2 : mode === "file" ? Upload : null;
-            return (
-              <button
-                key={mode}
-                type="button"
-                onClick={() => onInputModeChange(mode)}
-                disabled={loading || refinementActive}
-                className={cn(
-                  "flex items-center gap-1.5 rounded-[6px] px-2.5 py-1.5 text-xs font-medium transition-colors",
-                  kit &&
-                    (inputMode === mode
-                      ? cn(MAGENTA_BTN, "text-white")
-                      : "text-white/55 hover:bg-white/10 hover:text-white"),
-                  !kit &&
-                    (inputMode === mode
-                      ? "bg-ada-accent-subtle text-ada-accent-hover"
-                      : "text-ada-disabled hover:text-ada-secondary"),
-                )}
-              >
-                {Icon ? <Icon className="h-3 w-3" aria-hidden /> : null}
-                {mode === "text" ? "Text / Idea" : mode === "url" ? "URL" : "File"}
-              </button>
-            );
-          })}
-        </div>
-
         <div
           className={cn(
             "flex items-center gap-1 rounded-[6px] p-0.5",
@@ -134,12 +192,12 @@ export function AdaInputCard({
                 "rounded-[4px] px-2.5 py-1 text-xs font-medium transition-colors",
                 kit &&
                   (selectedModel === m.id
-                    ? cn(MAGENTA_BTN, "text-white")
+                    ? cn(KIT_SELECTED_MODEL, "text-white")
                     : "text-white/50 hover:text-white/80"),
                 !kit &&
                   (selectedModel === m.id
-                    ? "bg-ada-accent text-white"
-                    : "text-ada-disabled hover:text-ada-secondary"),
+                    ? "bg-[var(--ada-accent)] text-white"
+                    : "text-[var(--ada-text-disabled)] hover:text-[var(--ada-text-secondary)]"),
               )}
             >
               {m.label}
@@ -148,87 +206,211 @@ export function AdaInputCard({
         </div>
       </div>
 
-      <div className="min-h-[100px] px-4 py-3">
-        {inputMode === "text" ? (
+      <div className="space-y-3 px-4 py-3">
+        <div>
+          <label
+            className={cn(
+              "mb-1.5 block text-[11px] font-medium",
+              kit ? "text-white/55" : "text-[var(--ada-text-secondary)]",
+            )}
+            htmlFor="ada-youtube-url"
+          >
+            YouTube
+          </label>
+          <input
+            id="ada-youtube-url"
+            type="url"
+            inputMode="url"
+            autoComplete="url"
+            aria-label="YouTube video URL"
+            placeholder="Paste a YouTube link — GenEx finds your best clips"
+            value={url}
+            onChange={(e) => {
+              setLocalError(null);
+              onUrlChange(e.target.value);
+            }}
+            disabled={
+              loading ||
+              refinementActive ||
+              secondaryTab === "scratch" ||
+              secondaryTab === "upload" ||
+              secondaryTab === "podcast"
+            }
+            className={cn(
+              "w-full rounded-xl border px-3 py-2.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--ada-accent)]/35",
+              kit
+                ? "border-white/18 bg-white/[0.04] text-white placeholder:text-white/45 disabled:opacity-45"
+                : "border-[var(--ada-border)] bg-[var(--ada-bg-input)] text-[var(--ada-text-primary)] placeholder:text-[var(--ada-text-disabled)] disabled:opacity-45",
+            )}
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <div
+            className={cn(
+              "flex flex-wrap gap-1",
+              kit ? "border-t border-white/10 pt-2" : "border-t border-ada-border pt-2",
+            )}
+            role="tablist"
+            aria-label="Other ways to start"
+          >
+            {(
+              [
+                { id: "upload" as const, label: "Pull clips from an upload" },
+                {
+                  id: "podcast" as const,
+                  label: "Turn audio or a podcast into clips",
+                },
+                { id: "scratch" as const, label: "Start from a written idea" },
+              ] satisfies { id: Exclude<AdaInputSecondaryTab, null>; label: string }[]
+            ).map(({ id, label }) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={secondaryTab === id}
+                disabled={loading || refinementActive}
+                onClick={() => pickSecondaryTab(id)}
+                className={cn(
+                  "rounded-lg px-2.5 py-1.5 text-left text-[11px] font-medium leading-snug transition-colors",
+                  kit &&
+                    (secondaryTab === id
+                      ? cn(KIT_SELECTED_TAB)
+                      : "text-white/60 hover:bg-white/10 hover:text-white"),
+                  !kit &&
+                    (secondaryTab === id
+                      ? "bg-ada-accent-subtle text-ada-accent-hover"
+                      : "text-ada-secondary hover:bg-ada-elevated hover:text-ada-primary"),
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {secondaryTab !== null ? (
+            <button
+              type="button"
+              disabled={loading || refinementActive}
+              onClick={() => pickSecondaryTab(null)}
+              className={cn(
+                "text-left text-[10px] font-medium underline-offset-2 hover:underline",
+                kit ? "text-white/45 hover:text-white/70" : "text-ada-disabled hover:text-ada-secondary",
+              )}
+            >
+              Use YouTube link only
+            </button>
+          ) : null}
+        </div>
+
+        {secondaryTab === "scratch" ? (
           <textarea
             className={cn(
-              "min-h-[96px] w-full resize-none bg-transparent text-sm leading-relaxed outline-none",
+              "min-h-[96px] w-full resize-none rounded-xl border px-3 py-2.5 text-sm leading-relaxed outline-none focus-visible:ring-2 focus-visible:ring-[var(--ada-accent)]/35",
               kit
-                ? "text-white placeholder:text-white/45"
-                : "text-ada-primary placeholder:text-ada-disabled",
+                ? "border-white/18 bg-white/[0.04] text-white placeholder:text-white/45"
+                : "border-[var(--ada-border)] bg-transparent text-[var(--ada-text-primary)] placeholder:text-[var(--ada-text-disabled)]",
             )}
             placeholder="Drop your transcript, article, idea, or notes… ⌘↵ to generate"
             value={text}
-            onChange={(e) => onTextChange(e.target.value)}
+            onChange={(e) => {
+              setLocalError(null);
+              onTextChange(e.target.value);
+            }}
             onKeyDown={handleKeyDown}
             disabled={loading || refinementActive}
           />
-        ) : inputMode === "url" ? (
-          <div className="flex items-start gap-2 pt-1">
-            <Link2
+        ) : null}
+
+        {secondaryTab === "upload" || secondaryTab === "podcast" ? (
+          <div className="space-y-2">
+            <p
               className={cn(
-                "mt-0.5 h-4 w-4 shrink-0",
-                kit ? "text-white/45" : "text-ada-disabled",
-              )}
-              aria-hidden
-            />
-            <input
-              type="url"
-              className={cn(
-                "flex-1 bg-transparent text-sm outline-none",
-                kit
-                  ? "text-white placeholder:text-white/45"
-                  : "text-ada-primary placeholder:text-ada-disabled",
-              )}
-              placeholder="https://youtube.com/watch?v=… or article URL"
-              value={url}
-              onChange={(e) => onUrlChange(e.target.value)}
-              disabled={loading || refinementActive}
-            />
-          </div>
-        ) : (
-          <div className="flex flex-wrap items-center gap-3 py-2">
-            <button
-              type="button"
-              onClick={() => fileRef.current?.click()}
-              disabled={loading || refinementActive}
-              className={cn(
-                "flex items-center gap-2 rounded-xl border border-dashed px-4 py-2.5 text-sm transition-colors",
-                kit
-                  ? "border-white/35 bg-white/5 text-white/90 hover:border-white/55 hover:bg-white/10"
-                  : "rounded-ada-input border-ada-border-active bg-ada-elevated text-ada-accent-hover hover:border-ada-accent",
+                "text-[11px] leading-relaxed",
+                kit ? "text-white/50" : "text-[var(--ada-text-secondary)]",
               )}
             >
-              <Paperclip className="h-4 w-4" aria-hidden />
-              {uploadFile ? uploadFile.name : `Upload file (max ${maxUploadMb}MB)`}
-            </button>
-            {uploadFile ? (
+              {secondaryTab === "podcast"
+                ? "Upload audio or video; we normalize to Whisper-friendly audio (see server transcode-for-whisper + source-from-upload)."
+                : "Upload video or a text transcript file. Video/audio is processed for transcription the same way as podcast uploads."}
+            </p>
+            <div className="flex flex-wrap items-center gap-3 py-1">
               <button
                 type="button"
-                onClick={() => onFileChange(null)}
+                onClick={() => {
+                  try {
+                    fileRef.current?.click();
+                  } catch (e) {
+                    setLocalError(
+                      e instanceof Error
+                        ? e.message
+                        : "Could not open file picker.",
+                    );
+                  }
+                }}
+                disabled={loading || refinementActive}
                 className={cn(
-                  "text-xs transition-colors",
-                  kit ? "text-white/50 hover:text-red-300" : "text-ada-disabled hover:text-ada-error",
+                  "flex items-center gap-2 rounded-xl border border-dashed px-4 py-2.5 text-sm transition-colors",
+                  kit
+                    ? "border-white/35 bg-white/5 text-white/90 hover:border-white/55 hover:bg-white/10"
+                    : "rounded-ada-input border-[var(--ada-border-active)] bg-[var(--ada-bg-elevated)] text-[var(--ada-accent-hover)] hover:border-[var(--ada-accent)]",
                 )}
               >
-                Remove
+                {uploadFile ? uploadFile.name : `Choose file (max ${maxUploadMb}MB)`}
               </button>
-            ) : null}
-            <input
-              ref={fileRef}
-              type="file"
-              className="sr-only"
-              accept=".flac,.m4a,.mp3,.mp4,.mpeg,.mpga,.mov,.m4v,.oga,.ogg,.wav,.webm,.txt,.md,.markdown,.csv,.srt,.vtt,.json"
-              disabled={loading || refinementActive}
-              onChange={(e) => onFileChange(e.target.files?.[0] ?? null)}
-            />
+              {uploadFile ? (
+                <button
+                  type="button"
+                  onClick={() => onFileChange(null)}
+                  className={cn(
+                    "text-xs transition-colors",
+                    kit
+                      ? "text-white/50 hover:text-red-300"
+                      : "text-[var(--ada-text-disabled)] hover:text-[var(--ada-error)]",
+                  )}
+                >
+                  Remove
+                </button>
+              ) : null}
+              <input
+                ref={fileRef}
+                type="file"
+                className="sr-only"
+                accept={fileAccept}
+                disabled={loading || refinementActive}
+                onChange={(e) => {
+                  try {
+                    onFileChange(e.target.files?.[0] ?? null);
+                  } catch (err) {
+                    setLocalError(
+                      err instanceof Error
+                        ? err.message
+                        : "Could not read that file.",
+                    );
+                  }
+                }}
+              />
+            </div>
           </div>
-        )}
+        ) : null}
       </div>
+
+      {displayedError ? (
+        <div
+          className={cn(
+            "mx-4 mb-2 rounded-lg border px-3 py-2 text-sm",
+            kit
+              ? "border-[var(--ada-error)]/40 bg-[var(--ada-error)]/15 text-red-50"
+              : "border-[var(--ada-error)]/30 bg-[var(--ada-error)]/10 text-[var(--ada-error)]",
+          )}
+          role="alert"
+        >
+          {displayedError}
+        </div>
+      ) : null}
 
       <div
         className={cn(
-          "flex items-center justify-between gap-2 px-3 py-2.5",
+          "flex flex-col gap-2 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between",
           kit ? "border-t border-white/12" : "border-t border-ada-border",
         )}
       >
@@ -243,12 +425,12 @@ export function AdaInputCard({
                 "rounded-full px-3 py-1 text-xs font-medium transition-all",
                 kit &&
                   (preset === id
-                    ? cn(MAGENTA_BTN, "text-white")
+                    ? cn(KIT_SELECTED_TAB)
                     : "border border-white/28 bg-transparent text-white/75 hover:border-white/45 hover:bg-white/10 hover:text-white"),
                 !kit &&
                   (preset === id
-                    ? "bg-ada-accent text-white"
-                    : "rounded-ada-pill border border-ada-border bg-transparent text-ada-secondary hover:border-ada-border-active hover:text-ada-primary"),
+                    ? "bg-[var(--ada-accent)] text-white"
+                    : "rounded-ada-pill border border-[var(--ada-border)] bg-transparent text-[var(--ada-text-secondary)] hover:border-[var(--ada-border-active)] hover:text-[var(--ada-text-primary)]"),
               )}
             >
               {label}
@@ -259,44 +441,19 @@ export function AdaInputCard({
         <button
           type="button"
           disabled={loading || !canSubmit || refinementActive}
-          onClick={onSubmit}
+          onClick={handleSubmit}
+          aria-label="Generate clip package"
           className={cn(
-            "flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-all",
+            "inline-flex min-h-10 w-full shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-white transition-opacity sm:w-auto sm:min-w-[200px]",
             canSubmit && !loading && !refinementActive
-              ? kit
-                ? cn(MAGENTA_BTN, "text-white hover:scale-105")
-                : "bg-linear-to-br from-[#7B5CFA] to-[#9B6FFF] text-white shadow-lg shadow-[#7B5CFA33] hover:scale-105 hover:shadow-[#7B5CFA55]"
-              : kit
-                ? "cursor-not-allowed bg-white/10 text-white/35"
-                : "cursor-not-allowed bg-ada-border text-ada-disabled",
+              ? "bg-[var(--ada-accent)] hover:bg-[var(--ada-accent-hover)] hover:opacity-95 active:scale-[0.99]"
+              : "cursor-not-allowed bg-[var(--ada-border)] opacity-55",
           )}
-          aria-label={
-            loading
-              ? "Generating"
-              : refinementActive
-                ? "Answer questions below"
-                : "Continue to refinement"
-          }
         >
           {loading ? (
-            <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden>
-              <circle
-                className="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                strokeWidth="2"
-              />
-              <path
-                className="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-              />
-            </svg>
-          ) : (
-            <ArrowUp className="h-4 w-4" aria-hidden />
-          )}
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+          ) : null}
+          <span>{creditLabel}</span>
         </button>
       </div>
     </div>

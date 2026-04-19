@@ -11,6 +11,8 @@ export type ClipSection = {
   patterns: RegExp[];
 };
 
+export type ClipInputMode = "clip_first" | "generate_first";
+
 export const CLIP_SECTIONS: readonly ClipSection[] = [
   {
     id: "moments",
@@ -53,6 +55,72 @@ export const CLIP_SECTIONS: readonly ClipSection[] = [
     patterns: [/^\s*(?:7\.\s*)?CREATOR SIGNALS\b/im],
   },
 ] as const;
+
+export function getOrderedSections(
+  mode: ClipInputMode,
+): readonly ClipSection[] {
+  if (mode === "clip_first") {
+    const order: ClipSection["id"][] = [
+      "moments",
+      "hooks",
+      "script",
+      "cta",
+      "caption_hashtags",
+      "broll",
+      "creator_signals",
+    ];
+    return order
+      .map((id) => CLIP_SECTIONS.find((s) => s.id === id))
+      .filter((s): s is ClipSection => Boolean(s));
+  }
+  const order: ClipSection["id"][] = [
+    "hooks",
+    "script",
+    "cta",
+    "caption_hashtags",
+    "broll",
+    "creator_signals",
+    "moments",
+  ];
+  return order
+    .map((id) => CLIP_SECTIONS.find((s) => s.id === id))
+    .filter((s): s is ClipSection => Boolean(s));
+}
+
+export type HookStrength = "high" | "strong" | "solid";
+
+export interface HookStrengthResult {
+  strength: HookStrength;
+  /** One short phrase e.g. "Pattern interrupt + curiosity gap" */
+  reason: string;
+}
+
+/**
+ * Parse HOOK_STRENGTH from creator_signals block if present.
+ * Example: `HOOK_STRENGTH: high | Reason: Pattern interrupt + curiosity gap`
+ */
+export function parseHookStrength(
+  creatorSignalsBlock: string,
+): HookStrengthResult | null {
+  if (!creatorSignalsBlock?.trim()) return null;
+
+  const strengthLine = creatorSignalsBlock
+    .split(/\r?\n/)
+    .find((l) => /HOOK_STRENGTH:/i.test(l));
+  if (!strengthLine) return null;
+
+  const match = strengthLine.match(
+    /HOOK_STRENGTH:\s*(high|strong|solid)\b(?:\s*[|]\s*(?:Reason:\s*)?(.+))?/i,
+  );
+  if (!match?.[1]) return null;
+
+  const raw = match[1].toLowerCase();
+  if (raw !== "high" && raw !== "strong" && raw !== "solid") return null;
+
+  const strength = raw as HookStrength;
+  const reason = (match[2] ?? "").trim();
+  return { strength, reason };
+}
 
 export type ClipSectionMap = Record<ClipSection["id"], string>;
 

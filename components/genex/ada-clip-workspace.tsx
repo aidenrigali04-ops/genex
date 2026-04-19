@@ -42,7 +42,7 @@ export type AdaClipWorkspaceProps = {
   progress: number;
   streamedText: string;
   copiedId: string | null;
-  onCopy: (id: string, body: string) => void;
+  onCopy: (id: string, body: string) => void | Promise<void>;
   onRegenerate: () => void;
   variant?: "default" | "adaKit";
   onTextVideoCreditsRemainingChange?: (remaining: number) => void;

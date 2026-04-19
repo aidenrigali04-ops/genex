@@ -39,6 +39,7 @@ function runningHeadline(status: JobStatus): string {
     case "planning":
       return "Planning your scenes…";
     case "fetching":
+      return "Gathering stock footage…";
     case "assembling":
       return "Building your video…";
     case "uploading":
@@ -46,6 +47,12 @@ function runningHeadline(status: JobStatus): string {
     default:
       return "Working…";
   }
+}
+
+function formatElapsed(s: number) {
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
 }
 
 type Props = {
@@ -79,6 +86,8 @@ export function TextToVideoLauncher({
   const [fetchHint, setFetchHint] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const elapsedRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const voScript = [hooks.trim(), script.trim()].filter(Boolean).join("\n\n");
 
@@ -98,7 +107,7 @@ export function TextToVideoLauncher({
       if (patch.duration !== undefined) {
         const n = Number(patch.duration);
         duration = Number.isFinite(n)
-          ? Math.min(8, Math.max(3, Math.round(n)))
+          ? Math.min(8, Math.max(2, Math.round(n)))
           : cur.duration;
       }
       next[index] = {
@@ -144,7 +153,7 @@ export function TextToVideoLauncher({
       }
 
       const shots = data.shots;
-      if (!Array.isArray(shots) || shots.length < 3) {
+      if (!Array.isArray(shots) || shots.length < 6) {
         setStatus("failed");
         setErrorMsg("Could not plan shots. Try again.");
         return;
@@ -155,7 +164,7 @@ export function TextToVideoLauncher({
           keyword: String(s.keyword ?? ""),
           duration: Math.min(
             8,
-            Math.max(3, Math.round(Number(s.duration) || 5)),
+            Math.max(2, Math.round(Number(s.duration) || 5)),
           ),
           caption: String(s.caption ?? ""),
         })),
@@ -233,9 +242,9 @@ export function TextToVideoLauncher({
       const next = (job.status ?? "queued") as JobStatus;
       setStatus(next);
 
-      if (next === "fetching") {
-        setFetchHint(job.error_message?.trim() || null);
-      } else {
+      if (next === "fetching" && job.error_message) {
+        setFetchHint(job.error_message);
+      } else if (next !== "fetching") {
         setFetchHint(null);
       }
 
@@ -288,6 +297,18 @@ export function TextToVideoLauncher({
     status !== "previewing" &&
     status !== "complete" &&
     status !== "failed";
+
+  useEffect(() => {
+    if (isRunning) {
+      setElapsed(0);
+      elapsedRef.current = setInterval(() => setElapsed((s) => s + 1), 1000);
+    } else if (elapsedRef.current) {
+      clearInterval(elapsedRef.current);
+    }
+    return () => {
+      if (elapsedRef.current) clearInterval(elapsedRef.current);
+    };
+  }, [isRunning]);
 
   const runningProgress =
     status === "queued"
@@ -348,7 +369,9 @@ export function TextToVideoLauncher({
                 kit ? "text-white/45" : "text-ada-disabled",
               )}
             >
-              {kit ? "5 credits · ~2 min" : "Stock footage, voice, captions · 5 credits"}
+              {kit
+                ? "5 credits · ~1–2 min"
+                : "Stock footage, voice, captions · 5 credits · ~1–2 min"}
             </p>
           </div>
         </div>
@@ -494,7 +517,7 @@ export function TextToVideoLauncher({
                           />
                           <input
                             type="number"
-                            min={3}
+                            min={2}
                             max={8}
                             value={shot.duration}
                             onChange={(e) =>
@@ -519,7 +542,7 @@ export function TextToVideoLauncher({
                   type="button"
                   onClick={() => void confirmAndGenerate()}
                   disabled={
-                    totalPreviewDuration < 30 || totalPreviewDuration > 90
+                    totalPreviewDuration < 28 || totalPreviewDuration > 60
                   }
                   className={cn(
                     "w-full rounded-lg py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-92 disabled:pointer-events-none disabled:opacity-35",
@@ -530,14 +553,14 @@ export function TextToVideoLauncher({
                 >
                   Generate · 5 credits
                 </button>
-                {totalPreviewDuration < 30 || totalPreviewDuration > 90 ? (
+                {totalPreviewDuration < 28 || totalPreviewDuration > 60 ? (
                   <p
                     className={cn(
                       "text-center text-[11px]",
                       kit ? "text-amber-200/85" : "text-ada-error",
                     )}
                   >
-                    Length needs to be 30–90s total (now {totalPreviewDuration}s).
+                    Length needs to be 28–60s total (now {totalPreviewDuration}s).
                   </p>
                 ) : null}
                 <button
@@ -563,7 +586,7 @@ export function TextToVideoLauncher({
         ) : null}
 
         {isRunning ? (
-          <div className="space-y-2">
+          <div className="space-y-3">
             <div className="flex items-center justify-between gap-2">
               <p
                 className={cn(
@@ -573,7 +596,16 @@ export function TextToVideoLauncher({
               >
                 {runningHeadline(status)}
               </p>
+              <span
+                className={cn(
+                  "shrink-0 text-xs tabular-nums",
+                  kit ? "text-white/40" : "text-ada-disabled",
+                )}
+              >
+                {formatElapsed(elapsed)}
+              </span>
             </div>
+
             <div
               className={cn(
                 "h-1.5 overflow-hidden rounded-full",
@@ -588,48 +620,88 @@ export function TextToVideoLauncher({
                 style={{ width: `${runningProgress}%` }}
               />
             </div>
+
             {status === "fetching" && fetchHint ? (
               <p
                 className={cn(
-                  "text-[10px] animate-pulse",
-                  kit ? "text-white/40" : "text-ada-disabled",
+                  "text-[11px]",
+                  kit ? "text-white/45" : "text-ada-disabled",
                 )}
               >
                 {fetchHint}
+              </p>
+            ) : null}
+
+            {status === "fetching" && !fetchHint ? (
+              <p
+                className={cn(
+                  "text-[11px]",
+                  kit ? "text-white/35" : "text-ada-disabled",
+                )}
+              >
+                Searching Pexels for matching footage…
+              </p>
+            ) : null}
+
+            {elapsed > 90 ? (
+              <p
+                className={cn(
+                  "text-[11px]",
+                  kit ? "text-amber-200/70" : "text-ada-disabled",
+                )}
+              >
+                Taking longer than usual — still going…
               </p>
             ) : null}
           </div>
         ) : null}
 
         {status === "complete" && outputUrl ? (
-          <div className="space-y-2.5">
-            <p
-              className={cn(
-                "text-center text-sm font-medium",
-                kit ? "text-white" : "text-ada-primary",
-              )}
-            >
-              Here you go
-            </p>
-            <div className="mx-auto w-[min(100%,180px)]">
+          <div className="space-y-3">
+            <div className="mx-auto w-[min(100%,220px)]">
               <LazyVideoPlayer
                 src={outputUrl}
-                className="aspect-9/16 w-full overflow-hidden rounded-lg"
+                className="aspect-9/16 w-full overflow-hidden rounded-xl shadow-lg"
+                autoPlay
+                loop
+                muted={false}
               />
             </div>
-            <div className="flex gap-2">
+
+            <p
+              className={cn(
+                "text-center text-[10px]",
+                kit ? "text-white/35" : "text-ada-disabled",
+              )}
+            >
+              9:16 · 1080×1920 · Ready for TikTok, Reels & Shorts
+            </p>
+
+            <div className="grid grid-cols-3 gap-1.5">
               <a
                 href={outputUrl}
-                download
+                download="genex-video.mp4"
                 className={cn(
-                  "flex-1 rounded-lg border py-2 text-center text-xs font-medium transition-colors",
+                  "flex flex-col items-center gap-1 rounded-lg border py-2.5 text-[11px] font-medium transition-colors",
                   kit
-                    ? "border-white/25 text-white/90 hover:bg-white/10"
-                    : "border-ada-border text-ada-secondary hover:border-ada-border-active hover:text-ada-primary",
+                    ? "border-white/25 text-white/85 hover:bg-white/10"
+                    : "border-ada-border text-ada-secondary hover:border-ada-border-active",
                 )}
               >
-                Download
+                <span>⬇</span> Download
               </a>
+              <button
+                type="button"
+                onClick={() => void navigator.clipboard.writeText(outputUrl)}
+                className={cn(
+                  "flex flex-col items-center gap-1 rounded-lg border py-2.5 text-[11px] font-medium transition-colors",
+                  kit
+                    ? "border-white/25 text-white/85 hover:bg-white/10"
+                    : "border-ada-border text-ada-secondary hover:border-ada-border-active",
+                )}
+              >
+                <span>🔗</span> Copy link
+              </button>
               <button
                 type="button"
                 onClick={() => {
@@ -640,13 +712,13 @@ export function TextToVideoLauncher({
                   setFetchHint(null);
                 }}
                 className={cn(
-                  "flex-1 rounded-lg border py-2 text-xs font-medium transition-colors",
+                  "flex flex-col items-center gap-1 rounded-lg border py-2.5 text-[11px] font-medium transition-colors",
                   kit
-                    ? "border-white/25 text-white/90 hover:bg-white/10"
-                    : "border-ada-border text-ada-secondary hover:border-ada-border-active hover:text-ada-primary",
+                    ? "border-white/25 text-white/85 hover:bg-white/10"
+                    : "border-ada-border text-ada-secondary hover:border-ada-border-active",
                 )}
               >
-                New video
+                <span>↺</span> Redo
               </button>
             </div>
           </div>

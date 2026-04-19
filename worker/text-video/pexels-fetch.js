@@ -9,7 +9,7 @@ function pexelsKey() {
 
 /**
  * Search Pexels for a vertical (portrait) video matching keyword.
- * Returns { url, duration, width, height } of the best match.
+ * Returns { url, duration, width, height, isNativePortrait } of the best match.
  */
 function pexelsHeaders() {
   return {
@@ -27,8 +27,7 @@ export async function fetchPexelsClip(keyword, targetDuration) {
   }
   const encoded = encodeURIComponent(keyword);
   const td = Math.max(3, Math.round(targetDuration || 5));
-  // Video /search only supports query, orientation, size, locale, page, per_page — not min/max_duration.
-  const url = `https://api.pexels.com/videos/search?query=${encoded}&orientation=portrait&size=medium&per_page=15`;
+  const url = `https://api.pexels.com/videos/search?query=${encoded}&orientation=portrait&size=medium&per_page=25`;
 
   const res = await fetch(url, { headers: pexelsHeaders() });
 
@@ -42,7 +41,7 @@ export async function fetchPexelsClip(keyword, targetDuration) {
 
   if (!videos.length) {
     const fallback = await fetch(
-      `https://api.pexels.com/videos/search?query=${encoded}&orientation=portrait&per_page=8`,
+      `https://api.pexels.com/videos/search?query=${encoded}&orientation=portrait&per_page=25`,
       { headers: pexelsHeaders() },
     );
     if (!fallback.ok) {
@@ -57,19 +56,42 @@ export async function fetchPexelsClip(keyword, targetDuration) {
     videos = fbVideos;
   }
 
-  // Prefer clips whose native duration is closest to our target (we trim in ffmpeg).
-  videos = [...videos].sort((a, b) => {
-    const da = Math.abs((Number(a.duration) || 0) - td);
-    const db = Math.abs((Number(b.duration) || 0) - td);
-    return da - db;
-  });
+  function scoreVideo(video, targetDur) {
+    const dur = Number(video.duration) || 0;
+
+    const durationScore =
+      dur >= targetDur ? 10 : dur >= targetDur * 0.7 ? 5 : -20;
+
+    const files = video.video_files ?? [];
+    const hasHD = files.some((f) => f.height >= 1080 && f.height > f.width);
+    const has4K = files.some((f) => f.height >= 2160);
+    const resScore = has4K ? 8 : hasHD ? 5 : 0;
+
+    const popScore = Math.min(
+      5,
+      Math.floor((video.video_pictures?.length ?? 0) / 2),
+    );
+
+    return durationScore + resScore + popScore;
+  }
+
+  videos = [...videos].sort(
+    (a, b) => scoreVideo(b, td) - scoreVideo(a, td),
+  );
 
   const video = videos[0];
   const files = video.video_files ?? [];
 
   const sorted = [...files].sort((a, b) => {
-    const scoreA = (a.height >= 1080 ? 2 : 0) + (a.height > a.width ? 1 : 0);
-    const scoreB = (b.height >= 1080 ? 2 : 0) + (b.height > b.width ? 1 : 0);
+    const isPortraitA = a.height > a.width;
+    const isPortraitB = b.height > b.width;
+    const hdA = a.height >= 1080 ? 1 : 0;
+    const hdB = b.height >= 1080 ? 1 : 0;
+
+    const scoreA =
+      (isPortraitA ? 4 : 0) + hdA * 2 + (a.height >= 1920 ? 1 : 0);
+    const scoreB =
+      (isPortraitB ? 4 : 0) + hdB * 2 + (b.height >= 1920 ? 1 : 0);
     return scoreB - scoreA;
   });
 
@@ -83,6 +105,7 @@ export async function fetchPexelsClip(keyword, targetDuration) {
     duration: video.duration,
     width: file.width,
     height: file.height,
+    isNativePortrait: file.height > file.width,
   };
 }
 

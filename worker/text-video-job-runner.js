@@ -20,7 +20,7 @@ const BUCKET = "text-video-outputs";
 
 /** @param {unknown} raw */
 function normalizeShotsFromDb(raw) {
-  if (!raw || !Array.isArray(raw) || raw.length < 3) return null;
+  if (!raw || !Array.isArray(raw) || raw.length < 6) return null;
   return raw.map((sh) => ({
     keyword: String(
       sh.keyword ?? "person talking smartphone vertical energetic",
@@ -84,62 +84,57 @@ export async function processTextVideoJob(supabase, job) {
   const voPath = path.join(tmpDir, "voiceover.mp3");
   const assPath = path.join(tmpDir, "captions.ass");
   const finalPath = path.join(tmpDir, "final.mp4");
+  /** @type {string[]} */
   const downloadedClips = [];
 
   try {
+    // ── STEP 1: Plan shots ──────────────────────────────────────
+    const fromDb = normalizeShotsFromDb(job.shot_plan);
     let shots =
-      normalizeShotsFromDb(job.shot_plan) ??
+      fromDb ??
       (await planShots(job.script, {
         hookStyle: job.hook_style ?? undefined,
       }));
-
-    const planInitial = shots.map((s) => ({
-      keyword: s.keyword,
-      duration: s.duration,
-      caption: s.caption,
-    }));
     await supabase
       .from("text_video_jobs")
-      .update({ shot_plan: planInitial })
+      .update({
+        shot_plan: shots.map((s) => ({
+          keyword: s.keyword,
+          duration: s.duration,
+          caption: s.caption,
+        })),
+      })
       .eq("id", job.id);
-
-    // 1. Voiceover first (timing source of truth)
-    const fullScript = shots.map((s) => s.caption).join(" ");
-    await generateVoiceover(fullScript, job.voice_id, voPath);
-
-    // 2. Actual VO duration
-    const voDuration = await getAudioDuration(voPath);
-
-    // 3. Rescale shot lengths to match VO (captions + b-roll align)
-    const totalPlanned = shots.reduce(
-      (s, sh) => s + (Number(sh.duration) || 0),
-      0,
-    );
-    if (totalPlanned <= 0) {
-      throw new Error("Shot plan has zero total duration");
-    }
-    const scaleFactor = voDuration / totalPlanned;
-    shots = shots.map((sh) => ({
-      ...sh,
-      duration: Math.max(2, (Number(sh.duration) || 0) * scaleFactor),
-    }));
-
-    const planScaled = shots.map((s) => ({
-      keyword: s.keyword,
-      duration: s.duration,
-      caption: s.caption,
-    }));
-    await supabase
-      .from("text_video_jobs")
-      .update({ shot_plan: planScaled })
-      .eq("id", job.id);
-
-    // 4. Captions from rescaled timings
-    buildAssFromShotPlan(shots, assPath);
 
     await setStatus(supabase, job.id, { status: "fetching" });
 
-    const clipResults = await Promise.all(
+    // ── STEP 2: Generate voiceover FIRST (so we can sync to real duration) ──
+    const fullScript = shots.map((s) => s.caption).filter(Boolean).join(" ");
+    await generateVoiceover(fullScript, job.voice_id, voPath);
+    const voDuration = await getAudioDuration(voPath);
+
+    // ── STEP 3: Rescale shot durations to match actual VO length ──
+    const totalPlanned = shots.reduce(
+      (s, sh) => s + (Number(sh.duration) || 5),
+      0,
+    );
+    if (Math.abs(totalPlanned - voDuration) > 3) {
+      const scaleFactor = voDuration / totalPlanned;
+      shots = shots.map((sh) => ({
+        ...sh,
+        duration: Math.min(
+          8,
+          Math.max(2, Math.round((Number(sh.duration) || 5) * scaleFactor * 10) / 10),
+        ),
+      }));
+    }
+
+    // ── STEP 4: Build captions AFTER rescaling (timing matches VO now) ──
+    buildAssFromShotPlan(shots, assPath);
+
+    // ── STEP 5: PARALLEL download all Pexels clips ──────────────
+    const clipPaths = new Array(shots.length);
+    await Promise.all(
       shots.map(async (shot, i) => {
         const clipPath = path.join(tmpDir, `clip_${i}.mp4`);
         let pexelsResult;
@@ -147,30 +142,41 @@ export async function processTextVideoJob(supabase, job) {
           pexelsResult = await fetchPexelsClip(shot.keyword, shot.duration);
         } catch {
           pexelsResult = await fetchPexelsClip(
-            "person talking camera vertical office",
+            "person walking urban street",
             shot.duration,
           );
         }
         await downloadToFile(pexelsResult.url, clipPath);
-        await setStatus(supabase, job.id, {
-          status: "fetching",
-          error_message: `Fetching footage ${i + 1} of ${shots.length}…`,
-        });
-        return { i, clipPath, shot: { ...shot, localPath: clipPath } };
+        clipPaths[i] = clipPath;
+        shots[i] = { ...shot, localPath: clipPath, pexelsResult };
+
+        await supabase
+          .from("text_video_jobs")
+          .update({
+            error_message: `Getting footage ${i + 1} of ${shots.length}…`,
+          })
+          .eq("id", job.id);
       }),
     );
-    for (const { i, clipPath, shot } of clipResults) {
-      shots[i] = shot;
-      downloadedClips.push(clipPath);
+
+    for (const p of clipPaths) {
+      if (p) downloadedClips.push(p);
     }
 
+    await supabase
+      .from("text_video_jobs")
+      .update({ error_message: null })
+      .eq("id", job.id);
+
     await setStatus(supabase, job.id, { status: "assembling" });
+
+    // ── STEP 6: Assemble (pass voDuration for exact -t trim) ─────
     await assembleVideo({
       shots,
       voiceoverPath: voPath,
       assPath,
       outputPath: finalPath,
-      outputDuration: voDuration,
+      voDuration,
     });
 
     await setStatus(supabase, job.id, { status: "uploading" });

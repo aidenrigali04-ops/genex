@@ -15,8 +15,8 @@ const generationIdSchema = z.union([
 
 const shotPlanEntrySchema = z.object({
   keyword: z.string().min(1).max(200),
-  duration: z.coerce.number().int().min(3).max(8),
-  caption: z.string().min(1).max(500),
+  duration: z.coerce.number().int().min(2).max(8),
+  caption: z.string().max(500),
 });
 
 const bodySchema = z
@@ -25,15 +25,15 @@ const bodySchema = z
     generationId: generationIdSchema.optional(),
     voiceId: z.string().min(1).max(128).optional(),
     hookStyle: z.string().min(1).max(64).optional(),
-    shotPlan: z.array(shotPlanEntrySchema).min(3).max(24).optional(),
+    shotPlan: z.array(shotPlanEntrySchema).min(6).max(24).optional(),
   })
   .superRefine((data, ctx) => {
     if (!data.shotPlan?.length) return;
     const sum = data.shotPlan.reduce((s, sh) => s + sh.duration, 0);
-    if (sum < 30 || sum > 90) {
+    if (sum < 28 || sum > 60) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Shot plan total duration must be between 30 and 90 seconds.",
+        message: "Shot plan total duration must be between 28 and 60 seconds.",
         path: ["shotPlan"],
       });
     }

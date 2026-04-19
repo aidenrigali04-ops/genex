@@ -29,7 +29,7 @@ export type AdaOutputPanelProps = {
   clipFormatTags: string[];
   verticalPreviewText: string;
   copiedId: string | null;
-  onCopy: (id: string, body: string) => void;
+  onCopy: (id: string, body: string) => void | Promise<void>;
   onRegenerate: () => void;
   canRegenerate: boolean;
   generationId?: string;

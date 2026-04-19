@@ -48,7 +48,7 @@ export type AdaTurnProps = {
   turn: ClipTurn;
   isLast: boolean;
   copiedId: string | null;
-  onCopy: (id: string, body: string) => void;
+  onCopy: (id: string, body: string) => void | Promise<void>;
   onRegenerate: () => void;
   onTextVideoCreditsRemainingChange?: (remaining: number) => void;
   variant?: "default" | "adaKit";

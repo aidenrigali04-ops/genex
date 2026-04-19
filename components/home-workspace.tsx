@@ -553,13 +553,14 @@ export function HomeWorkspace({
     abortRef.current?.abort();
   }, []);
 
-  const copyText = async (id: string, body: string) => {
+  const copyText = async (id: string, body: string): Promise<void> => {
     try {
       await navigator.clipboard.writeText(body);
       setCopiedId(id);
       setTimeout(() => setCopiedId(null), 2000);
     } catch {
       setError("Could not copy.");
+      throw new Error("clipboard_write_failed");
     }
   };
 
