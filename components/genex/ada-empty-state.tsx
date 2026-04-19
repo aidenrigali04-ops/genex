@@ -4,31 +4,37 @@ import type { JSX } from "react";
 import { useEffect, useState } from "react";
 import { Zap } from "lucide-react";
 
+import { AdaOutputScroll } from "@/components/genex/ada-output-scroll";
 import { cn } from "@/lib/utils";
 
-const EXAMPLES: {
+const PROMPT_CARDS: {
   icon: string;
   label: string;
+  sublabel: string;
   prompt: string;
   mode: "text" | "url";
 }[] = [
   {
-    icon: "🎬",
-    label: "YouTube video → 3 viral clips",
-    prompt: "https://youtube.com/watch?v=dQw4w9WgXcQ",
-    mode: "url",
-  },
-  {
-    icon: "🎙",
-    label: "Podcast episode → post-ready shorts",
-    prompt: "https://youtube.com/watch?v=jNQXAC9IVRw",
-    mode: "url",
-  },
-  {
-    icon: "💡",
-    label: "Raw idea → full script + captions",
+    icon: "⚡",
+    label: "Viral hook formula",
+    sublabel: "Idea → hooks + script",
     prompt:
-      "Most people waste their first hour every morning. Here is how I fixed mine in 7 days.",
+      "Most people waste their first hour every morning. Here is how I fixed mine in 7 days and gained 40K followers from one video.",
+    mode: "text",
+  },
+  {
+    icon: "🎬",
+    label: "YouTube → 3 clips",
+    sublabel: "Paste a link, get clip packages",
+    prompt: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    mode: "url",
+  },
+  {
+    icon: "🔥",
+    label: "Contrarian take",
+    sublabel: "Opinion → viral angle",
+    prompt:
+      "Posting every day is the worst advice on social media. Here is what actually grows your account faster.",
     mode: "text",
   },
 ];
@@ -42,12 +48,16 @@ export type AdaEmptyStateProps = {
   /** Switch to idea-first flow without picking an example card. */
   onPreferIdeaFirst?: () => void;
   variant?: "default" | "adaKit";
+  isAuthenticated?: boolean;
+  hasGenerated?: boolean;
 };
 
 export function AdaEmptyState({
   onExampleClick,
   onPreferIdeaFirst,
   variant = "default",
+  isAuthenticated = false,
+  hasGenerated = false,
 }: AdaEmptyStateProps): JSX.Element {
   const kit = variant === "adaKit";
   const [generationTotal, setGenerationTotal] = useState<number | null>(null);
@@ -73,12 +83,12 @@ export function AdaEmptyState({
     };
   }, []);
 
-  const roundedTotal =
-    generationTotal != null ? smoothSocialProofCount(generationTotal) : 0;
-  const showSocial =
-    generationTotal != null &&
-    generationTotal > 10 &&
-    roundedTotal > 0;
+  const displayCount =
+    generationTotal != null && generationTotal > 10
+      ? smoothSocialProofCount(generationTotal)
+      : 1000;
+
+  const showProgress = isAuthenticated === true && hasGenerated === false;
 
   return (
     <div
@@ -98,6 +108,46 @@ export function AdaEmptyState({
         <Zap className="h-7 w-7 text-white" aria-hidden />
       </div>
 
+      {showProgress ? (
+        <div className="w-full max-w-sm space-y-1.5">
+          <div className="flex items-center justify-between text-xs">
+            <span className={kit ? "text-white/50" : "text-ada-secondary"}>
+              Getting started
+            </span>
+            <span
+              className={
+                kit ? "font-medium text-white/70" : "font-medium text-ada-primary"
+              }
+            >
+              Step 1 of 3
+            </span>
+          </div>
+          <div
+            className={cn(
+              "h-1.5 w-full overflow-hidden rounded-full",
+              kit ? "bg-white/10" : "bg-ada-border",
+            )}
+          >
+            <div
+              className="h-full rounded-full bg-[var(--ada-accent)] transition-all duration-700 ease-out"
+              style={{ width: "33%" }}
+            />
+          </div>
+          <p
+            className={cn(
+              "text-[10px]",
+              kit ? "text-white/40" : "text-ada-disabled",
+            )}
+          >
+            ✓ Account created · Generate your first clip package · Remix it
+          </p>
+        </div>
+      ) : null}
+
+      <div className="-mx-4 w-[calc(100%+2rem)] max-w-none sm:mx-0 sm:w-full">
+        <AdaOutputScroll variant={variant} />
+      </div>
+
       <div className="space-y-2">
         <h2
           className={cn(
@@ -105,7 +155,7 @@ export function AdaEmptyState({
             kit ? "text-white" : "text-[var(--ada-text-primary)]",
           )}
         >
-          Your best clips are already in that video.
+          Got an idea? You&apos;re one paste away from going viral.
         </h2>
         <p
           className={cn(
@@ -113,51 +163,38 @@ export function AdaEmptyState({
             kit ? "text-white/60" : "text-[var(--ada-text-secondary)]",
           )}
         >
-          Paste a YouTube link — GenEx finds them and makes them post-ready.
+          Drop a YouTube link, a transcript, or a raw idea — GenEx writes your
+          hooks, script, B-roll, and captions in seconds.
         </p>
-        {showSocial ? (
-          <p
-            className={cn(
-              "mx-auto max-w-md text-xs",
-              kit ? "text-white/40" : "text-[var(--ada-text-disabled)]",
-            )}
-          >
-            {roundedTotal}+ clip packages created
-          </p>
-        ) : null}
-      </div>
-
-      {onPreferIdeaFirst ? (
-        <button
-          type="button"
-          onClick={() => onPreferIdeaFirst()}
+        <p
           className={cn(
-            "text-sm underline-offset-4 transition-colors hover:underline",
-            kit ? "text-white/50 hover:text-white/75" : "text-[var(--ada-text-secondary)] hover:text-[var(--ada-text-primary)]",
+            "mx-auto max-w-md text-xs",
+            kit ? "text-white/40" : "text-[var(--ada-text-disabled)]",
           )}
         >
-          Or start from a raw idea →
-        </button>
-      ) : null}
+          {displayCount.toLocaleString()}+ clip packages created by creators like
+          you
+        </p>
+      </div>
 
       <div className="grid w-full max-w-2xl grid-cols-1 gap-2 sm:grid-cols-3">
-        {EXAMPLES.map((ex) => (
+        {PROMPT_CARDS.map((ex) => (
           <button
             key={ex.label}
             type="button"
             onClick={() => onExampleClick(ex.prompt, ex.mode)}
             className={cn(
-              "group flex items-start gap-3 rounded-[12px] border p-4 text-left transition-all active:scale-[0.98]",
+              "group/card flex items-start gap-3 rounded-[12px] border p-4 text-left transition-all duration-150 hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98]",
               kit
                 ? "border-white/14 bg-white/[0.06] hover:border-white/28 hover:bg-white/[0.1]"
                 : "border-[var(--ada-border)] bg-[var(--ada-bg-card)] hover:border-[var(--ada-border-active)] hover:bg-[var(--ada-bg-card-hover)]",
             )}
           >
-            <span className="text-lg">{ex.icon}</span>
+            <span className="text-2xl">{ex.icon}</span>
             <div className="min-w-0">
               <p
                 className={cn(
-                  "text-sm font-medium",
+                  "text-sm font-semibold",
                   kit ? "text-white" : "text-[var(--ada-text-primary)]",
                 )}
               >
@@ -165,18 +202,32 @@ export function AdaEmptyState({
               </p>
               <p
                 className={cn(
-                  "mt-0.5 line-clamp-2 text-xs",
-                  kit
-                    ? "text-white/45 group-hover:text-white/70"
-                    : "text-[var(--ada-text-disabled)] group-hover:text-[var(--ada-text-secondary)]",
+                  "mt-0.5 text-xs",
+                  kit ? "text-white/45" : "text-[var(--ada-text-disabled)]",
                 )}
               >
-                {ex.prompt.length > 60 ? `${ex.prompt.slice(0, 60)}…` : ex.prompt}
+                {ex.sublabel}
               </p>
             </div>
           </button>
         ))}
       </div>
+
+      {onPreferIdeaFirst ? (
+        <button
+          type="button"
+          onClick={() => onPreferIdeaFirst()}
+          className={cn(
+            "group text-sm underline-offset-4 transition-colors hover:underline",
+            kit ? "text-white/50 hover:text-white/75" : "text-[var(--ada-text-secondary)] hover:text-[var(--ada-text-primary)]",
+          )}
+        >
+          Start from a raw idea{" "}
+          <span className="inline-block transition-transform duration-150 group-hover:translate-x-0.5">
+            →
+          </span>
+        </button>
+      ) : null}
     </div>
   );
 }

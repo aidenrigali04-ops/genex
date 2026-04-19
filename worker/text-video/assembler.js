@@ -13,6 +13,30 @@ import { getAudioDuration } from "./ffprobe-duration.js";
 const FFMPEG_TIMEOUT_MS = 900_000;
 
 /**
+ * If FFMPEG_HWACCEL=1 is set in Railway env, use h264_nvenc instead of libx264.
+ * Falls back to libx264 when unset (default). If nvenc is unavailable on the host,
+ * unset FFMPEG_HWACCEL or install a build with nvenc.
+ */
+const USE_HWACCEL = process.env.FFMPEG_HWACCEL === "1";
+const VIDEO_CODEC = USE_HWACCEL ? "h264_nvenc" : "libx264";
+const ENCODE_PRESET = USE_HWACCEL ? "p4" : "fast";
+const ENCODE_CRF_FLAG = USE_HWACCEL ? "-cq" : "-crf";
+
+/** Shared video encode flags for clip scale, concat, and final mux (CRF/CQ 18). */
+function videoEncodeCore() {
+  return [
+    "-c:v",
+    VIDEO_CODEC,
+    ENCODE_CRF_FLAG,
+    "18",
+    "-preset",
+    ENCODE_PRESET,
+    "-pix_fmt",
+    "yuv420p",
+  ];
+}
+
+/**
  * @param {unknown} err
  */
 function ffmpegErr(err) {
@@ -47,14 +71,7 @@ function scaleClipArgs(vf, shot, dur, fps, scaledPath) {
     String(dur),
     "-vf",
     vf,
-    "-c:v",
-    "libx264",
-    "-crf",
-    "23",
-    "-preset",
-    "ultrafast",
-    "-pix_fmt",
-    "yuv420p",
+    ...videoEncodeCore(),
     "-r",
     String(fps),
     "-an",
@@ -112,6 +129,30 @@ async function scaleOneClip(shot, i, dir) {
 }
 
 /**
+ * Scale clips with bounded parallelism to avoid memory spikes on small Railway plans.
+ * @param {Array<{ duration: number; localPath: string; pexelsResult?: { isNativePortrait?: boolean } }>} shots
+ * @param {string} dir
+ */
+async function scaleAllClips(shots, dir) {
+  const rawConc = Number(process.env.FFMPEG_CONCURRENCY);
+  const CONCURRENCY =
+    Number.isFinite(rawConc) && rawConc > 0 ? Math.floor(rawConc) : 4;
+  const results = new Array(shots.length);
+
+  for (let i = 0; i < shots.length; i += CONCURRENCY) {
+    const batch = shots.slice(i, i + CONCURRENCY);
+    const batchResults = await Promise.all(
+      batch.map((shot, batchIdx) => scaleOneClip(shot, i + batchIdx, dir)),
+    );
+    batchResults.forEach((r, batchIdx) => {
+      results[i + batchIdx] = r;
+    });
+  }
+
+  return results;
+}
+
+/**
  * Assemble B-roll clips + voiceover + captions into a final 1080x1920 MP4.
  * @param {{
  *   shots: Array<{ duration: number; localPath: string; pexelsResult?: { isNativePortrait?: boolean } }>;
@@ -131,12 +172,7 @@ export async function assembleVideo({
   const dir = path.dirname(outputPath);
   mkdirSync(dir, { recursive: true });
 
-  const scaledPaths = new Array(shots.length);
-  await Promise.all(
-    shots.map(async (shot, i) => {
-      scaledPaths[i] = await scaleOneClip(shot, i, dir);
-    }),
-  );
+  const scaledPaths = await scaleAllClips(shots, dir);
 
   const concatListPath = path.join(dir, "concat.txt");
   const concatLines = scaledPaths.map((p) => {
@@ -160,14 +196,7 @@ export async function assembleVideo({
         "0",
         "-i",
         concatListPath,
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "23",
-        "-pix_fmt",
-        "yuv420p",
+        ...videoEncodeCore(),
         "-r",
         "30",
         "-an",
@@ -213,16 +242,10 @@ export async function assembleVideo({
         "1:a:0",
         "-vf",
         `ass=${assBase}`,
-        "-c:v",
-        "libx264",
-        "-crf",
-        "18",
-        "-preset",
-        "medium",
-        "-profile:v",
-        "high",
-        "-level",
-        "4.1",
+        ...videoEncodeCore(),
+        ...(USE_HWACCEL
+          ? []
+          : ["-profile:v", "high", "-level", "4.1"]),
         "-movflags",
         "+faststart",
         "-c:a",

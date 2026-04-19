@@ -4,17 +4,64 @@ import { createClient } from "@/lib/supabase/server";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+type VoiceProfileRow = {
+  niche: string | null;
+  tone_preference: string | null;
+  hook_style: string | null;
+};
+
 type VoiceProfileBody = {
   niche?: unknown;
   tone_preference?: unknown;
   hook_style?: unknown;
 };
 
-function strField(v: unknown, max: number): string | undefined {
-  if (typeof v !== "string") return undefined;
-  const t = v.trim();
-  if (!t) return undefined;
-  return t.slice(0, max);
+function sanitize(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const trimmed = v.trim().slice(0, 100);
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function isComplete(row: VoiceProfileRow | null | undefined): boolean {
+  return (
+    Boolean(row?.niche?.trim()) &&
+    Boolean(row?.tone_preference?.trim()) &&
+    Boolean(row?.hook_style?.trim())
+  );
+}
+
+export async function GET(): Promise<Response> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError || !user?.id) {
+    return Response.json(
+      { data: null, error: "Unauthorized" },
+      { status: 401 },
+    );
+  }
+
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("niche, tone_preference, hook_style")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (error) {
+    return Response.json(
+      { data: null, error: error.message },
+      { status: 500 },
+    );
+  }
+
+  const row: VoiceProfileRow = data
+    ? (data as VoiceProfileRow)
+    : { niche: null, tone_preference: null, hook_style: null };
+
+  return Response.json({ data: row, error: null });
 }
 
 export async function PATCH(req: Request): Promise<Response> {
@@ -25,79 +72,79 @@ export async function PATCH(req: Request): Promise<Response> {
   } = await supabase.auth.getUser();
 
   if (authError || !user?.id) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
+    return Response.json(
+      { data: null, error: "Unauthorized" },
+      { status: 401 },
+    );
   }
 
   let body: VoiceProfileBody;
   try {
     body = (await req.json()) as VoiceProfileBody;
   } catch {
-    return Response.json({ error: "Invalid JSON body." }, { status: 400 });
-  }
-
-  const updates: Record<string, string> = {};
-  const niche = strField(body.niche, 100);
-  const tone = strField(body.tone_preference, 100);
-  const hook = strField(body.hook_style, 100);
-  if (niche !== undefined) updates.niche = niche;
-  if (tone !== undefined) updates.tone_preference = tone;
-  if (hook !== undefined) updates.hook_style = hook;
-
-  if (Object.keys(updates).length === 0) {
     return Response.json(
-      { error: "No valid fields provided." },
+      { data: null, error: "Invalid JSON" },
       { status: 400 },
     );
   }
 
-  const { data: before } = await supabase
+  const niche = sanitize(body.niche);
+  const tone_preference = sanitize(body.tone_preference);
+  const hook_style = sanitize(body.hook_style);
+
+  const { data: existing, error: readErr } = await supabase
     .from("profiles")
     .select("niche, tone_preference, hook_style")
     .eq("id", user.id)
     .maybeSingle();
 
-  const payload = {
-    id: user.id,
-    ...updates,
-    updated_at: new Date().toISOString(),
-  };
-
-  const { data, error } = await supabase
-    .from("profiles")
-    .upsert(payload, { onConflict: "id" })
-    .select("niche, tone_preference, hook_style")
-    .single();
-
-  if (error) {
-    console.error("[voice-profile]", error.message);
+  if (readErr) {
     return Response.json(
-      { error: "Failed to save voice profile." },
+      { data: null, error: readErr.message },
       { status: 500 },
     );
   }
 
-  const row = data as {
-    niche: string | null;
-    tone_preference: string | null;
-    hook_style: string | null;
-  } | null;
+  const wasComplete = isComplete(existing as VoiceProfileRow | null);
 
-  const beforeN = before?.niche ?? null;
-  const beforeT = before?.tone_preference ?? null;
-  const beforeH = before?.hook_style ?? null;
-  const wasComplete =
-    Boolean(beforeN?.trim()) &&
-    Boolean(beforeT?.trim()) &&
-    Boolean(beforeH?.trim());
+  const { error: upsertErr } = await supabase.from("profiles").upsert(
+    {
+      id: user.id,
+      niche,
+      tone_preference,
+      hook_style,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "id" },
+  );
 
-  const isNowComplete =
-    Boolean(row?.niche?.trim()) &&
-    Boolean(row?.tone_preference?.trim()) &&
-    Boolean(row?.hook_style?.trim());
-
-  if (!wasComplete && isNowComplete) {
-    void trackAha(supabase, user.id, "voice_profile_complete");
+  if (upsertErr) {
+    console.error("[voice-profile] upsert", upsertErr.message);
+    return Response.json(
+      { data: null, error: upsertErr.message },
+      { status: 500 },
+    );
   }
 
-  return Response.json({ data: row });
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("niche, tone_preference, hook_style")
+    .eq("id", user.id)
+    .single();
+
+  if (error) {
+    return Response.json(
+      { data: null, error: error.message },
+      { status: 500 },
+    );
+  }
+
+  const row = data as VoiceProfileRow;
+  const nowComplete = isComplete(row);
+
+  if (nowComplete && !wasComplete) {
+    void trackAha(supabase, user.id, "voice_profile_saved");
+  }
+
+  return Response.json({ data: row, error: null });
 }

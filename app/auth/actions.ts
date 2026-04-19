@@ -51,6 +51,11 @@ export async function signInWithGoogle(formData: FormData) {
 export async function signInWithEmail(formData: FormData) {
   const email = String(formData.get("email") ?? "");
   const password = String(formData.get("password") ?? "");
+  const nextField = formData.get("next");
+  const nextRaw = typeof nextField === "string" ? nextField : "";
+  const next = normalizeInternalReturnPath(
+    nextRaw.startsWith("/") && !nextRaw.startsWith("//") ? nextRaw : "/",
+  );
   const supabase = await createClient();
 
   const { error } = await supabase.auth.signInWithPassword({
@@ -59,15 +64,46 @@ export async function signInWithEmail(formData: FormData) {
   });
 
   if (error) {
-    redirect(`/?authError=${encodeURIComponent(error.message)}`);
+    redirect(
+      `/auth/login?authError=${encodeURIComponent(error.message)}&next=${encodeURIComponent(next)}`,
+    );
   }
 
-  redirect("/");
+  redirect(next);
 }
 
 export async function signUpWithEmail(formData: FormData) {
-  const email = String(formData.get("email") ?? "");
+  const email = String(formData.get("email") ?? "").trim();
   const password = String(formData.get("password") ?? "");
+  const confirmPassword = String(formData.get("confirmPassword") ?? "");
+  const username = String(formData.get("username") ?? "").trim();
+  const termsAccepted = formData.get("termsAccepted") === "on";
+  const promoEmails = formData.get("promoEmails") === "on";
+
+  const nextField = formData.get("next");
+  const nextRaw = typeof nextField === "string" ? nextField : "";
+  const next = normalizeInternalReturnPath(
+    nextRaw.startsWith("/") && !nextRaw.startsWith("//") ? nextRaw : "/",
+  );
+
+  const qNext = `next=${encodeURIComponent(next)}`;
+
+  if (!termsAccepted) {
+    redirect(
+      `/auth/sign-up?authError=${encodeURIComponent("Please accept the terms of use.")}&${qNext}`,
+    );
+  }
+  if (password !== confirmPassword) {
+    redirect(
+      `/auth/sign-up?authError=${encodeURIComponent("Passwords do not match.")}&${qNext}`,
+    );
+  }
+  if (password.length < 6) {
+    redirect(
+      `/auth/sign-up?authError=${encodeURIComponent("Password must be at least 6 characters.")}&${qNext}`,
+    );
+  }
+
   const headerStore = await headers();
   const baseUrl = getBaseUrl(headerStore.get("origin"));
   const supabase = await createClient();
@@ -76,15 +112,23 @@ export async function signUpWithEmail(formData: FormData) {
     email,
     password,
     options: {
-      emailRedirectTo: `${baseUrl}/auth/callback`,
+      emailRedirectTo: `${baseUrl}/auth/callback?next=${encodeURIComponent(next)}`,
+      data: {
+        ...(username ? { username, display_name: username } : {}),
+        promo_emails: promoEmails,
+      },
     },
   });
 
   if (error) {
-    redirect(`/?authError=${encodeURIComponent(error.message)}`);
+    redirect(
+      `/auth/sign-up?authError=${encodeURIComponent(error.message)}&${qNext}`,
+    );
   }
 
-  redirect("/?authSuccess=Check your inbox to confirm your email.");
+  redirect(
+    `${next.startsWith("/") ? next : "/"}?authSuccess=${encodeURIComponent("Check your inbox to confirm your email.")}`,
+  );
 }
 
 export async function signOut() {

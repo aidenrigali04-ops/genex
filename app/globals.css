@@ -159,6 +159,33 @@
   animation: ada-output-section-fade-in 400ms ease-out;
 }
 
+/** Empty-state social proof marquee (AdaOutputScroll). */
+@keyframes genex-marquee-left {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes genex-marquee-right {
+  from {
+    transform: translateX(-50%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.animate-genex-marquee-left {
+  animation: genex-marquee-left 28s linear infinite;
+}
+
+.animate-genex-marquee-right {
+  animation: genex-marquee-right 28s linear infinite;
+}
+
 @layer utilities {
   .genex-dot-grid {
     background-color: var(--ada-bg-app);

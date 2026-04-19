@@ -19,6 +19,61 @@ function pexelsHeaders() {
   };
 }
 
+/** Title, slug URL, user name, and optional tags for semantic scoring. */
+function pexelsVideoTextHaystack(video) {
+  const bits = [String(video.url ?? ""), String(video.user?.name ?? "")];
+  if (Array.isArray(video.tags)) {
+    for (const t of video.tags) {
+      if (typeof t === "string") bits.push(t);
+      else if (t != null && typeof t.title === "string") bits.push(t.title);
+    }
+  }
+  return bits.join(" ").toLowerCase();
+}
+
+function scoreVideo(video, targetDur, keyword) {
+  const dur = Number(video.duration) || 0;
+
+  const durationScore =
+    dur >= targetDur ? 10 : dur >= targetDur * 0.7 ? 5 : -20;
+
+  const files = video.video_files ?? [];
+  const hasHD = files.some((f) => f.height >= 1080 && f.height > f.width);
+  const has4K = files.some((f) => f.height >= 2160);
+  const resScore = has4K ? 8 : hasHD ? 5 : 0;
+
+  const popScore = Math.min(
+    5,
+    Math.floor((video.video_pictures?.length ?? 0) / 2),
+  );
+
+  const hay = pexelsVideoTextHaystack(video);
+  const kwTokens = String(keyword ?? "")
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+  const titleMatchCount = kwTokens.filter(
+    (tok) => tok.length > 3 && hay.includes(tok),
+  ).length;
+  const semanticScore = Math.min(6, titleMatchCount * 2);
+
+  const hasPerson = /person|people|man|woman|girl|boy|human|face|portrait/i.test(
+    hay,
+  );
+  const personScore = hasPerson ? 4 : 0;
+
+  const motionScore = dur > 4 && hasHD ? 3 : 0;
+
+  return (
+    durationScore +
+    resScore +
+    popScore +
+    semanticScore +
+    personScore +
+    motionScore
+  );
+}
+
 export async function fetchPexelsClip(keyword, targetDuration) {
   if (!pexelsKey()) {
     throw new Error(
@@ -56,27 +111,39 @@ export async function fetchPexelsClip(keyword, targetDuration) {
     videos = fbVideos;
   }
 
-  function scoreVideo(video, targetDur) {
-    const dur = Number(video.duration) || 0;
+  if (videos.length < 3) {
+    const coreKeyword = String(keyword ?? "")
+      .trim()
+      .split(/\s+/)
+      .filter((w) => w.length > 4)
+      .slice(0, 2)
+      .join(" ");
 
-    const durationScore =
-      dur >= targetDur ? 10 : dur >= targetDur * 0.7 ? 5 : -20;
-
-    const files = video.video_files ?? [];
-    const hasHD = files.some((f) => f.height >= 1080 && f.height > f.width);
-    const has4K = files.some((f) => f.height >= 2160);
-    const resScore = has4K ? 8 : hasHD ? 5 : 0;
-
-    const popScore = Math.min(
-      5,
-      Math.floor((video.video_pictures?.length ?? 0) / 2),
-    );
-
-    return durationScore + resScore + popScore;
+    if (coreKeyword && coreKeyword !== String(keyword ?? "").trim()) {
+      try {
+        const fb2 = await fetch(
+          `https://api.pexels.com/videos/search?query=${encodeURIComponent(
+            coreKeyword,
+          )}&orientation=portrait&per_page=15`,
+          { headers: pexelsHeaders() },
+        );
+        if (fb2.ok) {
+          const fb2Data = await fb2.json();
+          const fb2Videos = fb2Data.videos ?? [];
+          if (fb2Videos.length > 0) {
+            const existingIds = new Set(videos.map((v) => v.id));
+            const newVideos = fb2Videos.filter((v) => !existingIds.has(v.id));
+            videos = [...videos, ...newVideos];
+          }
+        }
+      } catch {
+        /* ignore secondary fallback */
+      }
+    }
   }
 
   videos = [...videos].sort(
-    (a, b) => scoreVideo(b, td) - scoreVideo(a, td),
+    (a, b) => scoreVideo(b, td, keyword) - scoreVideo(a, td, keyword),
   );
 
   const video = videos[0];

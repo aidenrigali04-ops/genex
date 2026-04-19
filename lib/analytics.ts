@@ -12,7 +12,11 @@ export type AhaEvent =
   | "voice_profile_complete" // all three voice fields filled for the first time
   | "hook_strength_high" // output panel surfaced a high hook-strength signal
   | "variation_launched" // user opens video variation workspace
-  | "text_video_started"; // user launches text-to-video job
+  | "text_video_started" // user launches text-to-video job
+  | "first_generation_complete" // user's very first clip package finished streaming
+  | "streak_3_days"
+  | "streak_7_days"
+  | "first_gen_celebration";
 
 export async function trackAha(
   supabase: SupabaseClient,

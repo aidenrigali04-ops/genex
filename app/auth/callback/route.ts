@@ -13,7 +13,8 @@ export async function GET(request: Request) {
   const cookieStore = await cookies();
   const fromCookie = cookieStore.get(OAUTH_RETURN_COOKIE)?.value;
   const fromQuery = requestUrl.searchParams.get("next");
-  const nextRaw = fromCookie ?? fromQuery ?? "/";
+  /** Prefer explicit `next` on the URL (e.g. email confirmation); else OAuth cookie. */
+  const nextRaw = fromQuery ?? fromCookie ?? "/";
   const safeNext = normalizeInternalReturnPath(
     nextRaw.startsWith("/") && !nextRaw.startsWith("//") ? nextRaw : "/",
   );

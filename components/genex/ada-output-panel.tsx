@@ -38,6 +38,8 @@ export type AdaOutputPanelProps = {
   copiedId: string | null;
   onCopy: (id: string, body: string) => void | Promise<void>;
   onRegenerate: () => void;
+  /** When set, shows Remix next to Regenerate after generation completes. */
+  onRemix?: (prompt: string) => void;
   canRegenerate: boolean;
   generationId?: string;
   generationContext: GenerationContextV1 | null;
@@ -59,6 +61,7 @@ export function AdaOutputPanel({
   copiedId,
   onCopy,
   onRegenerate,
+  onRemix,
   canRegenerate,
   generationId,
   generationContext,
@@ -67,7 +70,7 @@ export function AdaOutputPanel({
   onTextVideoCreditsRemainingChange,
   chatEmbedded = false,
   onHookStrengthRead,
-}: AdaOutputPanelProps): JSX.Element {
+}: AdaOutputPanelProps): JSX.Element | null {
   const kit = variant === "adaKit";
   const showBody = streamedText.trim() || loading;
 
@@ -119,6 +122,24 @@ export function AdaOutputPanel({
     </button>
   );
 
+  const remixButton = (embedded: boolean) =>
+    onRemix && !loading && streamedText.trim() ? (
+      <button
+        type="button"
+        aria-label="Remix with this prompt"
+        onClick={() => onRemix(originalPrompt)}
+        className={cn(
+          "shrink-0 rounded-full font-medium transition-colors duration-150",
+          embedded ? "px-3 py-1.5 text-[11px]" : "px-4 py-2 text-xs",
+          kit
+            ? "border border-white/48 text-white hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/50"
+            : "rounded-ada-input border border-ada-border text-ada-secondary hover:border-ada-border-active hover:text-ada-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ada-accent/35",
+        )}
+      >
+        Remix
+      </button>
+    ) : null;
+
   if (!showBody) {
     if (chatEmbedded) return null;
     return (
@@ -146,7 +167,10 @@ export function AdaOutputPanel({
       >
         Your clip package
       </h2>
-      {regenerateButton(false)}
+      <div className="flex gap-2">
+        {remixButton(false)}
+        {regenerateButton(false)}
+      </div>
     </div>
   );
 
@@ -187,7 +211,10 @@ export function AdaOutputPanel({
           </p>
         </div>
       </div>
-      {regenerateButton(true)}
+      <div className="flex shrink-0 gap-2">
+        {remixButton(true)}
+        {regenerateButton(true)}
+      </div>
     </div>
   );
 

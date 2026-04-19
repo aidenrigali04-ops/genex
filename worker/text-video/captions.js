@@ -84,7 +84,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     const wrapped = wrapCaptionLines(caption.trim());
     const text = wrapped.map((l) => escapeAssLine(l)).join("\\N");
 
-    return `Dialogue: 0,${start},${end},Default,,0,0,0,,{\\an2}${text}`;
+    return `Dialogue: 0,${start},${end},Default,,0,0,0,,{\\an2\\fad(150,200)}${text}`;
   });
 
   writeFileSync(

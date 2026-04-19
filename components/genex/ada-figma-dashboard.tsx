@@ -8,14 +8,18 @@ import {
   ChevronRight,
   Clapperboard,
   Crown,
+  Flame,
   Mic,
   Paperclip,
   Settings,
   Sparkles,
+  User,
   UserRound,
   Video,
 } from "lucide-react";
 
+import type { AdaSidebarVoiceProfile } from "@/components/genex/ada-sidebar";
+import { VoiceProfileRing } from "@/components/genex/ada-sidebar";
 import { cn } from "@/lib/utils";
 
 const MAGENTA_GRAD =
@@ -52,6 +56,10 @@ export type AdaFigmaSidebarNavProps = {
   onSettings: () => void;
   onAccount: () => void;
   recentSection?: ReactNode;
+  /** Live-updated from generation response headers. */
+  generationStreak?: number;
+  voiceProfile?: AdaSidebarVoiceProfile | null;
+  onEditVoiceProfile?: () => void;
 };
 
 const MAIN_NAV: {
@@ -70,7 +78,18 @@ export function AdaFigmaSidebarNav({
   onSettings,
   onAccount,
   recentSection,
+  generationStreak = 0,
+  voiceProfile = null,
+  onEditVoiceProfile,
 }: AdaFigmaSidebarNavProps) {
+  const filledVoice = [
+    voiceProfile?.niche?.trim(),
+    voiceProfile?.tone_preference?.trim(),
+    voiceProfile?.hook_style?.trim(),
+  ].filter((s) => Boolean(s && s.length > 0)).length;
+  const voiceFull = filledVoice >= 3;
+  const voicePartial = filledVoice > 0 && filledVoice < 3;
+
   return (
     <div
       className={cn(
@@ -123,6 +142,68 @@ export function AdaFigmaSidebarNav({
             );
           })}
         </div>
+
+        {generationStreak > 0 ? (
+          <div
+            className="mx-1 flex items-center gap-2 rounded-[32px] border border-white/25 bg-white/10 px-4 py-2.5 text-sm text-white/95"
+            aria-live="polite"
+          >
+            <Flame className="size-4 shrink-0 text-white/90" aria-hidden />
+            <span style={{ fontWeight: 400 }}>
+              {generationStreak} day streak
+            </span>
+          </div>
+        ) : null}
+
+        {onEditVoiceProfile ? (
+          voiceFull && voiceProfile ? (
+            <button
+              type="button"
+              onClick={onEditVoiceProfile}
+              className="mx-1 flex w-full flex-col gap-1 rounded-[32px] border border-white/25 bg-white/10 px-4 py-3 text-left text-white transition-colors hover:bg-white/14"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold">Your Voice Profile</span>
+                <span className="rounded-full bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)] px-2 py-0.5 text-[9px] font-bold tracking-wide text-white uppercase">
+                  Active
+                </span>
+              </div>
+              <p className="truncate text-[10px] text-white/55">
+                {voiceProfile.niche} · {voiceProfile.tone_preference}
+              </p>
+            </button>
+          ) : voicePartial && voiceProfile ? (
+            <button
+              type="button"
+              onClick={onEditVoiceProfile}
+              className="mx-1 flex w-full items-center justify-between gap-2 rounded-[32px] border border-white/20 bg-white/8 px-4 py-3 text-left text-white transition-colors hover:bg-white/12"
+            >
+              <div className="min-w-0">
+                <p className="text-xs font-semibold">Your Voice Profile</p>
+                <p className="mt-0.5 truncate text-[10px] text-white/50">
+                  {voiceProfile.niche ??
+                    voiceProfile.tone_preference ??
+                    voiceProfile.hook_style}
+                </p>
+              </div>
+              <VoiceProfileRing filled={filledVoice} total={3} />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onEditVoiceProfile}
+              className="mx-1 flex w-full items-center gap-2 rounded-[32px] border border-dashed border-white/30 bg-white/5 px-4 py-3 text-left text-white/80 transition-colors hover:border-white/45 hover:bg-white/10"
+            >
+              <User className="size-4 shrink-0 text-white/50" aria-hidden />
+              <div>
+                <p className="text-xs font-medium">Set your Voice Profile</p>
+                <p className="text-[10px] text-white/40">
+                  Better output every generation
+                </p>
+              </div>
+            </button>
+          )
+        ) : null}
 
         <div className="h-px w-full bg-white" />
 

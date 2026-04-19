@@ -7,6 +7,50 @@ function elevenLabsKey() {
 }
 
 /**
+ * Pre-processes a script for TTS: strips stage directions / visual cues,
+ * removes pacing tag prefixes while keeping spoken text, normalizes punctuation.
+ * Pure function — no I/O.
+ *
+ * @param {string} rawScript
+ * @returns {string}
+ */
+function preprocessScriptForTTS(rawScript) {
+  const lines = String(rawScript ?? "").split(/\r?\n/);
+  const out = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const labeled = trimmed.match(/^\[([^\]]+)\]\s*:\s*(.*)$/);
+    if (labeled) {
+      const tag = labeled[1];
+      const rest = labeled[2].trim();
+      const tagUp = tag.toUpperCase();
+      if (tagUp.includes("VISUAL CUE")) continue;
+      const pacingTag =
+        /HOOK-LINE|BUILD|PROOF|RESOLUTION|CTA-TEASE|LINE/i.test(tag);
+      if (pacingTag && rest) {
+        out.push(rest);
+        continue;
+      }
+      if (rest) out.push(rest);
+      continue;
+    }
+
+    if (!trimmed) continue;
+    const noInline = trimmed.replace(/\[[^\]]{1,120}\]/g, "").trim();
+    if (noInline) out.push(noInline);
+  }
+
+  let s = out.join("\n");
+  s = s.replace(/[*_#`]/g, "");
+  s = s.replace(/—/g, ", ");
+  s = s.replace(/\.\.\./g, "... ");
+  s = s.replace(/\n{3,}/g, "\n\n");
+  s = s.replace(/[ \t]{2,}/g, " ");
+  return s.trim();
+}
+
+/**
  * @param {Response} res
  * @param {string} rawBody
  */
@@ -65,7 +109,8 @@ async function generateElevenLabsVoiceover(script, voiceId, outputPath) {
     id,
   )}/stream?${params.toString()}`;
 
-  const text = script.trim().slice(0, 9500);
+  const processedScript = preprocessScriptForTTS(script);
+  const text = processedScript.slice(0, 9500);
 
   const res = await fetch(url, {
     method: "POST",
@@ -78,9 +123,9 @@ async function generateElevenLabsVoiceover(script, voiceId, outputPath) {
       text,
       model_id: "eleven_turbo_v2_5",
       voice_settings: {
-        stability: 0.35,
-        similarity_boost: 0.85,
-        style: 0.45,
+        stability: 0.3,
+        similarity_boost: 0.9,
+        style: 0.55,
         use_speaker_boost: true,
       },
     }),
@@ -110,10 +155,11 @@ async function generateOpenAIVoiceover(script, outputPath) {
   }
   const { default: OpenAI } = await import("openai");
   const openai = new OpenAI({ apiKey });
+  const processedScript = preprocessScriptForTTS(script);
   const response = await openai.audio.speech.create({
     model: "tts-1-hd",
     voice: "nova",
-    input: script.trim().slice(0, 4096),
+    input: processedScript.trim().slice(0, 4096),
     response_format: "mp3",
   });
   const buffer = Buffer.from(await response.arrayBuffer());

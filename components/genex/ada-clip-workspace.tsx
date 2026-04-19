@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link2, Paperclip } from "lucide-react";
 
 import { AdaComposer } from "@/components/genex/ada-composer";
 import { AdaEmptyState } from "@/components/genex/ada-empty-state";
+import { FirstGenCelebration } from "@/components/genex/first-gen-celebration";
 import { AdaLiveTurn } from "@/components/genex/ada-live-turn";
 import { AdaTurn } from "@/components/genex/ada-turn";
 import { RefinementChatPanel } from "@/components/refinement-chat-panel";
@@ -14,6 +15,8 @@ import type { ClipTurn, LiveClipTurnSnapshot } from "@/lib/clip-turn";
 import type { ClipInputMode } from "@/lib/clip-package";
 import type { PlatformId } from "@/lib/platforms";
 import type { GenerationUiStep } from "@/lib/generation-stream-protocol";
+import { trackAha } from "@/lib/analytics";
+import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
 export type AdaClipWorkspaceProps = {
@@ -53,9 +56,18 @@ export type AdaClipWorkspaceProps = {
   onRefinementConfirm?: (ctx: GenerationContextV1) => void;
   onRefinementCancel?: () => void;
   onExamplePrompt?: (prompt: string, mode: "text" | "url") => void;
+  /** Refill composer from a completed turn (e.g. Remix). */
+  onRemix?: (prompt: string) => void;
   /** For live-turn analytics + clip-first copy (optional). */
   authUserId?: string;
   onPreferIdeaFirst?: () => void;
+  /** Parent sets true when the API marks first generation; ref prevents duplicate overlays. */
+  showFirstGenCelebration?: boolean;
+  /** Empty state: signed-in user with no prior clip packages yet. */
+  emptyStateIsAuthenticated?: boolean;
+  emptyStateHasGenerated?: boolean;
+  isAuthenticated?: boolean;
+  hasGenerated?: boolean;
 };
 
 export function AdaClipWorkspace({
@@ -95,13 +107,42 @@ export function AdaClipWorkspace({
   onRefinementConfirm,
   onRefinementCancel,
   onExamplePrompt,
+  onRemix,
   authUserId,
   onPreferIdeaFirst,
+  showFirstGenCelebration = false,
+  emptyStateIsAuthenticated = false,
+  emptyStateHasGenerated = false,
+  isAuthenticated: isAuthenticatedProp,
+  hasGenerated: hasGeneratedProp,
 }: AdaClipWorkspaceProps) {
   const kit = variant === "adaKit";
+  const isAuthenticated = isAuthenticatedProp ?? emptyStateIsAuthenticated;
+  const hasGenerated = hasGeneratedProp ?? emptyStateHasGenerated;
+  const supabase = useMemo(() => createClient(), []);
+  const secondGenFiredRef = useRef(false);
   const threadRef = useRef<HTMLDivElement>(null);
+  const [showCelebration, setShowCelebration] = useState(false);
+  const celebrationShownThisSession = useRef(false);
   const clipPackageInputMode: ClipInputMode =
     inputMode === "url" || inputMode === "file" ? "clip_first" : "generate_first";
+
+  useEffect(() => {
+    if (secondGenFiredRef.current) return;
+    if (turns.length < 2) return;
+    if (!authUserId?.trim()) return;
+    secondGenFiredRef.current = true;
+    void trackAha(supabase, authUserId, "second_generation", {
+      totalTurns: turns.length,
+    });
+  }, [turns.length, authUserId, supabase]);
+
+  useEffect(() => {
+    if (showFirstGenCelebration && !celebrationShownThisSession.current) {
+      celebrationShownThisSession.current = true;
+      setShowCelebration(true);
+    }
+  }, [showFirstGenCelebration]);
 
   useEffect(() => {
     const el = threadRef.current;
@@ -209,6 +250,8 @@ export function AdaClipWorkspace({
               variant={variant}
               onExampleClick={handleExampleClick}
               onPreferIdeaFirst={onPreferIdeaFirst}
+              isAuthenticated={isAuthenticated}
+              hasGenerated={hasGenerated}
             />
           ) : null}
 
@@ -222,6 +265,7 @@ export function AdaClipWorkspace({
               onRegenerate={onRegenerate}
               onTextVideoCreditsRemainingChange={onTextVideoCreditsRemainingChange}
               variant={variant}
+              onRemix={onRemix}
             />
           ))}
 
@@ -255,6 +299,7 @@ export function AdaClipWorkspace({
               variant={variant}
               inputMode={clipPackageInputMode}
               userId={authUserId}
+              supabase={supabase}
             />
           ) : null}
 
@@ -316,6 +361,14 @@ export function AdaClipWorkspace({
           </p>
         </div>
       </div>
+
+      {showCelebration ? (
+        <FirstGenCelebration
+          variant={variant}
+          userId={authUserId}
+          onDismiss={() => setShowCelebration(false)}
+        />
+      ) : null}
     </div>
   );
 }

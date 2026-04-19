@@ -56,16 +56,27 @@ why it works as a short, hook angle. Format:
 • [5:30–6:15] — [one sentence: why this works]]
 
 HOOK (FIRST 3 SECONDS)
-[Write 3 hook rewrites — one per clip moment above. Each hook must:
-- Start with a pattern interrupt or bold claim
-- Be under 15 words
-- Create immediate curiosity or tension
-Label each: Hook for Clip 1, Hook for Clip 2, Hook for Clip 3]
+[Write 3 DISTINCT hook rewrites — one per clip moment above. Each hook MUST use a different pattern from this taxonomy:
+1. PATTERN-INTERRUPT: Start with a false assumption, then shatter it in ≤10 words
+   Example: "Everyone says [X]. They're completely wrong. Here's why."
+2. CURIOSITY GAP: State the outcome before the reason, withhold the method
+   Example: "I [achieved result] without [conventional method]. Here's the actual reason."
+3. IDENTITY CHALLENGE: Call out the viewer's current belief or behavior directly
+   Example: "If you're still doing [X], you're losing [Y] every single day."
+Label each hook with its pattern type: PATTERN-INTERRUPT / CURIOSITY-GAP / IDENTITY-CHALLENGE
+Every hook must be ≤15 words. No exceptions.]
 
 CLIP SCRIPT (30–60 SECONDS)
-[Full script for the strongest clip. Format each beat as:
-[VISUAL CUE]: description
-[LINE]: spoken line]
+[Full script for the strongest clip. Every line gets a PACING tag:
+[HOOK-LINE | FAST]: First spoken line — under 8 words, punchy, spoken fast
+[VISUAL CUE]: what the camera/B-roll shows
+[BUILD | MEDIUM]: 1-2 sentences establishing the problem or promise
+[VISUAL CUE]: B-roll change
+[PROOF | MEDIUM]: 1-2 sentences of evidence, story, or demonstration
+[VISUAL CUE]: B-roll change
+[RESOLUTION | SLOW]: The payoff line — 1 sentence, spoken with weight
+[CTA-TEASE | FAST]: 1 line teasing what comes next or directing action
+The pacing tags (FAST / MEDIUM / SLOW) tell editors how to cut the audio.]
 
 CTA (CALL TO ACTION)
 [3 CTA variations — soft, medium, direct. One line each.]
@@ -74,12 +85,13 @@ CAPTION HOOK + HASHTAGS
 [Platform-ready caption (under 150 chars) + 5–8 hashtags]
 
 B-ROLL / VISUAL IDEAS
-[5 B-roll suggestions that match the clip topic. One line each.]
+[5 B-roll suggestions that match the clip topic. One line each.
+End with a 6th line prefixed WILDCARD: — a genuinely unexpected angle (contrarian, underdog, or format inversion). Never restate Hook #1 or any hook rewrite.]
 
 CREATOR SIGNALS
 FORMAT_TAGS: tag1, tag2, tag3
 LENGTH_HINT_SECONDS: 45
-HOOK_STRENGTH: high | Reason: [one short phrase explaining why]`;
+HOOK_STRENGTH: high | Reason: [name the mechanism, e.g. pattern-interrupt + curiosity-gap — not generic "engaging"]`;
 
   const generateFirstCore = `You are GenEx AI — a short-form content strategist for TikTok, Reels, and Shorts creators.
 
@@ -89,16 +101,27 @@ Your job: write a complete Clip Package — original hooks, script, captions, an
 Output ALL sections in this EXACT order and format:
 
 HOOK (FIRST 3 SECONDS)
-[Write 3 distinct hook options. Each must:
-- Be under 15 words
-- Start with pattern interrupt, bold claim, or curiosity gap
-- Sound completely different from the others (vary the angle)
-Number them 1, 2, 3.]
+[Write 3 DISTINCT hook options. Each hook MUST use a different pattern from this taxonomy:
+1. PATTERN-INTERRUPT: Start with a false assumption, then shatter it in ≤10 words
+   Example: "Everyone says [X]. They're completely wrong. Here's why."
+2. CURIOSITY GAP: State the outcome before the reason, withhold the method
+   Example: "I [achieved result] without [conventional method]. Here's the actual reason."
+3. IDENTITY CHALLENGE: Call out the viewer's current belief or behavior directly
+   Example: "If you're still doing [X], you're losing [Y] every single day."
+Label each hook with its pattern type: PATTERN-INTERRUPT / CURIOSITY-GAP / IDENTITY-CHALLENGE
+Every hook must be ≤15 words. No exceptions.]
 
 CLIP SCRIPT (30–60 SECONDS)
-[Full spoken script for Hook #1. Format:
-[VISUAL CUE]: description
-[LINE]: spoken line]
+[Full spoken script for Hook #1 using this format. Every line gets a PACING tag:
+[HOOK-LINE | FAST]: First spoken line — under 8 words, punchy, spoken fast
+[VISUAL CUE]: what the camera/B-roll shows
+[BUILD | MEDIUM]: 1-2 sentences establishing the problem or promise
+[VISUAL CUE]: B-roll change
+[PROOF | MEDIUM]: 1-2 sentences of evidence, story, or demonstration
+[VISUAL CUE]: B-roll change
+[RESOLUTION | SLOW]: The payoff line — 1 sentence, spoken with weight
+[CTA-TEASE | FAST]: 1 line teasing what comes next or directing action
+The pacing tags (FAST / MEDIUM / SLOW) tell editors how to cut the audio.]
 
 CTA (CALL TO ACTION)
 [3 variations — soft, medium, direct.]
@@ -107,12 +130,13 @@ CAPTION HOOK + HASHTAGS
 [Caption under 150 chars + 5–8 hashtags]
 
 B-ROLL / VISUAL IDEAS
-[5 B-roll suggestions. One line each.]
+[5 B-roll suggestions. One line each.
+End with a 6th line prefixed WILDCARD: — a genuinely unexpected angle (contrarian, underdog, or format inversion). Never restate Hook #1.]
 
 CREATOR SIGNALS
 FORMAT_TAGS: tag1, tag2, tag3
 LENGTH_HINT_SECONDS: 45
-HOOK_STRENGTH: high | Reason: [one short phrase]
+HOOK_STRENGTH: high | Reason: [name the mechanism, e.g. identity-challenge — not generic "strong"]
 
 TOP CLIP MOMENTS
 [Skip this section — leave blank or omit for idea-first generations]`;
@@ -131,6 +155,8 @@ TOP CLIP MOMENTS
     "Hard rules:",
     "- Start the assistant reply with the first section header exactly as specified (no preamble).",
     "- Use the exact header strings so downstream parsers can split the output.",
+    "- HOOK_STRENGTH reasoning must reference one of: pattern-interrupt, curiosity-gap, identity-challenge, controversy, or social-proof. Never use vague words like \"engaging\" or \"strong\" alone — always name the specific mechanism.",
+    "- The WILDCARD line (under B-ROLL / VISUAL IDEAS) must be genuinely unexpected — contrarian angle, underdog framing, or format inversion — never a paraphrase of Hook #1.",
   );
   return parts.join("\n");
 }
@@ -175,19 +201,13 @@ async function refundOneClipCredit(
     .eq("id", userId);
 }
 
-async function bumpGenerationCount(
-  supabase: SupabaseClient,
-  userId: string,
-  previous: number,
-): Promise<void> {
-  await supabase
-    .from("profiles")
-    .update({
-      generation_count: previous + 1,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", userId);
-}
+type IncrementGenerationStreakResult = {
+  generation_count?: number;
+  current_streak?: number;
+  longest_streak?: number;
+  is_first_gen?: boolean;
+  error?: string;
+};
 
 export async function POST(req: Request): Promise<Response> {
   if (!process.env.OPENAI_API_KEY) {
@@ -350,6 +370,41 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
 
+  let isFirstGen = false;
+  let newStreak = 0;
+
+  if (userIdForBilling) {
+    if (generationCountBefore === 1) {
+      void trackAha(supabase, userIdForBilling, "second_generation");
+    }
+
+    const { data: streakData, error: streakError } = await supabase.rpc(
+      "increment_generation_streak",
+      { p_user_id: userIdForBilling },
+    );
+
+    if (!streakError && streakData) {
+      const row = streakData as IncrementGenerationStreakResult;
+      if (!row.error) {
+        isFirstGen = row.is_first_gen === true;
+        newStreak =
+          typeof row.current_streak === "number" ? row.current_streak : 0;
+
+        if (newStreak === 3) {
+          void trackAha(supabase, userIdForBilling, "streak_3_days");
+        }
+        if (newStreak === 7) {
+          void trackAha(supabase, userIdForBilling, "streak_7_days");
+        }
+      }
+    } else if (streakError) {
+      console.error(
+        "[chat] increment_generation_streak failed",
+        streakError.message,
+      );
+    }
+  }
+
   try {
     const result = streamText({
       model: openai("gpt-4o"),
@@ -368,22 +423,18 @@ export async function POST(req: Request): Promise<Response> {
           }
           return;
         }
-        if (generationCountBefore === 1) {
-          void trackAha(supabase, userIdForBilling, "second_generation");
-        }
-        try {
-          await bumpGenerationCount(
-            supabase,
-            userIdForBilling,
-            generationCountBefore,
-          );
-        } catch (e) {
-          console.error("[chat] generation_count bump failed", e);
-        }
       },
     });
 
-    return result.toUIMessageStreamResponse();
+    const streamResponse = result.toUIMessageStreamResponse();
+    const headers = new Headers(streamResponse.headers);
+    headers.set("x-genex-is-first-gen", isFirstGen ? "1" : "0");
+    headers.set("x-genex-streak", String(newStreak));
+
+    return new Response(streamResponse.body, {
+      status: streamResponse.status,
+      headers,
+    });
   } catch (e) {
     console.error("[chat] streamText failed", e);
     if (chargedCredit && userIdForBilling) {

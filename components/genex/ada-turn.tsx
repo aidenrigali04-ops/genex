@@ -1,18 +1,14 @@
 "use client";
 
-import {
-  ArrowDown,
-  Copy,
-  Link2,
-  Paperclip,
-  RefreshCw,
-  Zap,
-} from "lucide-react";
+import { useMemo } from "react";
+import { Copy, Link2, Paperclip, Zap } from "lucide-react";
 
-import { GenerationFeedbackInline } from "@/components/generation-feedback-inline";
-import { RatingWidget } from "@/components/rating-widget";
-import { TextToVideoLauncher } from "@/components/genex/text-to-video-launcher";
-import { CLIP_SECTIONS, type ClipSectionMap } from "@/lib/clip-package";
+import { AdaOutputPanel } from "@/components/genex/ada-output-panel";
+import {
+  CLIP_SECTIONS,
+  parseFormatTags,
+  type ClipSectionMap,
+} from "@/lib/clip-package";
 import type { GenerationContextV1 } from "@/lib/generation-context";
 import type { GenerationPresetId } from "@/lib/generation-presets";
 import type { ClipTurn } from "@/lib/clip-turn";
@@ -44,12 +40,21 @@ function presetLabel(p: GenerationPresetId): string {
   return p.replace(/_/g, " ");
 }
 
+function verticalPreviewFromPackage(pkg: ClipSectionMap): string {
+  const hooks = pkg.hooks?.trim() ?? "";
+  const script = pkg.script?.trim() ?? "";
+  const parts = [hooks, script].filter(Boolean);
+  return parts.join("\n\n").slice(0, 6000);
+}
+
 export type AdaTurnProps = {
   turn: ClipTurn;
   isLast: boolean;
   copiedId: string | null;
   onCopy: (id: string, body: string) => void | Promise<void>;
   onRegenerate: () => void;
+  /** Prefill composer with the original prompt (Remix). */
+  onRemix?: (prompt: string) => void;
   onTextVideoCreditsRemainingChange?: (remaining: number) => void;
   variant?: "default" | "adaKit";
 };
@@ -60,10 +65,21 @@ export function AdaTurn({
   copiedId,
   onCopy,
   onRegenerate,
+  onRemix,
   onTextVideoCreditsRemainingChange,
   variant = "default",
 }: AdaTurnProps) {
   const kit = variant === "adaKit";
+
+  const clipFormatTags = useMemo(
+    () => parseFormatTags(turn.parsedClipPackage.creator_signals?.trim() ?? ""),
+    [turn.parsedClipPackage.creator_signals],
+  );
+
+  const verticalPreviewText = useMemo(
+    () => verticalPreviewFromPackage(turn.parsedClipPackage),
+    [turn.parsedClipPackage],
+  );
 
   const copyAll = () => {
     void onCopy("__all__", joinClipPackageForCopy(turn.parsedClipPackage));
@@ -157,18 +173,26 @@ export function AdaTurn({
         </div>
 
         <div className="min-w-0 flex-1 space-y-3">
-          <AdaOutputSections
-            parsedClipPackage={turn.parsedClipPackage}
-            copiedId={copiedId}
-            loading={false}
-            streamedText={turn.rawText}
-            onCopy={onCopy}
-            variant={variant}
-          />
-
           {isLast ? (
-            <div className="space-y-3 pt-1">
-              <div className="flex flex-wrap items-center gap-2">
+            <>
+              <AdaOutputPanel
+                loading={false}
+                streamedText={turn.rawText}
+                parsedClipPackage={turn.parsedClipPackage}
+                clipFormatTags={clipFormatTags}
+                verticalPreviewText={verticalPreviewText}
+                copiedId={copiedId}
+                onCopy={onCopy}
+                onRegenerate={onRegenerate}
+                onRemix={onRemix}
+                canRegenerate
+                generationId={turn.generationId ?? undefined}
+                generationContext={turn.generationContext}
+                originalPrompt={turn.userMessage || ""}
+                variant={variant}
+                onTextVideoCreditsRemainingChange={onTextVideoCreditsRemainingChange}
+              />
+              <div className="flex flex-wrap items-center gap-2 pt-1">
                 <button
                   type="button"
                   onClick={copyAll}
@@ -179,94 +203,21 @@ export function AdaTurn({
                       : "text-[var(--ada-text-disabled)] hover:border-[var(--ada-border)] hover:text-[var(--ada-text-secondary)]",
                   )}
                 >
-                  <Copy className="h-3 w-3" />
+                  <Copy className="h-3 w-3" aria-hidden />
                   Copy all
                 </button>
-                <button
-                  type="button"
-                  onClick={onRegenerate}
-                  className={cn(
-                    "flex items-center gap-1.5 rounded-[6px] border border-transparent px-2.5 py-1.5 text-xs transition-colors",
-                    kit
-                      ? "text-white/55 hover:border-white/20 hover:text-white/90"
-                      : "text-[var(--ada-text-disabled)] hover:border-[var(--ada-border)] hover:text-[var(--ada-text-secondary)]",
-                  )}
-                >
-                  <RefreshCw className="h-3 w-3" />
-                  Regenerate
-                </button>
               </div>
-              <GenerationFeedbackInline
-                originalPrompt={turn.userMessage || "Clip package"}
-                generationContext={turn.generationContext}
-                variationsOutput={turn.rawText}
-                variant={variant}
-              />
-            </div>
-          ) : null}
-
-          {isLast ? (
-            <div
-              className={cn(
-                "rounded-xl border px-3 py-2.5",
-                kit ? "border-white/12 bg-white/[0.04]" : "border-ada-border bg-ada-sidebar/80",
-              )}
-            >
-              <RatingWidget
-                kind="text"
-                generationId={turn.generationId ?? undefined}
-              />
-            </div>
-          ) : null}
-
-          {isLast && turn.parsedClipPackage.script.trim() ? (
-            <>
-              <div className="flex items-center gap-3 py-1">
-                <div
-                  className={cn(
-                    "h-px flex-1",
-                    kit ? "bg-white/12" : "bg-[var(--ada-border)]",
-                  )}
-                />
-                <div
-                  className={cn(
-                    "flex items-center gap-1.5 rounded-full border px-3 py-1",
-                    kit
-                      ? "border-white/14 bg-white/[0.06]"
-                      : "border-[var(--ada-border)] bg-[var(--ada-bg-elevated)]",
-                  )}
-                >
-                  <ArrowDown
-                    className={cn(
-                      "h-3 w-3",
-                      kit ? "text-[#E8B4FF]" : "text-[var(--ada-accent)]",
-                    )}
-                  />
-                  <span
-                    className={cn(
-                      "text-[10px] font-medium",
-                      kit ? "text-white/70" : "text-[var(--ada-text-secondary)]",
-                    )}
-                  >
-                    Generate video from this script
-                  </span>
-                </div>
-                <div
-                  className={cn(
-                    "h-px flex-1",
-                    kit ? "bg-white/12" : "bg-[var(--ada-border)]",
-                  )}
-                />
-              </div>
-              <TextToVideoLauncher
-                script={turn.parsedClipPackage.script}
-                hooks={turn.parsedClipPackage.hooks}
-                generationId={turn.generationId ?? undefined}
-                onCreditChange={onTextVideoCreditsRemainingChange}
-                variant={kit ? "adaKit" : "default"}
-              />
             </>
-          ) : null}
+          ) : (
+            <AdaOutputSections
+              parsedClipPackage={turn.parsedClipPackage}
+              copiedId={copiedId}
+              loading={false}
+              streamedText={turn.rawText}
+              onCopy={onCopy}
+              variant={variant}
+            />
+          )}
         </div>
       </div>
     </div>

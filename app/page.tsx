@@ -6,6 +6,7 @@ import {
 import { parseStoredGenerationOutput } from "@/lib/generation-output";
 import { remainingCreditsForDisplay } from "@/lib/profile-credits-display";
 import { isPlatformId, type PlatformId } from "@/lib/platforms";
+import type { AdaSidebarVoiceProfile } from "@/components/genex/ada-sidebar";
 import { createClient } from "@/lib/supabase/server";
 
 type SearchParams = {
@@ -26,6 +27,8 @@ export default async function Home({ searchParams }: PageProps) {
   } = await supabase.auth.getUser();
 
   let initialCreditsRemaining: number | null = null;
+  let initialCurrentStreak = 0;
+  let initialVoiceProfile: AdaSidebarVoiceProfile | null = null;
   let clipRows: Record<string, unknown>[] = [];
   let totalClipCount = 0;
   let profileUnlimited = false;
@@ -33,13 +36,34 @@ export default async function Home({ searchParams }: PageProps) {
   if (user) {
     const { data: profile } = await supabase
       .from("profiles")
-      .select("credits, last_reset_at, unlimited_credits")
+      .select(
+        "credits, last_reset_at, unlimited_credits, current_streak, niche, tone_preference, hook_style",
+      )
       .eq("id", user.id)
       .maybeSingle();
 
     profileUnlimited =
       profile != null &&
       (profile as { unlimited_credits?: boolean }).unlimited_credits === true;
+
+    const streakVal = (profile as { current_streak?: number } | null)
+      ?.current_streak;
+    if (typeof streakVal === "number") {
+      initialCurrentStreak = streakVal;
+    }
+
+    if (profile) {
+      const vp = profile as {
+        niche?: string | null;
+        tone_preference?: string | null;
+        hook_style?: string | null;
+      };
+      initialVoiceProfile = {
+        niche: vp.niche ?? null,
+        tone_preference: vp.tone_preference ?? null,
+        hook_style: vp.hook_style ?? null,
+      };
+    }
 
     if (unlimitedCredits || profileUnlimited) {
       initialCreditsRemaining = UNLIMITED_CREDITS_SENTINEL;
@@ -102,8 +126,11 @@ export default async function Home({ searchParams }: PageProps) {
       initialCreditsRemaining={initialCreditsRemaining}
       initialClipPackages={initialClipPackages}
       totalClipCount={totalClipCount}
+      initialCurrentStreak={initialCurrentStreak}
+      initialVoiceProfile={initialVoiceProfile}
       unlimitedCredits={unlimitedCredits || profileUnlimited}
       authError={params.authError ?? null}
+      authSuccess={params.authSuccess ?? null}
     />
   );
 }

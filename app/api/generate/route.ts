@@ -1,24 +1,15 @@
 import { openai } from "@ai-sdk/openai";
 import { streamText } from "ai";
-import { z } from "zod";
 
 import { capSourceTextForClipModel } from "@/lib/clip-model-input";
 import { parseClipPackageSections } from "@/lib/clip-package";
 import {
   appendPresetToSystemPrompt,
-  isGenerationPresetId,
   type GenerationPresetId,
 } from "@/lib/generation-presets";
-import { fetchUrlAsPlainText } from "@/lib/fetch-url-text";
 import type { StoredClipPackageOutputV1 } from "@/lib/generation-output";
-import {
-  isPlatformId,
-  PLATFORM_BY_ID,
-  type PlatformId,
-} from "@/lib/platforms";
+import { PLATFORM_BY_ID, type PlatformId } from "@/lib/platforms";
 import { extractPlatformSection } from "@/lib/parse-generation-output";
-import { sourceFromUpload } from "@/lib/source-from-upload";
-import { isUnlimitedCreditsModeServer } from "@/lib/credits-config";
 import {
   GENEX_FATAL_PREFIX,
   GENEX_STEP_PREFIX,
@@ -28,12 +19,11 @@ import {
   type StreamTextResult,
 } from "@/lib/stream-text-plain-response";
 import { createClient } from "@/lib/supabase/server";
-import { fetchYoutubeTranscriptText } from "@/lib/youtube-transcript-server";
-import { isYoutubeVideoUrlForTranscript } from "@/lib/youtube-url";
 import {
   formatGenerationContextForPrompt,
   type GenerationContextV1,
 } from "@/lib/generation-context";
+import { runGeneratePrelude } from "@/lib/generate-prelude";
 
 export const maxDuration = 300;
 
@@ -67,40 +57,6 @@ Output sections in this exact order with these headings (include the numbers):
    - Exactly two lines after the heading (machine-readable):
    FORMAT_TAGS: <pick 2–4 comma-separated from: Hook-heavy, Storytime, Educational, Contrarian, Tutorial-lite, Transformation, Listicle, POV, Controversy>
    LENGTH_HINT_SECONDS: <integer 30–60 based on how long the [LINE] script would take read aloud at TikTok pace>`;
-
-const generationContextSchema = z
-  .object({
-    version: z.literal(1),
-    kind: z.enum(["video_variations", "text_generation"]),
-    platforms: z.array(z.string()),
-    answers: z.record(z.string(), z.string()),
-    confirmedAt: z.string(),
-  })
-  .passthrough();
-
-const bodySchema = z.object({
-  mode: z.enum(["text", "url"]),
-  text: z.string().max(120_000).optional(),
-  url: z.string().max(2048).optional(),
-  /** When mode is text (e.g. after client-side transcript prefetch), keep original URL in DB. */
-  sourceUrl: z.string().max(2048).optional(),
-  platforms: z.array(z.string()).min(1),
-  preset: z
-    .enum(["viral_hook", "storytime", "educational", "contrarian"])
-    .optional(),
-  generationContext: generationContextSchema.optional(),
-});
-
-function normalizeOrderedPlatforms(raw: string[]): PlatformId[] {
-  const out: PlatformId[] = [];
-  const seen = new Set<PlatformId>();
-  for (const r of raw) {
-    if (!isPlatformId(r) || seen.has(r)) continue;
-    seen.add(r);
-    out.push(r);
-  }
-  return out;
-}
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
 
@@ -234,343 +190,83 @@ export async function POST(req: Request) {
     );
   }
 
+  const prelude = await runGeneratePrelude(req);
   const encoder = new TextEncoder();
 
-  const body = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      let closed = false;
-      const close = () => {
-        if (!closed) {
-          closed = true;
-          try {
-            controller.close();
-          } catch {
-            /* ignore */
-          }
-        }
-      };
+  const baseHeaders: Record<string, string> = {
+    "Content-Type": "text/plain; charset=utf-8",
+    "Cache-Control": "no-store",
+  };
 
-      const step = (id: string, label: string) => {
+  if ("fatal" in prelude) {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
         controller.enqueue(
           encoder.encode(
-            `${GENEX_STEP_PREFIX}${JSON.stringify({ id, label, ts: Date.now() })}\n`,
+            `${GENEX_FATAL_PREFIX}${JSON.stringify(prelude.fatal)}\n`,
           ),
         );
-      };
+        controller.close();
+      },
+    });
+    return new Response(body, {
+      headers: {
+        ...baseHeaders,
+        "x-genex-is-first-gen": "0",
+        "x-genex-streak": "0",
+      },
+    });
+  }
 
-      const fatal = (payload: Record<string, unknown>) => {
-        controller.enqueue(
-          encoder.encode(`${GENEX_FATAL_PREFIX}${JSON.stringify(payload)}\n`),
-        );
-        close();
-      };
-
+  const p = prelude;
+  const body = new ReadableStream<Uint8Array>({
+    async start(controller) {
       const append = (s: string) => {
         if (s) controller.enqueue(encoder.encode(s));
       };
-
       try {
-        step("receive", "Receiving your request…");
-        const supabase = await createClient();
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        const userId = session?.user?.id ?? null;
-
-        let sourceText = "";
-        let storedInputUrl: string | null = null;
-        let orderedPlatforms: PlatformId[] = [];
-        let preset: GenerationPresetId | undefined;
-        let generationContext: GenerationContextV1 | undefined;
-
-        const contentType = req.headers.get("content-type") ?? "";
-
-        if (contentType.includes("multipart/form-data")) {
-          step("upload", "Reading your file…");
-          let form: FormData;
-          try {
-            form = await req.formData();
-          } catch {
-            fatal({ error: "bad_request", message: "Invalid multipart body." });
-            return;
-          }
-
-          const file = form.get("file");
-          const platformsField = form.get("platforms");
-
-          if (!(file instanceof File) || file.size === 0) {
-            fatal({ error: "bad_request", message: "A non-empty file is required." });
-            return;
-          }
-
-          if (typeof platformsField !== "string") {
-            fatal({
-              error: "bad_request",
-              message: 'Form field "platforms" must be a JSON array string.',
-            });
-            return;
-          }
-
-          let rawPlatforms: unknown;
-          try {
-            rawPlatforms = JSON.parse(platformsField);
-          } catch {
-            fatal({ error: "bad_request", message: "Invalid platforms JSON." });
-            return;
-          }
-
-          if (!Array.isArray(rawPlatforms)) {
-            fatal({ error: "bad_request", message: "platforms must be a JSON array." });
-            return;
-          }
-
-          orderedPlatforms = normalizeOrderedPlatforms(
-            rawPlatforms.filter((x): x is string => typeof x === "string"),
+        for (const st of p.replaySteps) {
+          controller.enqueue(
+            encoder.encode(
+              `${GENEX_STEP_PREFIX}${JSON.stringify({ id: st.id, label: st.label, ts: Date.now() })}\n`,
+            ),
           );
-
-          if (orderedPlatforms.length === 0) {
-            fatal({
-              error: "bad_request",
-              message: "Select at least one valid platform.",
-            });
-            return;
-          }
-
-          const presetField = form.get("preset");
-          if (typeof presetField === "string" && presetField.trim()) {
-            const p = presetField.trim();
-            if (!isGenerationPresetId(p)) {
-              fatal({ error: "bad_request", message: "Invalid preset." });
-              return;
-            }
-            preset = p;
-          }
-
-          const gcField = form.get("generationContext");
-          if (typeof gcField === "string" && gcField.trim()) {
-            try {
-              const rawGc = JSON.parse(gcField) as unknown;
-              const gcParsed = generationContextSchema.safeParse(rawGc);
-              if (gcParsed.success) {
-                generationContext = gcParsed.data as GenerationContextV1;
-              }
-            } catch {
-              /* ignore invalid refinement JSON */
-            }
-          }
-
-          step("transcribe", "Extracting text from your upload…");
-          try {
-            const resolved = await sourceFromUpload(file);
-            sourceText = resolved.sourceText;
-            storedInputUrl = resolved.storedInputUrl;
-          } catch (e) {
-            const msg = e instanceof Error ? e.message : "Could not read file";
-            fatal({ error: "bad_request", message: msg });
-            return;
-          }
-        } else {
-          step("parse", "Reading input…");
-          let json: unknown;
-          try {
-            json = await req.json();
-          } catch {
-            fatal({ error: "bad_request", message: "Invalid JSON body" });
-            return;
-          }
-
-          const parsed = bodySchema.safeParse(json);
-          if (!parsed.success) {
-            fatal({
-              error: "bad_request",
-              message: parsed.error.issues.map((i) => i.message).join("; "),
-            });
-            return;
-          }
-
-          const bodyParsed = parsed.data;
-          preset = bodyParsed.preset;
-          generationContext = bodyParsed.generationContext as
-            | GenerationContextV1
-            | undefined;
-          orderedPlatforms = normalizeOrderedPlatforms(bodyParsed.platforms);
-
-          if (orderedPlatforms.length === 0) {
-            fatal({
-              error: "bad_request",
-              message: "Select at least one valid platform.",
-            });
-            return;
-          }
-
-          if (bodyParsed.mode === "text") {
-            const t = bodyParsed.text?.trim() ?? "";
-            if (!t) {
-              fatal({ error: "bad_request", message: "Text is required." });
-              return;
-            }
-            sourceText = t;
-            const src = bodyParsed.sourceUrl?.trim();
-            if (src) storedInputUrl = src;
-          } else {
-            const u = bodyParsed.url?.trim() ?? "";
-            if (!u) {
-              fatal({ error: "bad_request", message: "URL is required." });
-              return;
-            }
-            storedInputUrl = u;
-            if (isYoutubeVideoUrlForTranscript(u)) {
-              step("youtube", "Fetching YouTube captions…");
-              const fromCaptions = await fetchYoutubeTranscriptText(u);
-              if (fromCaptions?.trim()) {
-                sourceText = fromCaptions;
-              } else {
-                step("fetch", "Fetching page text (fallback)…");
-                try {
-                  sourceText = await fetchUrlAsPlainText(u);
-                } catch (e) {
-                  const msg = e instanceof Error ? e.message : "Could not read URL";
-                  fatal({ error: "bad_request", message: msg });
-                  return;
-                }
-              }
-            } else {
-              step("fetch", "Fetching page content…");
-              try {
-                sourceText = await fetchUrlAsPlainText(u);
-              } catch (e) {
-                const msg = e instanceof Error ? e.message : "Could not read URL";
-                fatal({ error: "bad_request", message: msg });
-                return;
-              }
-            }
-          }
         }
-
-        step("validate", "Checking source text…");
-        if (!sourceText.trim()) {
-          fatal({
-            error: "bad_request",
-            message: "No usable text found for that input.",
-          });
-          return;
-        }
-
-        if (userId && !isUnlimitedCreditsModeServer()) {
-          type CreditRow = {
-            success: boolean;
-            reason: string | null;
-            remaining: number;
-          };
-
-          step("credits", "Checking credits…");
-
-          const { error: profileBootstrapErr } = await supabase
-            .from("profiles")
-            .insert({ id: userId });
-          if (
-            profileBootstrapErr &&
-            profileBootstrapErr.code !== "23505" &&
-            !profileBootstrapErr.message.toLowerCase().includes("duplicate")
-          ) {
-            console.warn(
-              "[generate] profiles bootstrap insert:",
-              profileBootstrapErr.code,
-              profileBootstrapErr.message,
-            );
-          }
-
-          const { data: creditData, error: creditError } = await supabase.rpc(
-            "consume_credits",
-            { p_cost: 1, p_user_id: userId },
-          );
-
-          if (creditError) {
-            if (
-              creditError.code === "42883" ||
-              creditError.message.includes("function")
-            ) {
-              console.error(
-                "[generate] consume_credits(int,uuid) missing — apply supabase/migrations including 20260418210000_consume_credits_postgrest_arg_order.sql",
-                creditError.message,
-              );
-            } else {
-              console.error("[generate] consume_credits failed", creditError.message);
-            }
-            fatal({
-              error: "credit_check_failed",
-              message:
-                "Could not verify your credits. Confirm the latest Supabase migration is applied.",
-            });
-            return;
-          }
-
-          const creditRow = (
-            Array.isArray(creditData) ? creditData[0] : creditData
-          ) as CreditRow | undefined;
-
-          if (
-            !creditRow ||
-            typeof creditRow.success !== "boolean" ||
-            creditRow.success !== true
-          ) {
-            if (creditRow?.reason === "no_credits") {
-              fatal({ error: "no_credits" });
-              return;
-            }
-            if (creditRow?.reason === "no_profile") {
-              fatal({
-                error: "profile_setup",
-                message:
-                  "Could not load your profile for credits. Apply the latest Supabase migration (profiles insert policy + consume_credits), then try again.",
-              });
-              return;
-            }
-            fatal({
-              error: "credit_denied",
-              message: creditRow?.reason ?? "Could not use a credit.",
-            });
-            return;
-          }
-        }
-
-        const { forModel, wasTruncated } = capSourceTextForClipModel(sourceText);
-        if (wasTruncated) {
-          console.info("[generate] clipped source for model TPM", {
-            storedChars: sourceText.length,
-            modelChars: forModel.length,
-          });
-          step("truncate", "Trimming source for model limits…");
-        }
-
-        step("generate", "Generating with GPT-4o…");
 
         const result = createGenerationStreamText({
-          supabase,
-          userId,
-          sourceTextForModel: forModel,
-          sourceTextForStorage: sourceText,
-          storedInputUrl,
-          orderedPlatforms,
-          preset,
-          generationContext: generationContext ?? null,
+          supabase: p.supabase,
+          userId: p.userId,
+          sourceTextForModel: p.sourceTextForModel,
+          sourceTextForStorage: p.sourceTextForStorage,
+          storedInputUrl: p.storedInputUrl,
+          orderedPlatforms: p.orderedPlatforms,
+          preset: p.preset,
+          generationContext: p.generationContext ?? null,
         });
 
         await pipeStreamTextAsPlainText(result, append);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
-        fatal({ error: "exception", message: msg });
-        return;
+        controller.enqueue(
+          encoder.encode(
+            `${GENEX_FATAL_PREFIX}${JSON.stringify({ error: "exception", message: msg })}\n`,
+          ),
+        );
       } finally {
-        close();
+        try {
+          controller.close();
+        } catch {
+          /* ignore */
+        }
       }
     },
   });
 
   return new Response(body, {
     headers: {
-      "Content-Type": "text/plain; charset=utf-8",
-      "Cache-Control": "no-store",
+      ...baseHeaders,
+      "x-genex-is-first-gen": p.isFirstGen ? "1" : "0",
+      "x-genex-streak": String(p.newStreak),
     },
   });
 }

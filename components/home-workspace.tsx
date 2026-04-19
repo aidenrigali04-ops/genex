@@ -2,9 +2,11 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { Clock, User } from "lucide-react";
 
 import { signInWithGoogle, signOut } from "@/app/auth/actions";
+import { GuestSignupGateDialog } from "@/components/auth/guest-signup-gate-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -50,6 +52,8 @@ import {
 import { MAX_MEDIA_UPLOAD_BYTES } from "@/lib/media-upload-limits";
 import { isYoutubeVideoUrlForTranscript } from "@/lib/youtube-url";
 import { type PlatformId } from "@/lib/platforms";
+import type { AdaSidebarVoiceProfile } from "@/components/genex/ada-sidebar";
+import { AdaSidebar } from "@/components/genex/ada-sidebar";
 import { AdaClipWorkspace } from "@/components/genex/ada-clip-workspace";
 import {
   AdaFigmaAmbientBackground,
@@ -59,6 +63,7 @@ import {
   type FigmaMainNavId,
 } from "@/components/genex/ada-figma-dashboard";
 import { SettingsRail } from "@/components/genex/settings-rail";
+import { VoiceProfileModal } from "@/components/genex/voice-profile-modal";
 import {
   VideoVariationWorkspace,
   type VideoVariationWorkspaceHandle,
@@ -95,9 +100,14 @@ type HomeWorkspaceProps = {
   initialCreditsRemaining: number | null;
   initialClipPackages: ClipPackageHistoryItem[];
   totalClipCount: number;
+  /** Server profile `current_streak` for sidebar. */
+  initialCurrentStreak?: number;
+  /** Server voice profile fields for sidebar + modal. */
+  initialVoiceProfile?: AdaSidebarVoiceProfile | null;
   /** Server GENEX_UNLIMITED_CREDITS — skips RPC; use with NEXT_PUBLIC for guests. */
   unlimitedCredits?: boolean;
   authError?: string | null;
+  authSuccess?: string | null;
 };
 
 export function HomeWorkspace({
@@ -105,8 +115,11 @@ export function HomeWorkspace({
   initialCreditsRemaining,
   initialClipPackages,
   totalClipCount,
+  initialCurrentStreak = 0,
+  initialVoiceProfile = null,
   unlimitedCredits = false,
   authError,
+  authSuccess,
 }: HomeWorkspaceProps) {
   const router = useRouter();
   const creditsUnlimited =
@@ -119,6 +132,7 @@ export function HomeWorkspace({
   });
 
   const [signInOpen, setSignInOpen] = useState(false);
+  const [guestSignupGateOpen, setGuestSignupGateOpen] = useState(false);
   const [buyOpen, setBuyOpen] = useState(false);
   const [clipSettingsOpen, setClipSettingsOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -152,6 +166,13 @@ export function HomeWorkspace({
   const [refinementOpen, setRefinementOpen] = useState(false);
   const [lastClipGenerationContext, setLastClipGenerationContext] =
     useState<GenerationContextV1 | null>(null);
+  const [currentStreak, setCurrentStreak] = useState(initialCurrentStreak);
+  const [showFirstGenCelebration, setShowFirstGenCelebration] =
+    useState(false);
+  const [voiceProfileModalOpen, setVoiceProfileModalOpen] = useState(false);
+  const [voiceProfile, setVoiceProfile] = useState<AdaSidebarVoiceProfile | null>(
+    initialVoiceProfile,
+  );
 
   useEffect(() => {
     setUser(initialUser);
@@ -165,16 +186,31 @@ export function HomeWorkspace({
       setCreditsRemaining(readGuestCreditsRemaining());
     }
     setClips(initialClipPackages);
+    setCurrentStreak(initialCurrentStreak);
+    setVoiceProfile(initialVoiceProfile);
   }, [
     initialUser,
     initialCreditsRemaining,
     initialClipPackages,
+    initialCurrentStreak,
+    initialVoiceProfile,
     unlimitedCredits,
   ]);
 
   useEffect(() => {
     if (user) setSignInOpen(false);
   }, [user]);
+
+  useEffect(() => {
+    if (user) setGuestSignupGateOpen(false);
+  }, [user]);
+
+  useEffect(() => {
+    const s = authSuccess?.trim();
+    if (!s) return;
+    toast.success(s);
+    router.replace("/", { scroll: false });
+  }, [authSuccess, router]);
 
   useEffect(() => {
     setTurns((prev) => {
@@ -215,7 +251,7 @@ export function HomeWorkspace({
     if (!user && !creditsUnlimited) {
       const g = readGuestCreditsRemaining();
       if (g <= 0) {
-        setBuyOpen(true);
+        setGuestSignupGateOpen(true);
         setError("You've used your free generations today.");
         return;
       }
@@ -357,12 +393,25 @@ export function HomeWorkspace({
           /* keep */
         }
         if (noCredits) {
-          setBuyOpen(true);
+          if (!user) setGuestSignupGateOpen(true);
+          else setBuyOpen(true);
         }
         setError(message || "Request failed");
         setProgress(0);
         setLoading(false);
         return;
+      }
+
+      const firstGenHeader = res.headers.get("x-genex-is-first-gen");
+      const streakHeader = res.headers.get("x-genex-streak");
+      if (firstGenHeader === "1") {
+        setShowFirstGenCelebration(true);
+      }
+      if (streakHeader != null && streakHeader !== "") {
+        const n = Number.parseInt(streakHeader, 10);
+        if (!Number.isNaN(n)) {
+          setCurrentStreak(n);
+        }
       }
 
       if (!res.body) {
@@ -391,7 +440,10 @@ export function HomeWorkspace({
               (code === "no_credits"
                 ? "You've used your available credits."
                 : code || "Request failed.");
-            if (code === "no_credits") setBuyOpen(true);
+            if (code === "no_credits") {
+              if (!user) setGuestSignupGateOpen(true);
+              else setBuyOpen(true);
+            }
             setError(msg);
             setProgress(0);
             displayAccum = "";
@@ -436,7 +488,10 @@ export function HomeWorkspace({
               (code === "no_credits"
                 ? "You've used your available credits."
                 : code || "Request failed.");
-            if (code === "no_credits") setBuyOpen(true);
+            if (code === "no_credits") {
+              if (!user) setGuestSignupGateOpen(true);
+              else setBuyOpen(true);
+            }
             setError(msg);
             setProgress(0);
             displayAccum = "";
@@ -855,6 +910,11 @@ export function HomeWorkspace({
             onSettings={openWorkspaceSettings}
             onAccount={handleFigmaAccount}
             recentSection={figmaRecentSection}
+            generationStreak={currentStreak}
+            voiceProfile={user ? voiceProfile : null}
+            onEditVoiceProfile={
+              user ? () => setVoiceProfileModalOpen(true) : undefined
+            }
           />
         </aside>
 
@@ -882,6 +942,11 @@ export function HomeWorkspace({
                 setMobileNavOpen(false);
               }}
               recentSection={figmaRecentSection}
+              generationStreak={currentStreak}
+              voiceProfile={user ? voiceProfile : null}
+              onEditVoiceProfile={
+                user ? () => setVoiceProfileModalOpen(true) : undefined
+              }
             />
           </DialogContent>
         </Dialog>
@@ -1017,6 +1082,21 @@ export function HomeWorkspace({
                     void runGeneration();
                   }}
                   onRefinementCancel={() => setRefinementOpen(false)}
+                  emptyStateIsAuthenticated={!!user}
+                  emptyStateHasGenerated={clips.length > 0 || totalClipCount > 0}
+                  onRemix={(prompt) => {
+                    const t = prompt.trim();
+                    if (/^https?:\/\//i.test(t)) {
+                      setInputMode("url");
+                      setUrl(t);
+                      setText("");
+                    } else {
+                      setInputMode("text");
+                      setText(t);
+                      setUrl("");
+                    }
+                    setUploadFile(null);
+                  }}
                   onExamplePrompt={(prompt, mode) => {
                     if (mode === "url") {
                       setInputMode("url");
@@ -1035,6 +1115,7 @@ export function HomeWorkspace({
                     setUrl("");
                     setUploadFile(null);
                   }}
+                  showFirstGenCelebration={showFirstGenCelebration}
                 />
               </div>
             )}
@@ -1053,10 +1134,45 @@ export function HomeWorkspace({
                 <DialogTitle>Settings</DialogTitle>
               </DialogHeader>
               {clipSettingsRail}
+              {user ? (
+                <div className="mt-4 max-h-[42dvh] overflow-y-auto">
+                  <AdaSidebar
+                    footerOnly
+                    user={user}
+                    creditsRemaining={creditsRemaining}
+                    creditsUnlimited={creditsUnlimited}
+                    workspaceTab={workspaceTab}
+                    onWorkspaceTab={(t) => {
+                      setWorkspaceTab(t);
+                      setClipSettingsOpen(false);
+                    }}
+                    onUpgrade={() => {
+                      setBuyOpen(true);
+                      setClipSettingsOpen(false);
+                    }}
+                    onSignIn={() => setSignInOpen(true)}
+                    onSignOut={signOut}
+                    recentItems={sidebarRecentItems}
+                    voiceProfile={voiceProfile}
+                    onEditVoiceProfile={() => {
+                      setVoiceProfileModalOpen(true);
+                      setClipSettingsOpen(false);
+                    }}
+                    generationStreak={currentStreak}
+                  />
+                </div>
+              ) : null}
             </DialogContent>
           </Dialog>
         </>
       ) : null}
+
+      <GuestSignupGateDialog
+        open={guestSignupGateOpen}
+        onOpenChange={setGuestSignupGateOpen}
+        nextPath="/"
+        onOpenWaitlist={() => setBuyOpen(true)}
+      />
 
       <Dialog open={signInOpen} onOpenChange={setSignInOpen}>
         <DialogContent className="border border-ada-border bg-ada-card text-ada-primary sm:max-w-md">
@@ -1083,6 +1199,18 @@ export function HomeWorkspace({
         onOpenChange={setBuyOpen}
         creditsRemaining={creditsRemaining}
         creditsUnlimited={creditsUnlimited}
+      />
+
+      <VoiceProfileModal
+        open={voiceProfileModalOpen}
+        onOpenChange={setVoiceProfileModalOpen}
+        variant="adaKit"
+        onSaved={(p) => {
+          setVoiceProfile(p);
+          queueMicrotask(() => {
+            void router.refresh();
+          });
+        }}
       />
     </>
   );

@@ -50,6 +50,55 @@ function deduplicateKeywords(shots) {
 }
 
 /**
+ * Ensure opener/closer shots read as human-forward for hook + resolution frames.
+ * @param {Array<{ keyword?: string; duration?: number; caption?: string }>} shots
+ */
+function enforceVisualArc(shots) {
+  if (!Array.isArray(shots) || shots.length < 3) return shots;
+
+  const openerHints = [
+    "close up person",
+    "face",
+    "hands",
+    "reaction",
+    "portrait",
+  ];
+  const firstKw = String(shots[0]?.keyword ?? "").toLowerCase();
+  const firstHasHuman = openerHints.some((kw) => firstKw.includes(kw));
+
+  let out = shots;
+  if (!firstHasHuman) {
+    const topic = String(shots[0]?.keyword ?? "")
+      .trim()
+      .split(/\s+/)
+      .slice(-2)
+      .join(" ");
+    out = [
+      {
+        ...shots[0],
+        keyword: `close up person ${topic || "speaking"} natural light`.trim(),
+      },
+      ...shots.slice(1),
+    ];
+  }
+
+  const lastIdx = out.length - 1;
+  const lastKw = String(out[lastIdx]?.keyword ?? "").toLowerCase();
+  const closerHints = ["person", "man", "woman", "face", "people"];
+  const lastHasHuman = closerHints.some((kw) => lastKw.includes(kw));
+
+  if (!lastHasHuman) {
+    out = out.slice();
+    out[lastIdx] = {
+      ...out[lastIdx],
+      keyword: `${String(out[lastIdx]?.keyword ?? "").trim()} person reaction`.trim(),
+    };
+  }
+
+  return out;
+}
+
+/**
  * Given a script, returns a shot list:
  * [{ keyword: string, duration: number, caption: string }]
  * @param {string} script
@@ -86,6 +135,27 @@ TIMING RULES:
 - Longer shots (5–7s) for explanation or emotional beats
 - Minimum 6 shots, maximum 12 shots
 
+VISUAL ARC RULES (critical for professional feel):
+- Shot 1 (OPENER): Must feature a PERSON in close-up or medium shot — face, hands,
+  or reaction. This is the hook frame. Never a landscape or object-only shot.
+  Keywords must include one of: "close up person", "face reaction", or "hands working"
+- Shots 2–4 (BUILD): Alternate between WIDE environment shots and CLOSE detail shots.
+  Wide: shows the world/context (e.g. "busy city street morning rush")
+  Detail: shows the specific action (e.g. "typing laptop coffee shop focused")
+- Shot N–1 (PRE-CLOSE): An emotional or conceptual beat — a person reacting to an
+  outcome, nature metaphor, or symbolic action.
+- Shot N (CLOSER): Return to a person in medium shot — ending on a human face or
+  gesture creates psychological closure. Never end on an object or location only.
+
+KEYWORD QUALITY MULTIPLIERS (dramatically improve Pexels results):
+- Add a lighting/time descriptor: "golden hour", "natural light", or "bright studio"
+- Add a motion descriptor: "walking", "working", "running", "laughing", or "talking"
+- Add an emotional tone: "focused", "confident", "relaxed", or "energetic"
+- Bad: "fitness motivation"
+- Good: "woman running track sunrise motivated energetic"
+- Bad: "success business"
+- Good: "confident man suit office window natural light"
+
 CAPTION RULES:
 - Captions are what the voiceover says DURING that shot — slice the script naturally
 - Each caption should be a complete thought or phrase, not mid-sentence
@@ -109,7 +179,7 @@ ${script.slice(0, 4000)}`;
     try {
       const res = await openai.chat.completions.create({
         model: "gpt-4o",
-        temperature: 0.4,
+        temperature: 0.2,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userMessage },
@@ -125,7 +195,7 @@ ${script.slice(0, 4000)}`;
         throw new Error("Shot plan too short (need at least 6 shots)");
       }
 
-      let shots = deduplicateKeywords(rawShots).slice(0, 12);
+      let shots = enforceVisualArc(deduplicateKeywords(rawShots)).slice(0, 12);
 
       let totalDuration = shots.reduce(
         (s, sh) => s + (Number(sh.duration) || 5),

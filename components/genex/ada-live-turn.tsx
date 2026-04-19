@@ -2,7 +2,7 @@
 
 import type { JSX } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Zap } from "lucide-react";
 
 import {
@@ -19,6 +19,7 @@ import type { GenerationUiStep } from "@/lib/generation-stream-protocol";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
+import { AdaFirstGenToast } from "./ada-first-gen-toast";
 import { AdaOutputSections } from "./ada-output-sections";
 
 const CLIP_PLATFORMS: PlatformId[] = ["clip_package"];
@@ -69,6 +70,18 @@ export function AdaLiveTurn({
   const supabase = supabaseProp ?? defaultSupabase;
   const clipIdentifiedFired = useRef(false);
   const prevStreamedRef = useRef<string>("");
+  const [showFirstGenToast, setShowFirstGenToast] = useState(false);
+
+  useEffect(() => {
+    if (!streamedText.trim()) return;
+    try {
+      if (typeof window !== "undefined" && !sessionStorage.getItem("genex_first_gen_shown")) {
+        setShowFirstGenToast(true);
+      }
+    } catch {
+      // sessionStorage blocked
+    }
+  }, [streamedText]);
 
   useEffect(() => {
     const prev = prevStreamedRef.current;
@@ -97,6 +110,7 @@ export function AdaLiveTurn({
     : loadingLabel;
 
   return (
+    <>
     <div className="space-y-4">
       <div className="flex items-start gap-3">
         <div
@@ -242,5 +256,14 @@ export function AdaLiveTurn({
         </div>
       </div>
     </div>
+    {showFirstGenToast ? (
+      <AdaFirstGenToast
+        onDismiss={() => setShowFirstGenToast(false)}
+        variant={variant}
+        userId={userId}
+        supabase={supabase}
+      />
+    ) : null}
+    </>
   );
 }
