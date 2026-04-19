@@ -6,13 +6,10 @@ import {
   ArrowUp,
   ChevronLeft,
   ChevronRight,
+  Clapperboard,
   Crown,
-  Image as ImageIcon,
-  MessageSquare,
   Mic,
-  Music,
   Paperclip,
-  Search,
   Settings,
   Sparkles,
   UserRound,
@@ -46,13 +43,7 @@ export function AdaFigmaAmbientBackground() {
   );
 }
 
-export type FigmaMainNavId =
-  | "search"
-  | "ai_chat"
-  | "voiceover"
-  | "image"
-  | "video"
-  | "music";
+export type FigmaMainNavId = "clip" | "video";
 
 export type AdaFigmaSidebarNavProps = {
   activeMain: FigmaMainNavId;
@@ -63,15 +54,14 @@ export type AdaFigmaSidebarNavProps = {
   recentSection?: ReactNode;
 };
 
-const MAIN_NAV: { id: FigmaMainNavId; label: string; icon: typeof Search; soon?: boolean }[] =
-  [
-    { id: "search", label: "Search", icon: Search },
-    { id: "ai_chat", label: "AI Chat", icon: MessageSquare },
-    { id: "voiceover", label: "Voiceover", icon: Mic, soon: true },
-    { id: "image", label: "Image", icon: ImageIcon, soon: true },
-    { id: "video", label: "Video", icon: Video },
-    { id: "music", label: "Music", icon: Music, soon: true },
-  ];
+const MAIN_NAV: {
+  id: FigmaMainNavId;
+  label: string;
+  icon: typeof Clapperboard;
+}[] = [
+  { id: "clip", label: "Clip generation", icon: Clapperboard },
+  { id: "video", label: "Video", icon: Video },
+];
 
 export function AdaFigmaSidebarNav({
   activeMain,
@@ -113,29 +103,22 @@ export function AdaFigmaSidebarNav({
 
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-3 pb-5 pt-5">
         <div className="flex flex-col gap-3">
-          {MAIN_NAV.map(({ id, label, icon: Icon, soon }) => {
+          {MAIN_NAV.map(({ id, label, icon: Icon }) => {
             const active = activeMain === id;
             return (
               <button
                 key={id}
                 type="button"
-                disabled={soon}
-                onClick={() => !soon && onSelectMain(id)}
+                onClick={() => onSelectMain(id)}
                 className={cn(
                   "flex w-full items-center gap-3 rounded-[32px] py-1 pl-4 pr-4 text-left text-base leading-9 text-white transition-opacity",
                   active && MAGENTA_GRAD,
-                  soon && "cursor-not-allowed opacity-40",
-                  !active && !soon && "hover:bg-white/10",
+                  !active && "hover:bg-white/10",
                 )}
                 style={{ fontWeight: 400 }}
               >
                 <Icon className="size-5 shrink-0 text-white" aria-hidden />
                 <span className="min-w-0 flex-1 truncate">{label}</span>
-                {soon ? (
-                  <span className="shrink-0 text-[10px] uppercase tracking-wide text-white/50">
-                    Soon
-                  </span>
-                ) : null}
               </button>
             );
           })}

@@ -14,6 +14,8 @@ import { cn } from "@/lib/utils";
 
 type Props = {
   mode: "video" | "clip";
+  /** Dark glass styling when embedded in Ada kit clip shell. */
+  variant?: "default" | "adaKit";
   /** For fork actions */
   videoJobId?: string | null;
   originalPrompt: string;
@@ -40,6 +42,7 @@ const VIDEO_CHIPS = [
 
 export function GenerationFeedbackPanel({
   mode,
+  variant = "default",
   videoJobId,
   originalPrompt,
   generationContext,
@@ -47,6 +50,7 @@ export function GenerationFeedbackPanel({
   onCreditsUpdated,
   onVideoForked,
 }: Props) {
+  const kit = variant === "adaKit";
   const [messages, setMessages] = useState<
     { role: "user" | "assistant"; text: string }[]
   >([]);
@@ -206,24 +210,60 @@ export function GenerationFeedbackPanel({
   const chips = mode === "video" ? VIDEO_CHIPS : CLIP_CHIPS;
 
   return (
-    <section className="mt-6 space-y-4 rounded-ada-card border border-ada-border bg-ada-card p-5">
+    <section
+      className={cn(
+        "mt-6 space-y-4 rounded-2xl border p-5",
+        kit
+          ? "border-white/14 bg-white/[0.06] font-[family-name:var(--font-instrument-sans)] text-white backdrop-blur-sm outline outline-1 -outline-offset-1 outline-white/10"
+          : "rounded-ada-card border-ada-border bg-ada-card",
+      )}
+    >
       <div>
-        <h3 className="text-lg font-semibold text-ada-primary">AI Feedback</h3>
-        <p className="text-muted-foreground text-sm">
+        <h3
+          className={cn(
+            "text-lg font-semibold",
+            kit
+              ? "font-[family-name:var(--font-instrument-serif)] text-xl font-normal tracking-[0.36px] text-white"
+              : "text-ada-primary",
+          )}
+        >
+          AI Feedback
+        </h3>
+        <p className={cn("text-sm", kit ? "text-white/55" : "text-muted-foreground")}>
           Ask the strategist about these results. Each message uses{" "}
-          <strong>1 credit</strong> (signed-in users).
+          <strong className={kit ? "text-white/90" : undefined}>1 credit</strong> (signed-in
+          users).
         </p>
         {ctxSummary ? (
-          <p className="text-muted-foreground mt-2 rounded-lg border border-[#E8E4F8] bg-[#F0EFFE]/60 px-3 py-2 text-xs dark:border-white/10 dark:bg-zinc-900/40">
-            <span className="font-medium text-[#0F0A1E] dark:text-zinc-100">Refinement used: </span>
+          <p
+            className={cn(
+              "mt-2 rounded-xl border px-3 py-2 text-xs",
+              kit
+                ? "border-white/16 bg-black/30 text-white/75"
+                : "text-muted-foreground border-[#E8E4F8] bg-[#F0EFFE]/60 dark:border-white/10 dark:bg-zinc-900/40",
+            )}
+          >
+            <span
+              className={cn(
+                "font-medium",
+                kit ? "text-white/90" : "text-[#0F0A1E] dark:text-zinc-100",
+              )}
+            >
+              Refinement used:{" "}
+            </span>
             {ctxSummary}
           </p>
         ) : null}
       </div>
 
-      <div className="flex max-h-72 flex-col gap-3 overflow-y-auto rounded-ada-input bg-ada-app p-3">
+      <div
+        className={cn(
+          "flex max-h-72 flex-col gap-3 overflow-y-auto rounded-xl p-3",
+          kit ? "border border-white/10 bg-black/25" : "rounded-ada-input bg-ada-app",
+        )}
+      >
         {messages.length === 0 ? (
-          <p className="text-muted-foreground text-sm">
+          <p className={cn("text-sm", kit ? "text-white/50" : "text-muted-foreground")}>
             Ask anything about pacing, hooks, platform fit, or rewrites.
           </p>
         ) : (
@@ -233,8 +273,12 @@ export function GenerationFeedbackPanel({
               className={cn(
                 "max-w-[95%] rounded-2xl px-3 py-2 text-sm leading-relaxed",
                 m.role === "user"
-                  ? "ml-auto rounded-br-md bg-ada-accent text-white"
-                  : "mr-auto rounded-bl-md border border-ada-border bg-ada-elevated text-ada-primary",
+                  ? kit
+                    ? "ml-auto rounded-br-md bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] text-white"
+                    : "ml-auto rounded-br-md bg-ada-accent text-white"
+                  : kit
+                    ? "mr-auto rounded-bl-md border border-white/16 bg-white/10 text-white/95"
+                    : "mr-auto rounded-bl-md border border-ada-border bg-ada-elevated text-ada-primary",
               )}
             >
               <pre className="font-sans whitespace-pre-wrap wrap-break-word">
@@ -252,7 +296,12 @@ export function GenerationFeedbackPanel({
             type="button"
             size="sm"
             variant="outline"
-            className="rounded-ada-pill border border-ada-border bg-transparent text-xs text-ada-secondary hover:border-ada-border-active hover:text-ada-primary"
+            className={cn(
+              "rounded-full text-xs",
+              kit
+                ? "border-white/32 bg-transparent text-white/85 hover:border-white/50 hover:bg-white/10 hover:text-white"
+                : "rounded-ada-pill border-ada-border text-ada-secondary hover:border-ada-border-active hover:text-ada-primary",
+            )}
             disabled={streaming}
             onClick={() => void sendFeedback(c)}
           >
@@ -263,7 +312,12 @@ export function GenerationFeedbackPanel({
 
       {mode === "video" && videoJobId && messages.length > 0 ? (
         <div className="flex flex-wrap gap-2">
-          <span className="text-muted-foreground w-full text-xs font-medium">
+          <span
+            className={cn(
+              "w-full text-xs font-medium",
+              kit ? "text-white/50" : "text-muted-foreground",
+            )}
+          >
             Re-run with the last AI note (full new 5-variation job):
           </span>
           {[1, 2, 3, 4, 5].map((n) => (
@@ -282,10 +336,20 @@ export function GenerationFeedbackPanel({
       ) : null}
 
       <div className="space-y-2">
-        <Label htmlFor="feedback-input">Ask AI about these results…</Label>
+        <Label
+          htmlFor="feedback-input"
+          className={kit ? "text-white/65" : undefined}
+        >
+          Ask AI about these results…
+        </Label>
         <textarea
           id="feedback-input"
-          className="min-h-[80px] w-full resize-none rounded-ada-input border border-ada-border bg-ada-input px-3 py-2 text-sm text-ada-primary outline-none transition-colors placeholder:text-ada-disabled focus:border-ada-focus"
+          className={cn(
+            "min-h-[80px] w-full resize-none rounded-xl border px-3 py-2 text-sm outline-none transition-colors",
+            kit
+              ? "border-white/20 bg-black/30 text-white placeholder:text-white/45 focus:border-white/40"
+              : "rounded-ada-input border-ada-border bg-ada-input text-ada-primary placeholder:text-ada-disabled focus:border-ada-focus",
+          )}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           disabled={streaming}
@@ -293,7 +357,12 @@ export function GenerationFeedbackPanel({
         />
         <Button
           type="button"
-          className="rounded-ada-input bg-linear-to-r from-[#7B5CFA] to-[#9B6FFF] px-5 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-40"
+          className={cn(
+            "rounded-full px-5 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-40",
+            kit
+              ? "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] shadow-[0_0_20px_rgba(203,45,206,0.2)]"
+              : "rounded-ada-input bg-linear-to-r from-[#7B5CFA] to-[#9B6FFF]",
+          )}
           disabled={streaming || !input.trim()}
           onClick={() => void sendFeedback(input)}
         >

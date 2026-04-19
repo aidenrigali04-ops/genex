@@ -685,7 +685,7 @@ export function HomeWorkspace({
     !url.trim();
 
   const figmaActiveMain: FigmaMainNavId =
-    workspaceTab === "video" ? "video" : "search";
+    workspaceTab === "video" ? "video" : "clip";
 
   const handleFigmaMainNav = useCallback((id: FigmaMainNavId) => {
     if (id === "video") {
@@ -693,7 +693,7 @@ export function HomeWorkspace({
       setMobileNavOpen(false);
       return;
     }
-    if (id === "search" || id === "ai_chat") {
+    if (id === "clip") {
       setWorkspaceTab("clip");
       setMobileNavOpen(false);
     }
@@ -889,9 +889,15 @@ export function HomeWorkspace({
                   setUrl("");
                   setUploadFile(null);
                 }}
+                onFileSelected={(file) => {
+                  setUploadFile(file);
+                  setInputMode("file");
+                  setText("");
+                  setUrl("");
+                }}
               />
             ) : (
-              <div className="min-h-0 min-w-0 flex-1 overflow-hidden bg-[#0A050F]/50">
+              <div className="min-h-0 min-w-0 flex-1 overflow-hidden bg-transparent">
                 <AdaClipWorkspace
                   inputMode={inputMode}
                   onInputModeChange={(mode) => {
@@ -927,6 +933,7 @@ export function HomeWorkspace({
                   textRatingGenerationId={textRatingGenerationId}
                   lastClipGenerationContext={lastClipGenerationContext}
                   clipOriginalPromptSummary={clipOriginalPromptSummary}
+                  variant="adaKit"
                 />
               </div>
             )}

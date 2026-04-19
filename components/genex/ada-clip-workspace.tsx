@@ -45,7 +45,11 @@ export type AdaClipWorkspaceProps = {
   textRatingGenerationId?: string;
   lastClipGenerationContext: GenerationContextV1 | null;
   clipOriginalPromptSummary: string;
+  variant?: "default" | "adaKit";
 };
+
+const MAGENTA_ACTIVE =
+  "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] shadow-[0_0_12px_rgba(203,45,206,0.35)]";
 
 export function AdaClipWorkspace({
   inputMode,
@@ -79,9 +83,17 @@ export function AdaClipWorkspace({
   textRatingGenerationId,
   lastClipGenerationContext,
   clipOriginalPromptSummary,
+  variant = "default",
 }: AdaClipWorkspaceProps) {
+  const kit = variant === "adaKit";
+
   return (
-    <div className="flex h-full min-h-0 gap-5 p-5">
+    <div
+      className={cn(
+        "flex h-full min-h-0 gap-5 p-4 sm:p-5",
+        kit && "font-[family-name:var(--font-instrument-sans)] text-white",
+      )}
+    >
       <div className="flex w-[360px] shrink-0 flex-col gap-4">
         <AdaInputCard
           inputMode={inputMode}
@@ -100,18 +112,30 @@ export function AdaClipWorkspace({
           canSubmit={canSubmit}
           onSubmit={onSubmit}
           maxUploadMb={maxUploadMb}
+          variant={variant}
         />
 
         {loading || generationSteps.length > 0 ? (
-          <div className="divide-y divide-ada-border overflow-hidden rounded-ada-card border border-ada-border bg-ada-card">
+          <div
+            className={cn(
+              "divide-y overflow-hidden rounded-2xl border",
+              kit
+                ? "divide-white/10 border-white/14 bg-white/[0.06] backdrop-blur-sm outline outline-1 -outline-offset-1 outline-white/10"
+                : "divide-ada-border rounded-ada-card border-ada-border bg-ada-card",
+            )}
+          >
             {generationSteps.map((s, i) => (
               <div key={`${s.id}-${i}`} className="flex items-center gap-3 px-4 py-2.5">
                 <div
                   className={cn(
                     "flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold",
                     i === generationSteps.length - 1 && loading
-                      ? "animate-pulse bg-ada-accent text-white"
-                      : "bg-ada-elevated text-ada-disabled",
+                      ? kit
+                        ? cn(MAGENTA_ACTIVE, "animate-pulse text-white")
+                        : "animate-pulse bg-ada-accent text-white"
+                      : kit
+                        ? "bg-white/10 text-white/45"
+                        : "bg-ada-elevated text-ada-disabled",
                   )}
                 >
                   {i === generationSteps.length - 1 && loading ? "…" : "✓"}
@@ -120,38 +144,65 @@ export function AdaClipWorkspace({
                   className={cn(
                     "flex-1 text-xs",
                     i === generationSteps.length - 1 && loading
-                      ? "font-medium text-ada-primary"
-                      : "text-ada-disabled",
+                      ? kit
+                        ? "font-medium text-white"
+                        : "font-medium text-ada-primary"
+                      : kit
+                        ? "text-white/45"
+                        : "text-ada-disabled",
                   )}
                 >
                   {s.label}
                 </span>
                 {getElapsed(s.ts) ? (
-                  <span className="tabular-nums text-[10px] text-ada-disabled">
+                  <span
+                    className={cn(
+                      "tabular-nums text-[10px]",
+                      kit ? "text-white/40" : "text-ada-disabled",
+                    )}
+                  >
                     {getElapsed(s.ts)}
                   </span>
                 ) : null}
               </div>
             ))}
             {loading && generationSteps.length === 0 ? (
-              <div className="animate-pulse px-4 py-3 text-xs text-ada-disabled">Connecting…</div>
+              <div
+                className={cn(
+                  "animate-pulse px-4 py-3 text-xs",
+                  kit ? "text-white/45" : "text-ada-disabled",
+                )}
+              >
+                Connecting…
+              </div>
             ) : null}
           </div>
         ) : null}
 
         {loading ? (
           <div className="space-y-3">
-            <Progress value={fetchingYoutubeTranscript ? 18 : progress} className="w-full">
+            <Progress
+              value={fetchingYoutubeTranscript ? 18 : progress}
+              className="w-full"
+              trackClassName={kit ? "bg-white/12" : undefined}
+              indicatorClassName={
+                kit
+                  ? "bg-[linear-gradient(90deg,#D31CD7_0%,#8800DC_100%)]"
+                  : undefined
+              }
+            >
               <div className="flex w-full items-center justify-between gap-2">
-                <ProgressLabel>
+                <ProgressLabel className={kit ? "text-sm font-medium text-white/85" : undefined}>
                   {fetchingYoutubeTranscript
                     ? "YouTube"
                     : (generationSteps.at(-1)?.label ?? "Generating")}
                 </ProgressLabel>
-                <ProgressValue />
+                <ProgressValue
+                  className={kit ? "text-sm text-white/55 tabular-nums" : undefined}
+                />
               </div>
             </Progress>
-            <p className="text-xs text-ada-secondary">
+            <p className={cn("text-xs", kit ? "text-white/50" : "text-ada-secondary")}>
               {fetchingYoutubeTranscript
                 ? "Fetching captions before generation…"
                 : generationSteps.length > 0
@@ -163,7 +214,12 @@ export function AdaClipWorkspace({
 
         {error ? (
           <div
-            className="rounded-ada-input border border-ada-error/30 bg-ada-error/10 px-4 py-3 text-sm text-ada-error"
+            className={cn(
+              "rounded-xl border px-4 py-3 text-sm",
+              kit
+                ? "border-red-400/35 bg-red-950/40 text-red-100"
+                : "rounded-ada-input border-ada-error/30 bg-ada-error/10 text-ada-error",
+            )}
             role="alert"
           >
             {error}
@@ -171,7 +227,7 @@ export function AdaClipWorkspace({
         ) : null}
       </div>
 
-      <div className="min-w-0 flex-1 overflow-y-auto">
+      <div className="min-w-0 flex-1 overflow-y-auto pr-1">
         <AdaOutputPanel
           loading={loading}
           streamedText={streamedText}
@@ -185,6 +241,7 @@ export function AdaClipWorkspace({
           generationId={textRatingGenerationId}
           generationContext={lastClipGenerationContext}
           originalPrompt={clipOriginalPromptSummary}
+          variant={variant}
         />
       </div>
     </div>
