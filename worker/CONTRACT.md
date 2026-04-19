@@ -51,3 +51,7 @@ queued → planning → fetching → assembling → uploading → complete | fai
 
 - **Bucket:** `text-video-outputs`
 - **Output object:** `{user_id}/{job_id}/output.mp4`
+
+### ElevenLabs (voice)
+
+Voice calls use **HTTPS** to `https://api.elevenlabs.io` only (`xi-api-key` header). If you see **401** with `detected_unusual_activity`, ElevenLabs is blocking the **server IP / VPN / free tier**—not a TLS bug. Use a **paid** plan for workers on cloud hosts (Railway, Fly, etc.) or run TTS from a network they accept.
