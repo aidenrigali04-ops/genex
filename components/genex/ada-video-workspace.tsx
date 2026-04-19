@@ -7,6 +7,12 @@ import { Download, Loader2, Play, Video, Zap } from "lucide-react";
 import { UNLIMITED_CREDITS_SENTINEL } from "@/lib/credits-config";
 import { cn } from "@/lib/utils";
 
+/** Ada UI Kit — Figma node 82-3048 glass + magenta system (kit variant only). */
+const KIT_GLASS_PANEL =
+  "rounded-[22px] border border-white/16 bg-white/[0.12] shadow-[0_12px_28px_rgba(11,6,16,0.28)] backdrop-blur-md";
+const KIT_MAGENTA_GRAD =
+  "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] shadow-[0_0_20px_rgba(203,45,206,0.28)]";
+
 const VOICE_OPTIONS = [
   { label: "Rachel", id: "21m00Tcm4TlvDq8ikWAM", desc: "Warm & clear" },
   { label: "Adam", id: "pNInz6obpgDQGcFmaJgB", desc: "Deep & authoritative" },
@@ -396,23 +402,30 @@ export function AdaVideoWorkspace({
 
   return (
     <div className={rootClass}>
-      <div className="relative z-[1] mx-auto grid h-full w-full max-w-5xl grid-cols-1 gap-6 overflow-hidden px-4 py-6 lg:grid-cols-[380px_1fr]">
+      <div className="relative z-[1] mx-auto grid h-full w-full max-w-6xl grid-cols-1 gap-6 overflow-hidden px-5 py-6 sm:px-8 sm:py-8 lg:grid-cols-[380px_1fr] lg:gap-8 lg:px-12 xl:px-16">
         {/* Left column */}
         <div className="flex min-h-0 flex-col gap-4 lg:overflow-y-auto lg:pb-8">
-          <div className="rounded-2xl border border-ada-border bg-ada-card p-5 space-y-4">
+          <div
+            className={cn(
+              "space-y-4 rounded-2xl border border-ada-border bg-ada-card p-5",
+              kit && KIT_GLASS_PANEL,
+            )}
+          >
             <div>
               <h2
                 className={cn(
                   "text-sm font-semibold",
-                  kit ? "text-white" : "text-ada-primary",
+                  kit
+                    ? "font-[family-name:var(--font-instrument-serif)] text-lg font-normal tracking-[0.36px] text-white"
+                    : "text-ada-primary",
                 )}
               >
                 Got a video idea?
               </h2>
               <p
                 className={cn(
-                  "text-xs mt-0.5",
-                  kit ? "text-white/45" : "text-ada-disabled",
+                  "mt-1 text-xs leading-relaxed",
+                  kit ? "text-white/55" : "text-ada-disabled mt-0.5",
                 )}
               >
                 Drop a YouTube URL or describe your idea — GenEx handles the rest.
@@ -420,7 +433,10 @@ export function AdaVideoWorkspace({
             </div>
 
             <div
-              className="flex gap-1 rounded-full border border-ada-border bg-ada-app p-0.5"
+              className={cn(
+                "flex gap-1 rounded-full border border-ada-border bg-ada-app p-0.5",
+                kit && "border-white/16 bg-white/[0.12] p-1",
+              )}
               role="tablist"
               aria-label="Input source"
             >
@@ -434,14 +450,12 @@ export function AdaVideoWorkspace({
                   className={cn(
                     "flex-1 rounded-full py-1.5 text-xs font-medium transition-colors",
                     inputMode === mode
-                      ? "bg-ada-accent text-white shadow-sm"
-                      : "text-ada-secondary hover:text-ada-primary",
-                    kit &&
-                      inputMode === mode &&
-                      "bg-linear-to-br from-[#D31CD7] to-[#8800DC] shadow-[0_0_12px_rgba(203,45,206,0.2)]",
-                    kit &&
-                      inputMode !== mode &&
-                      "text-white/55 hover:text-white/80",
+                      ? kit
+                        ? cn(KIT_MAGENTA_GRAD, "text-white")
+                        : "bg-ada-accent text-white shadow-sm"
+                      : kit
+                        ? "text-white/55 hover:bg-white/10 hover:text-white/90"
+                        : "text-ada-secondary hover:text-ada-primary",
                   )}
                 >
                   {mode === "url" ? "YouTube URL" : "My Idea"}
@@ -457,7 +471,8 @@ export function AdaVideoWorkspace({
                 placeholder="https://youtube.com/watch?v=..."
                 className={cn(
                   "w-full rounded-xl border border-ada-border bg-ada-input px-3 py-2.5 text-sm outline-none transition-colors focus-visible:border-ada-accent focus-visible:ring-2 focus-visible:ring-ada-accent/20",
-                  kit && "border-white/14 bg-white/[0.06] text-white placeholder:text-white/35",
+                  kit &&
+                    "border-white/16 bg-white/[0.08] text-white placeholder:text-white/40 focus-visible:border-white/40 focus-visible:ring-[#C717D8]/35",
                 )}
               />
             ) : (
@@ -468,7 +483,8 @@ export function AdaVideoWorkspace({
                 rows={3}
                 className={cn(
                   "w-full resize-none rounded-xl border border-ada-border bg-ada-input px-3 py-2.5 text-sm outline-none transition-colors focus-visible:border-ada-accent focus-visible:ring-2 focus-visible:ring-ada-accent/20",
-                  kit && "border-white/14 bg-white/[0.06] text-white placeholder:text-white/35",
+                  kit &&
+                    "border-white/16 bg-white/[0.08] text-white placeholder:text-white/40 focus-visible:border-white/40 focus-visible:ring-[#C717D8]/35",
                 )}
               />
             )}
@@ -476,8 +492,8 @@ export function AdaVideoWorkspace({
 
           <div
             className={cn(
-              "rounded-2xl border border-ada-border bg-ada-card p-4 space-y-3",
-              kit && "border-white/16 bg-white/[0.12] backdrop-blur-md",
+              "space-y-3 rounded-2xl border border-ada-border bg-ada-card p-4",
+              kit && KIT_GLASS_PANEL,
             )}
           >
             <p
@@ -499,23 +515,25 @@ export function AdaVideoWorkspace({
                     className={cn(
                       "rounded-xl border px-3 py-2.5 text-left transition-colors",
                       sel
-                        ? "border-ada-accent bg-ada-accent-subtle"
+                        ? kit
+                          ? cn(KIT_MAGENTA_GRAD, "border-transparent text-white")
+                          : "border-ada-accent bg-ada-accent-subtle"
                         : cn(
                             "border-ada-border hover:border-ada-border-active",
-                            kit && "border-white/12 hover:border-white/25",
+                            kit &&
+                              "border-white/12 bg-transparent hover:border-white/30 hover:bg-white/[0.06]",
                           ),
-                      kit &&
-                        sel &&
-                        "border-transparent bg-linear-to-br from-[#D31CD7]/35 to-[#8800DC]/25",
                     )}
                   >
                     <p
                       className={cn(
                         "text-xs font-semibold",
                         sel
-                          ? "text-ada-accent"
+                          ? kit
+                            ? "text-white"
+                            : "text-ada-accent"
                           : kit
-                            ? "text-white/80"
+                            ? "text-white/85"
                             : "text-ada-primary",
                       )}
                     >
@@ -523,11 +541,13 @@ export function AdaVideoWorkspace({
                     </p>
                     <p
                       className={cn(
-                        "text-[10px] mt-0.5",
+                        "mt-0.5 text-[10px]",
                         sel
-                          ? "text-ada-accent/70"
+                          ? kit
+                            ? "text-white/75"
+                            : "text-ada-accent/70"
                           : kit
-                            ? "text-white/35"
+                            ? "text-white/40"
                             : "text-ada-disabled",
                       )}
                     >
@@ -553,8 +573,10 @@ export function AdaVideoWorkspace({
               }
               onClick={() => void handleGenerate()}
               className={cn(
-                "flex w-full items-center justify-center gap-2 rounded-full bg-linear-to-r from-[#7B5CFA] to-[#9B6FFF] py-3.5 text-sm font-semibold text-white transition-opacity hover:opacity-90 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40",
-                kit && "shadow-[0_16px_24px_rgba(123,92,250,0.2)] ring-1 ring-white/15",
+                "flex w-full items-center justify-center gap-2 rounded-full py-3.5 text-sm font-semibold text-white transition-opacity hover:opacity-90 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40",
+                kit
+                  ? cn(KIT_MAGENTA_GRAD, "ring-1 ring-white/18 hover:opacity-95")
+                  : "bg-linear-to-r from-[#7B5CFA] to-[#9B6FFF]",
               )}
             >
               {isSubmitting ? (
@@ -587,7 +609,12 @@ export function AdaVideoWorkspace({
                 </button>
               </p>
             ) : (
-              <p className="text-center text-[10px] text-ada-disabled">
+              <p
+                className={cn(
+                  "text-center text-[10px]",
+                  kit ? "text-white/45" : "text-ada-disabled",
+                )}
+              >
                 Uses {creditCost} credits per video
               </p>
             )}
@@ -609,14 +636,24 @@ export function AdaVideoWorkspace({
             <div
               className={cn(
                 "overflow-hidden rounded-2xl border border-ada-border bg-ada-card",
-                kit && "border-white/20 bg-white/[0.08] backdrop-blur-sm",
+                kit && KIT_GLASS_PANEL,
               )}
             >
               <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-start">
-                <div className="mx-auto aspect-[9/16] w-full max-w-[120px] shrink-0 overflow-hidden rounded-xl bg-linear-to-br from-[#7B5CFA]/20 to-[#9B6FFF]/10 sm:mx-0">
+                <div
+                  className={cn(
+                    "mx-auto aspect-[9/16] w-full max-w-[120px] shrink-0 overflow-hidden rounded-xl sm:mx-0",
+                    kit
+                      ? "bg-[linear-gradient(145deg,rgba(211,28,215,0.35)_0%,rgba(136,0,220,0.12)_100%)]"
+                      : "bg-linear-to-br from-[#7B5CFA]/20 to-[#9B6FFF]/10",
+                  )}
+                >
                   <div className="flex h-full items-center justify-center">
                     <Loader2
-                      className="size-6 animate-spin text-ada-accent opacity-60"
+                      className={cn(
+                        "size-6 animate-spin opacity-70",
+                        kit ? "text-[#E879F9]" : "text-ada-accent",
+                      )}
                       aria-hidden
                     />
                   </div>
@@ -625,7 +662,12 @@ export function AdaVideoWorkspace({
                 <div className="flex flex-1 flex-col gap-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <div className="h-2 w-2 shrink-0 rounded-full bg-ada-accent animate-pulse" />
+                      <div
+                        className={cn(
+                          "h-2 w-2 shrink-0 animate-pulse rounded-full",
+                          kit ? "bg-[#D31CD7]" : "bg-ada-accent",
+                        )}
+                      />
                       <span
                         className={cn(
                           "text-sm font-semibold",
@@ -638,16 +680,29 @@ export function AdaVideoWorkspace({
                     <button
                       type="button"
                       onClick={() => void handleCancel()}
-                      className="text-xs text-ada-disabled transition-colors hover:text-[var(--ada-error)]"
+                      className={cn(
+                        "text-xs transition-colors hover:text-[var(--ada-error)]",
+                        kit ? "text-white/45" : "text-ada-disabled",
+                      )}
                       aria-label="Cancel video generation"
                     >
                       Cancel
                     </button>
                   </div>
 
-                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-ada-border">
+                  <div
+                    className={cn(
+                      "h-1.5 w-full overflow-hidden rounded-full",
+                      kit ? "bg-white/10" : "bg-ada-border",
+                    )}
+                  >
                     <div
-                      className="h-full rounded-full bg-linear-to-r from-[#7B5CFA] to-[#9B6FFF] transition-all duration-700 ease-out"
+                      className={cn(
+                        "h-full rounded-full transition-all duration-700 ease-out",
+                        kit
+                          ? "bg-[linear-gradient(90deg,#D31CD7_0%,#8800DC_100%)]"
+                          : "bg-linear-to-r from-[#7B5CFA] to-[#9B6FFF]",
+                      )}
                       style={{ width: `${progressPct}%` }}
                     />
                   </div>
@@ -664,23 +719,31 @@ export function AdaVideoWorkspace({
                             className={cn(
                               "h-1.5 w-1.5 shrink-0 rounded-full transition-colors",
                               done
-                                ? "bg-ada-accent"
+                                ? kit
+                                  ? "bg-[#D31CD7]"
+                                  : "bg-ada-accent"
                                 : active
-                                  ? "bg-ada-accent animate-pulse"
-                                  : "bg-ada-border",
+                                  ? kit
+                                    ? "animate-pulse bg-[#D31CD7]"
+                                    : "bg-ada-accent animate-pulse"
+                                  : kit
+                                    ? "bg-white/15"
+                                    : "bg-ada-border",
                             )}
                           />
                           <span
                             className={cn(
                               "text-[11px] transition-colors",
                               done
-                                ? "text-ada-accent"
+                                ? kit
+                                  ? "text-[#F0ABFC]"
+                                  : "text-ada-accent"
                                 : active
                                   ? kit
-                                    ? "text-white/80"
+                                    ? "text-white/90"
                                     : "text-ada-primary"
                                   : kit
-                                    ? "text-white/20"
+                                    ? "text-white/25"
                                     : "text-ada-disabled",
                             )}
                           >
@@ -692,7 +755,14 @@ export function AdaVideoWorkspace({
                   </div>
 
                   {progressHint ? (
-                    <p className="text-[10px] text-ada-disabled italic">{progressHint}</p>
+                    <p
+                      className={cn(
+                        "text-[10px] italic",
+                        kit ? "text-white/45" : "text-ada-disabled",
+                      )}
+                    >
+                      {progressHint}
+                    </p>
                   ) : null}
 
                   <p
@@ -712,7 +782,7 @@ export function AdaVideoWorkspace({
             <div
               className={cn(
                 "rounded-2xl border border-ada-border bg-ada-card px-4 py-3 text-sm text-ada-secondary",
-                kit && "border-white/20 bg-white/[0.06] text-white/80",
+                kit && cn(KIT_GLASS_PANEL, "text-white/85"),
               )}
               role="status"
             >
@@ -728,8 +798,10 @@ export function AdaVideoWorkspace({
           {!loadingHistory && jobHistory.length > 0 ? (
             <p
               className={cn(
-                "text-[10px] font-semibold uppercase tracking-widest",
-                kit ? "text-white/30" : "text-ada-disabled",
+                "text-[10px] font-semibold uppercase tracking-[0.2em]",
+                kit
+                  ? "font-[family-name:var(--font-instrument-sans)] text-white/40"
+                  : "tracking-widest text-ada-disabled",
               )}
             >
               Your clips
@@ -751,16 +823,22 @@ export function AdaVideoWorkspace({
               <div
                 className={cn(
                   "flex h-14 w-14 items-center justify-center rounded-2xl",
-                  kit ? "bg-white/6" : "bg-ada-accent-subtle",
+                  kit
+                    ? "border border-white/12 bg-white/[0.08] shadow-[0_8px_20px_rgba(0,0,0,0.2)]"
+                    : "bg-ada-accent-subtle",
                 )}
               >
-                <Video className="h-6 w-6 text-ada-accent" aria-hidden />
+                <Video
+                  className={cn("h-6 w-6", kit ? "text-[#E879F9]" : "text-ada-accent")}
+                  aria-hidden
+                />
               </div>
               <div>
                 <p
                   className={cn(
-                    "text-sm font-semibold",
-                    kit ? "text-white/70" : "text-ada-primary",
+                    kit
+                      ? "font-[family-name:var(--font-instrument-serif)] text-xl font-normal tracking-[0.36px] text-white/85"
+                      : "text-sm font-semibold text-ada-primary",
                   )}
                 >
                   Your first clip lives here
@@ -833,7 +911,7 @@ function VideoJobCard({
     <div
       className={cn(
         "overflow-hidden rounded-2xl border border-ada-border bg-ada-card",
-        kit && "border-white/14 bg-white/[0.06] backdrop-blur-sm",
+        kit && KIT_GLASS_PANEL,
       )}
     >
       <div className="flex gap-4 p-4">
@@ -861,7 +939,13 @@ function VideoJobCard({
               >
                 {!playing ? (
                   <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white/90 shadow-md">
-                    <Play className="size-3.5 text-[#7B5CFA] ml-0.5" aria-hidden />
+                    <Play
+                      className={cn(
+                        "ml-0.5 size-3.5",
+                        kit ? "text-[#8800DC]" : "text-[#7B5CFA]",
+                      )}
+                      aria-hidden
+                    />
                   </div>
                 ) : null}
               </button>
@@ -893,11 +977,19 @@ function VideoJobCard({
               className={cn(
                 "rounded-full px-2 py-0.5 text-[10px] font-medium capitalize",
                 badgeClass,
+                kit &&
+                  st !== "complete" &&
+                  st !== "failed" &&
+                  st !== "cancelled" &&
+                  "border border-white/18 bg-white/[0.08] text-[#F0ABFC]",
               )}
             >
               {st}
             </span>
-            <span className="text-[10px] text-ada-disabled" suppressHydrationWarning>
+            <span
+              className={cn("text-[10px]", kit ? "text-white/40" : "text-ada-disabled")}
+              suppressHydrationWarning
+            >
               {relativeFromNow(job.created_at)}
             </span>
           </div>

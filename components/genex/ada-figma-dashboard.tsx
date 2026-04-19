@@ -32,15 +32,15 @@ export function AdaFigmaAmbientBackground() {
       aria-hidden
     >
       <div
-        className="absolute -left-[18%] top-[-28%] h-[min(90vh,50rem)] w-[min(140vw,82rem)] -rotate-[13deg] rounded-[3rem] bg-[#180532] opacity-90 blur-[140px] shadow-[600px_600px_600px_rgba(24,5,50,0.12)]"
+        className="absolute -left-[18%] top-[-28%] h-[min(90vh,50rem)] w-[min(140vw,82rem)] -rotate-[13deg] rounded-[3rem] bg-[#180532] opacity-90 blur-[120px] shadow-[600px_600px_600px_rgba(24,5,50,0.14)] sm:blur-[200px]"
         style={{ transformOrigin: "top left" }}
       />
       <div
-        className="absolute -right-[28%] bottom-[-38%] h-[min(88vh,48rem)] w-[min(130vw,80rem)] rotate-[148deg] rounded-[3rem] bg-[#300537] opacity-85 blur-[150px] shadow-[600px_600px_600px_rgba(48,5,55,0.1)]"
+        className="absolute -right-[28%] bottom-[-38%] h-[min(88vh,48rem)] w-[min(130vw,80rem)] rotate-[148deg] rounded-[3rem] bg-[#300537] opacity-85 blur-[130px] shadow-[600px_600px_600px_rgba(48,5,55,0.12)] sm:blur-[210px]"
         style={{ transformOrigin: "top left" }}
       />
       <div
-        className="absolute left-[12%] bottom-[-42%] h-[min(72vh,42rem)] w-[min(120vw,78rem)] -rotate-[57deg] rounded-[3rem] bg-[#230639] opacity-80 blur-[130px] shadow-[600px_600px_600px_rgba(35,6,57,0.1)]"
+        className="absolute left-[12%] bottom-[-42%] h-[min(72vh,42rem)] w-[min(120vw,78rem)] -rotate-[57deg] rounded-[3rem] bg-[#230639] opacity-80 blur-[110px] shadow-[600px_600px_600px_rgba(35,6,57,0.12)] sm:blur-[180px]"
         style={{ transformOrigin: "top left" }}
       />
     </div>
