@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 
 import { GenerationFeedbackPanel } from "@/components/generation-feedback-panel";
 import { RatingWidget } from "@/components/rating-widget";
+import { TextToVideoLauncher } from "@/components/genex/text-to-video-launcher";
 
 const SECTION_ACCENT: Record<string, string> = {
   hooks: "#7B5CFA",
@@ -34,6 +35,7 @@ export type AdaOutputPanelProps = {
   generationContext: GenerationContextV1 | null;
   originalPrompt: string;
   variant?: "default" | "adaKit";
+  onTextVideoCreditsRemainingChange?: (remaining: number) => void;
 };
 
 export function AdaOutputPanel({
@@ -50,6 +52,7 @@ export function AdaOutputPanel({
   generationContext,
   originalPrompt,
   variant = "default",
+  onTextVideoCreditsRemainingChange,
 }: AdaOutputPanelProps) {
   const kit = variant === "adaKit";
   const showBody = streamedText.trim() || loading;
@@ -246,6 +249,15 @@ export function AdaOutputPanel({
 
           {!loading && streamedText.trim() ? (
             <>
+              {parsedClipPackage.script.trim() ? (
+                <TextToVideoLauncher
+                  script={parsedClipPackage.script}
+                  hooks={parsedClipPackage.hooks}
+                  generationId={generationId}
+                  onCreditChange={onTextVideoCreditsRemainingChange}
+                  variant={kit ? "adaKit" : "default"}
+                />
+              ) : null}
               <div
                 className={cn(
                   "rounded-2xl border px-4 py-3",

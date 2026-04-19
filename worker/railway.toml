@@ -1,3 +1,6 @@
+# Video variation worker (yt-dlp + Whisper). For Stage 2 text→video, duplicate this
+# service in Railway with startCommand: `node text-video-worker.js` (same Dockerfile).
+#
 # Worker service: use Docker image (ffmpeg + yt-dlp), not Nixpacks `npm start`.
 [build]
 builder = "DOCKERFILE"

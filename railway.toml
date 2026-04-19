@@ -6,3 +6,12 @@
 # NEXT_PUBLIC_GENEX_UNLIMITED_CREDITS=0), or remove VAR_NAME from shared / referenced vars.
 [deploy]
 startCommand = "npm start"
+
+# Stage 2 text→video: add a second Railway service (same repo), root directory `worker`,
+# start command: `node text-video-worker.js`, Dockerfile: worker/Dockerfile (ffmpeg image).
+# Env: SUPABASE_* , OPENAI_API_KEY, PEXELS_API_KEY, ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID, TEXT_VIDEO_CREDIT_COST
+#
+# [[services]]
+# name = "text-video-worker"
+# rootDirectory = "worker"
+# startCommand = "node text-video-worker.js"

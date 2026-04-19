@@ -46,6 +46,7 @@ export type AdaClipWorkspaceProps = {
   lastClipGenerationContext: GenerationContextV1 | null;
   clipOriginalPromptSummary: string;
   variant?: "default" | "adaKit";
+  onTextVideoCreditsRemainingChange?: (remaining: number) => void;
 };
 
 const MAGENTA_ACTIVE =
@@ -84,6 +85,7 @@ export function AdaClipWorkspace({
   lastClipGenerationContext,
   clipOriginalPromptSummary,
   variant = "default",
+  onTextVideoCreditsRemainingChange,
 }: AdaClipWorkspaceProps) {
   const kit = variant === "adaKit";
 
@@ -242,6 +244,7 @@ export function AdaClipWorkspace({
           generationContext={lastClipGenerationContext}
           originalPrompt={clipOriginalPromptSummary}
           variant={variant}
+          onTextVideoCreditsRemainingChange={onTextVideoCreditsRemainingChange}
         />
       </div>
     </div>
