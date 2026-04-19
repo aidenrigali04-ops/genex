@@ -1,5 +1,7 @@
 "use client";
 
+import type { JSX } from "react";
+import { useEffect, useState } from "react";
 import { Zap } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -12,42 +14,71 @@ const EXAMPLES: {
 }[] = [
   {
     icon: "🎬",
-    label: "YouTube → Reels",
+    label: "YouTube video → 3 viral clips",
     prompt: "https://youtube.com/watch?v=dQw4w9WgXcQ",
     mode: "url",
   },
   {
-    icon: "⚡",
-    label: "Hook from idea",
+    icon: "🎙",
+    label: "Podcast episode → post-ready shorts",
+    prompt: "https://youtube.com/watch?v=jNQXAC9IVRw",
+    mode: "url",
+  },
+  {
+    icon: "💡",
+    label: "Raw idea → full script + captions",
     prompt:
       "Most people waste their first hour every morning. Here is how I fixed mine in 7 days.",
     mode: "text",
   },
-  {
-    icon: "🔥",
-    label: "Contrarian take",
-    prompt: "Hustle culture is broken and here is the data to prove it.",
-    mode: "text",
-  },
-  {
-    icon: "📖",
-    label: "Story structure",
-    prompt:
-      "I lost everything at 27 and rebuilt from zero. This is exactly what I did.",
-    mode: "text",
-  },
 ];
+
+function smoothSocialProofCount(n: number): number {
+  return Math.floor(n / 10) * 10;
+}
 
 export type AdaEmptyStateProps = {
   onExampleClick: (prompt: string, mode: "text" | "url") => void;
+  /** Switch to idea-first flow without picking an example card. */
+  onPreferIdeaFirst?: () => void;
   variant?: "default" | "adaKit";
 };
 
 export function AdaEmptyState({
   onExampleClick,
+  onPreferIdeaFirst,
   variant = "default",
-}: AdaEmptyStateProps) {
+}: AdaEmptyStateProps): JSX.Element {
   const kit = variant === "adaKit";
+  const [generationTotal, setGenerationTotal] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/stats/generation-total", {
+          credentials: "same-origin",
+          cache: "no-store",
+        });
+        if (!res.ok) return;
+        const j = (await res.json()) as { count?: unknown };
+        const c = typeof j.count === "number" ? j.count : 0;
+        if (!cancelled) setGenerationTotal(c);
+      } catch {
+        /* omit counter */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const roundedTotal =
+    generationTotal != null ? smoothSocialProofCount(generationTotal) : 0;
+  const showSocial =
+    generationTotal != null &&
+    generationTotal > 10 &&
+    roundedTotal > 0;
 
   return (
     <div
@@ -74,20 +105,42 @@ export function AdaEmptyState({
             kit ? "text-white" : "text-[var(--ada-text-primary)]",
           )}
         >
-          What are we creating today?
+          Your best clips are already in that video.
         </h2>
         <p
           className={cn(
-            "mx-auto max-w-sm text-sm",
+            "mx-auto max-w-md text-sm",
             kit ? "text-white/60" : "text-[var(--ada-text-secondary)]",
           )}
         >
-          Drop a YouTube URL, paste your transcript, or type an idea. GenEx turns
-          it into clips ready for TikTok, Reels, and Shorts.
+          Paste a YouTube link — GenEx finds them and makes them post-ready.
         </p>
+        {showSocial ? (
+          <p
+            className={cn(
+              "mx-auto max-w-md text-xs",
+              kit ? "text-white/40" : "text-[var(--ada-text-disabled)]",
+            )}
+          >
+            {roundedTotal}+ clip packages created
+          </p>
+        ) : null}
       </div>
 
-      <div className="grid w-full max-w-lg grid-cols-2 gap-2">
+      {onPreferIdeaFirst ? (
+        <button
+          type="button"
+          onClick={() => onPreferIdeaFirst()}
+          className={cn(
+            "text-sm underline-offset-4 transition-colors hover:underline",
+            kit ? "text-white/50 hover:text-white/75" : "text-[var(--ada-text-secondary)] hover:text-[var(--ada-text-primary)]",
+          )}
+        >
+          Or start from a raw idea →
+        </button>
+      ) : null}
+
+      <div className="grid w-full max-w-2xl grid-cols-1 gap-2 sm:grid-cols-3">
         {EXAMPLES.map((ex) => (
           <button
             key={ex.label}

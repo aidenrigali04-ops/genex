@@ -47,12 +47,27 @@ export async function GET(
 
   const j = job as unknown as { status: string; variations: unknown };
 
-  const variationsSigned =
-    !slim && j.status === "complete"
-      ? await signVideoJobVariationsForResponse(supabase, j.variations)
-      : slim
-        ? null
-        : j.variations;
+  let variationsSigned: unknown;
+  try {
+    variationsSigned =
+      !slim && j.status === "complete"
+        ? await signVideoJobVariationsForResponse(supabase, j.variations)
+        : slim
+          ? null
+          : j.variations;
+  } catch (e) {
+    console.error("[video-jobs] sign variations failed", e);
+    return Response.json(
+      {
+        error: "sign_failed",
+        message:
+          e instanceof Error
+            ? e.message
+            : "Could not sign variation playback URLs.",
+      },
+      { status: 500 },
+    );
+  }
 
   return Response.json(
     { ...(job as unknown as Record<string, unknown>), variations: variationsSigned },

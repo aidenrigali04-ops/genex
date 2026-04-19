@@ -1,5 +1,8 @@
 "use client";
 
+import type { JSX } from "react";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { useEffect, useMemo, useRef } from "react";
 import { Zap } from "lucide-react";
 
 import {
@@ -7,12 +10,13 @@ import {
   ProgressLabel,
   ProgressValue,
 } from "@/components/ui/progress";
+import { trackAha } from "@/lib/analytics";
+import type { ClipInputMode } from "@/lib/clip-package";
 import { extractPlatformSection } from "@/lib/parse-generation-output";
 import type { PlatformId } from "@/lib/platforms";
-import {
-  parseClipPackageSections,
-} from "@/lib/clip-package";
+import { parseClipPackageSections } from "@/lib/clip-package";
 import type { GenerationUiStep } from "@/lib/generation-stream-protocol";
+import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
 import { AdaOutputSections } from "./ada-output-sections";
@@ -39,6 +43,10 @@ export type AdaLiveTurnProps = {
   copiedId: string | null;
   onCopy: (id: string, body: string) => void | Promise<void>;
   variant?: "default" | "adaKit";
+  /** Clip package ordering + analytics (optional for older callers). */
+  inputMode?: ClipInputMode;
+  userId?: string;
+  supabase?: SupabaseClient;
 };
 
 export function AdaLiveTurn({
@@ -50,10 +58,43 @@ export function AdaLiveTurn({
   copiedId,
   onCopy,
   variant = "default",
-}: AdaLiveTurnProps) {
+  inputMode = "generate_first",
+  userId,
+  supabase: supabaseProp,
+}: AdaLiveTurnProps): JSX.Element {
   const kit = variant === "adaKit";
   const body = clipPackageBodyFromStream(streamedText);
   const parsed = parseClipPackageSections(body);
+  const defaultSupabase = useMemo(() => createClient(), []);
+  const supabase = supabaseProp ?? defaultSupabase;
+  const clipIdentifiedFired = useRef(false);
+  const prevStreamedRef = useRef<string>("");
+
+  useEffect(() => {
+    const prev = prevStreamedRef.current;
+    if (prev.trim().length > 0 && !streamedText.trim()) {
+      clipIdentifiedFired.current = false;
+    }
+    prevStreamedRef.current = streamedText;
+  }, [streamedText]);
+
+  useEffect(() => {
+    if (inputMode !== "clip_first" || !userId?.trim()) return;
+    const m = parsed.moments.trim();
+    if (clipIdentifiedFired.current || m.length <= 20) return;
+    clipIdentifiedFired.current = true;
+    void trackAha(supabase, userId, "clip_identified", {
+      hasTimestamps: /\d+:\d+/.test(m),
+    });
+  }, [inputMode, parsed.moments, supabase, userId]);
+
+  const loadingLabel =
+    inputMode === "clip_first"
+      ? "Finding your best clips…"
+      : "Writing your clip package…";
+  const fetchingLabel = fetchingYoutubeTranscript
+    ? "Reading your video…"
+    : loadingLabel;
 
   return (
     <div className="space-y-4">
@@ -132,8 +173,8 @@ export function AdaLiveTurn({
                     className={kit ? "text-xs font-medium text-white/85" : undefined}
                   >
                     {fetchingYoutubeTranscript
-                      ? "YouTube"
-                      : (generationSteps.at(-1)?.label ?? "Generating")}
+                      ? "Reading your video…"
+                      : (generationSteps.at(-1)?.label ?? loadingLabel)}
                   </ProgressLabel>
                   <ProgressValue
                     className={kit ? "text-xs text-white/55 tabular-nums" : undefined}
@@ -147,9 +188,9 @@ export function AdaLiveTurn({
                 )}
               >
                 {fetchingYoutubeTranscript
-                  ? "Fetching captions before generation…"
+                  ? "Fetching transcript before generation…"
                   : generationSteps.length > 0
-                    ? "Streaming your clip package…"
+                    ? fetchingLabel
                     : "Connecting to the server…"}
               </p>
             </div>
@@ -162,6 +203,19 @@ export function AdaLiveTurn({
                 kit && "prose-invert text-white/95",
               )}
             >
+              {parsed.hooks.trim() && !parsed.script.trim() ? (
+                <div
+                  className={cn(
+                    "not-prose mb-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium",
+                    kit
+                      ? "bg-white/10 text-white/70"
+                      : "bg-[var(--ada-accent-subtle)] text-[var(--ada-accent)]",
+                  )}
+                >
+                  <Zap className="h-3 w-3" aria-hidden />
+                  First hook ready
+                </div>
+              ) : null}
               <AdaOutputSections
                 parsedClipPackage={parsed}
                 streamedText={streamedText}

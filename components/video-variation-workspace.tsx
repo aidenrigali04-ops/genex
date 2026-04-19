@@ -63,7 +63,6 @@ import { VIDEO_JOB_CREDIT_COST } from "@/lib/video-job-cost";
 import type { GenerationContextV1 } from "@/lib/generation-context";
 import { isGenerationContextV1 } from "@/lib/generation-context";
 import type { PlatformId } from "@/lib/platforms";
-import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -130,21 +129,11 @@ const VIDEO_HUB_CAROUSEL_CARDS: { prompt: string; thumb: string }[] = [
   },
 ];
 
-/** Ensures `https://` so the API and worker receive a fetchable URL (e.g. youtu.be/…). */
-function normalizeVideoJobSourceUrl(raw: string): string {
-  const t = raw.trim();
-  if (!t) return t;
-  if (/^https?:\/\//i.test(t)) return t;
-  if (t.startsWith("//")) return `https:${t}`;
-  return `https://${t}`;
-}
-
 async function postVideoJobUrlJson(params: {
   prompt: string;
   youtubeUrl: string;
   generationContext?: GenerationContextV1 | null;
 }): Promise<{ id: string; remainingCredits?: number }> {
-  const youtubeUrl = normalizeVideoJobSourceUrl(params.youtubeUrl);
   const res = await fetch("/api/video-jobs", {
     method: "POST",
     credentials: "same-origin",
@@ -152,7 +141,7 @@ async function postVideoJobUrlJson(params: {
     body: JSON.stringify({
       inputType: "url",
       prompt: params.prompt,
-      youtubeUrl,
+      youtubeUrl: params.youtubeUrl,
       ...(params.generationContext
         ? { generationContext: params.generationContext }
         : {}),
@@ -170,6 +159,61 @@ async function postVideoJobUrlJson(params: {
     );
   }
   return { id: data.id, remainingCredits: data.remainingCredits };
+}
+
+/** PUT to Supabase signed upload URL (same shape as @supabase/storage-js uploadToSignedUrl). */
+function putVideoToSignedUploadUrl(
+  signedUrl: string,
+  file: File,
+  onProgress: (pct: number) => void,
+  onUploadFullySent?: () => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", signedUrl);
+    // Must match `createSignedUploadUrl(..., { upsert: true })` in /api/video-jobs.
+    xhr.setRequestHeader("x-upsert", "true");
+    xhr.timeout = 320_000;
+    const fd = new FormData();
+    fd.append("cacheControl", "3600");
+    fd.append("", file);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && e.total > 0) {
+        onProgress(Math.min(99, Math.round((100 * e.loaded) / e.total)));
+      }
+    };
+    xhr.upload.onload = () => {
+      onProgress(99);
+      onUploadFullySent?.();
+    };
+    xhr.ontimeout = () =>
+      reject(
+        new Error(
+          "Upload timed out. Try a smaller file or check your connection.",
+        ),
+      );
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+        return;
+      }
+      let msg = xhr.statusText;
+      try {
+        const j = JSON.parse(xhr.responseText) as {
+          message?: string;
+          error?: string;
+        };
+        if (j.message) msg = j.message;
+        else if (j.error) msg = j.error;
+      } catch {
+        if (xhr.responseText) msg = xhr.responseText.slice(0, 500);
+      }
+      reject(new Error(msg || "Storage upload failed."));
+    };
+    xhr.onerror = () =>
+      reject(new Error("Network error during upload to storage."));
+    xhr.send(fd);
+  });
 }
 
 async function submitUploadJobViaDirectStorage(params: {
@@ -198,7 +242,7 @@ async function submitUploadJobViaDirectStorage(params: {
   const prep = (await prepRes.json()) as {
     id?: string;
     remainingCredits?: number;
-    directUpload?: { signedUrl?: string; path?: string; token?: string };
+    directUpload?: { signedUrl?: string };
     error?: string;
     message?: string;
   };
@@ -212,31 +256,17 @@ async function submitUploadJobViaDirectStorage(params: {
       ),
     );
   }
-  const du = prep.directUpload;
-  const objectPath = du?.path?.trim();
-  const token = du?.token?.trim();
-  if (!objectPath || !token) {
-    throw new Error(
-      "Server did not return storage upload credentials (path + token).",
-    );
+  const signedUrl = prep.directUpload?.signedUrl;
+  if (!signedUrl) {
+    throw new Error("Server did not return a signed upload URL.");
   }
 
-  params.onProgress(10);
-  const supabase = createClient();
-  const { error: uploadErr } = await supabase.storage
-    .from("videos")
-    .uploadToSignedUrl(objectPath, token, params.file, {
-      cacheControl: "3600",
-      contentType: params.file.type || "video/mp4",
-      upsert: true,
-    });
-  if (uploadErr) {
-    throw new Error(
-      uploadErr.message || "Could not upload video to storage. Try again.",
-    );
-  }
-  params.onProgress(92);
-  params.onUploadFullySent?.();
+  await putVideoToSignedUploadUrl(
+    signedUrl,
+    params.file,
+    params.onProgress,
+    params.onUploadFullySent,
+  );
 
   const finRes = await fetch(`/api/video-jobs/${prep.id}`, {
     method: "PATCH",
@@ -591,39 +621,58 @@ export const VideoVariationWorkspace = forwardRef<
       });
     };
 
-    const readErrorMessage = async (res: Response) => {
-      const raw = await res.text();
-      let msg = raw || res.statusText;
+    const readErrorMessageFromText = (raw: string, statusText: string) => {
+      let msg = raw || statusText;
       try {
         const j = JSON.parse(raw) as { error?: string; message?: string };
         if (j.message) msg = j.message;
         else if (j.error) msg = j.error;
       } catch {
-        /* keep */
+        /* keep — e.g. HTML error page from gateway */
       }
       return msg;
     };
 
-    let res = await fetchOnce(true);
-    if (!res.ok) {
-      setError(
-        `Could not load job (${res.status}): ${await readErrorMessage(res)}`,
-      );
-      return;
-    }
-    setError(null);
-    let row = (await res.json()) as JobRow;
+    const parseJobRow = (raw: string): JobRow | null => {
+      try {
+        return JSON.parse(raw) as JobRow;
+      } catch {
+        return null;
+      }
+    };
 
-    if (row.status === "complete") {
-      res = await fetchOnce(false);
+    try {
+      let res = await fetchOnce(true);
+      let raw = await res.text();
       if (!res.ok) {
         setError(
-          `Could not load job (${res.status}): ${await readErrorMessage(res)}`,
+          `Could not load job (${res.status}): ${readErrorMessageFromText(raw, res.statusText)}`,
         );
         return;
       }
-      row = (await res.json()) as JobRow;
-    }
+      setError(null);
+      let row = parseJobRow(raw);
+      if (!row || typeof row.status !== "string") {
+        setError("Could not load job: invalid response from server.");
+        return;
+      }
+
+      if (row.status === "complete") {
+        res = await fetchOnce(false);
+        raw = await res.text();
+        if (!res.ok) {
+          setError(
+            `Could not load job (${res.status}): ${readErrorMessageFromText(raw, res.statusText)}`,
+          );
+          return;
+        }
+        const full = parseJobRow(raw);
+        if (!full || typeof full.status !== "string") {
+          setError("Could not load job: invalid response from server.");
+          return;
+        }
+        row = full;
+      }
     setJobStatus(row.status);
     const awaitingLink =
       row.status === "queued" &&
@@ -658,6 +707,14 @@ export const VideoVariationWorkspace = forwardRef<
         toast.info(row.error_message.trim());
       }
       onJobFinishedRef.current();
+    }
+    } catch (e) {
+      console.error("[video] fetchJob", e);
+      setError(
+        e instanceof Error
+          ? e.message
+          : "Could not refresh job status. Try reloading the page.",
+      );
     }
   }, []);
 
@@ -700,7 +757,7 @@ export const VideoVariationWorkspace = forwardRef<
       setError("Choose a video file (MP4 or MOV).");
       return;
     }
-    if (sourceMode === "url" && !normalizeVideoJobSourceUrl(youtubeUrl).trim()) {
+    if (sourceMode === "url" && !youtubeUrl.trim()) {
       setError("Paste a YouTube URL.");
       return;
     }
@@ -710,7 +767,7 @@ export const VideoVariationWorkspace = forwardRef<
 
   const hasInput = useMemo(() => {
     if (sourceMode === "upload") return videoFile != null;
-    const trimmed = normalizeVideoJobSourceUrl(youtubeUrl).trim();
+    const trimmed = youtubeUrl.trim();
     if (!trimmed) return false;
     try {
       const u = new URL(trimmed);
@@ -730,36 +787,20 @@ export const VideoVariationWorkspace = forwardRef<
     setJobGenerationContext(ctx);
 
     try {
-      let id: string;
-      let remainingCredits: number | undefined;
-      if (sourceMode === "upload") {
-        if (!videoFile) {
-          setError("Choose a video file (MP4 or MOV).");
-          return;
-        }
-        const up = await submitUploadJobViaDirectStorage({
-          file: videoFile,
-          prompt: prompt.trim(),
-          generationContext: ctx,
-          onProgress: setUploadPct,
-          onUploadFullySent: () => setFinishingOnServer(true),
-        });
-        id = up.id;
-        remainingCredits = up.remainingCredits;
-      } else {
-        const normalizedUrl = normalizeVideoJobSourceUrl(youtubeUrl);
-        if (!normalizedUrl.trim()) {
-          setError("Paste a YouTube URL.");
-          return;
-        }
-        const urlJob = await postVideoJobUrlJson({
-          prompt: prompt.trim(),
-          youtubeUrl: normalizedUrl,
-          generationContext: ctx,
-        });
-        id = urlJob.id;
-        remainingCredits = urlJob.remainingCredits;
-      }
+      const { id, remainingCredits } =
+        sourceMode === "upload" && videoFile
+          ? await submitUploadJobViaDirectStorage({
+              file: videoFile,
+              prompt: prompt.trim(),
+              generationContext: ctx,
+              onProgress: setUploadPct,
+              onUploadFullySent: () => setFinishingOnServer(true),
+            })
+          : await postVideoJobUrlJson({
+              prompt: prompt.trim(),
+              youtubeUrl: youtubeUrl.trim(),
+              generationContext: ctx,
+            });
       if (typeof remainingCredits === "number") {
         setCreditsRemaining(remainingCredits);
       }

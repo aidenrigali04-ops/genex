@@ -824,7 +824,11 @@ export function HomeWorkspace({
   }, [user]);
 
   const onVideoJobFinished = useCallback(() => {
-    void router.refresh();
+    // Defer so we never refresh during the same React commit as poll/state updates
+    // (avoids intermittent "page couldn't load" / RSC failures after video completes).
+    queueMicrotask(() => {
+      void router.refresh();
+    });
   }, [router]);
 
   const openWorkspaceSettings = useCallback(() => {
@@ -954,6 +958,7 @@ export function HomeWorkspace({
                 <AdaClipWorkspace
                   turns={turns}
                   liveTurnSnapshot={liveTurnSnapshot}
+                  authUserId={user?.id}
                   inputMode={inputMode}
                   onInputModeChange={(mode) => {
                     setInputMode(mode);
@@ -1024,6 +1029,11 @@ export function HomeWorkspace({
                     }
                     setUploadFile(null);
                     window.setTimeout(() => setRefinementOpen(true), 400);
+                  }}
+                  onPreferIdeaFirst={() => {
+                    setInputMode("text");
+                    setUrl("");
+                    setUploadFile(null);
                   }}
                 />
               </div>

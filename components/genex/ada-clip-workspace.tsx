@@ -11,6 +11,7 @@ import { RefinementChatPanel } from "@/components/refinement-chat-panel";
 import type { GenerationContextV1 } from "@/lib/generation-context";
 import type { GenerationPresetId } from "@/lib/generation-presets";
 import type { ClipTurn, LiveClipTurnSnapshot } from "@/lib/clip-turn";
+import type { ClipInputMode } from "@/lib/clip-package";
 import type { PlatformId } from "@/lib/platforms";
 import type { GenerationUiStep } from "@/lib/generation-stream-protocol";
 import { cn } from "@/lib/utils";
@@ -52,6 +53,9 @@ export type AdaClipWorkspaceProps = {
   onRefinementConfirm?: (ctx: GenerationContextV1) => void;
   onRefinementCancel?: () => void;
   onExamplePrompt?: (prompt: string, mode: "text" | "url") => void;
+  /** For live-turn analytics + clip-first copy (optional). */
+  authUserId?: string;
+  onPreferIdeaFirst?: () => void;
 };
 
 export function AdaClipWorkspace({
@@ -91,9 +95,13 @@ export function AdaClipWorkspace({
   onRefinementConfirm,
   onRefinementCancel,
   onExamplePrompt,
+  authUserId,
+  onPreferIdeaFirst,
 }: AdaClipWorkspaceProps) {
   const kit = variant === "adaKit";
   const threadRef = useRef<HTMLDivElement>(null);
+  const clipPackageInputMode: ClipInputMode =
+    inputMode === "url" || inputMode === "file" ? "clip_first" : "generate_first";
 
   useEffect(() => {
     const el = threadRef.current;
@@ -200,6 +208,7 @@ export function AdaClipWorkspace({
             <AdaEmptyState
               variant={variant}
               onExampleClick={handleExampleClick}
+              onPreferIdeaFirst={onPreferIdeaFirst}
             />
           ) : null}
 
@@ -244,6 +253,8 @@ export function AdaClipWorkspace({
               copiedId={copiedId}
               onCopy={onCopy}
               variant={variant}
+              inputMode={clipPackageInputMode}
+              userId={authUserId}
             />
           ) : null}
 

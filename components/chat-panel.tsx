@@ -1,9 +1,11 @@
 "use client";
 
+import type { JSX } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
+import { readGuestCreditsRemaining } from "@/lib/guest-credits";
 import { Button } from "@/components/ui/button";
 
 function textFromParts(message: UIMessage) {
@@ -15,10 +17,23 @@ function textFromParts(message: UIMessage) {
     .join("");
 }
 
-export function ChatPanel() {
+export function ChatPanel(): JSX.Element {
   const [input, setInput] = useState("");
+  const transport = useMemo(
+    () =>
+      new DefaultChatTransport({
+        api: "/api/chat",
+        credentials: "same-origin",
+        body: () => ({
+          inputMode: "generate_first" as const,
+          guestCreditsRemaining: readGuestCreditsRemaining(),
+        }),
+      }),
+    [],
+  );
+
   const { messages, sendMessage, status, stop } = useChat({
-    transport: new DefaultChatTransport({ api: "/api/chat" }),
+    transport,
   });
 
   const busy = status === "submitted" || status === "streaming";
