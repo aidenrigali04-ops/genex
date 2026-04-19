@@ -686,7 +686,6 @@ function buildFilterGraph(jobId, segments, durationSec, hasAudio, captionOverlay
       const yPos = style === "top" ? "80" : "h-200";
       const fontSize = style === "large" ? "64" : "52";
       const boxAlpha = style === "minimal" ? "0.0" : "0.55";
-      const borderAlpha = style === "minimal" ? "1" : "0";
 
       graph += `;[vscaled]drawtext=` +
         `fontfile='${escFont}':` +

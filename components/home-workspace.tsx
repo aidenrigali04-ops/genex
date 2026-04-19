@@ -2,13 +2,12 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { User } from "lucide-react";
+import { Clock, User } from "lucide-react";
 
 import { signInWithGoogle, signOut } from "@/app/auth/actions";
 import { Button } from "@/components/ui/button";
 import {
   Card,
-  CardContent,
   CardDescription,
   CardFooter,
   CardHeader,
@@ -30,12 +29,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Label } from "@/components/ui/label";
 import {
-  Progress,
-  ProgressLabel,
-  ProgressValue,
-} from "@/components/ui/progress";
-import {
-  CLIP_SECTIONS,
   deriveClipTitle,
   parseClipPackageSections,
   parseFormatTagsFromCreatorSignals,
@@ -57,17 +50,15 @@ import {
 import { MAX_MEDIA_UPLOAD_BYTES } from "@/lib/media-upload-limits";
 import { isYoutubeVideoUrlForTranscript } from "@/lib/youtube-url";
 import { type PlatformId } from "@/lib/platforms";
-import { GenerationFeedbackPanel } from "@/components/generation-feedback-panel";
-import { RatingWidget } from "@/components/rating-widget";
-import { AiInputPanel } from "@/components/genex/ai-input-panel";
-import { ClipWorkspaceConversation } from "@/components/genex/clip-workspace-conversation";
-import { Hero } from "@/components/genex/hero";
-import { HowItWorks } from "@/components/genex/how-it-works";
-import { PlatformsGrid } from "@/components/genex/platforms-grid";
+import { AdaClipWorkspace } from "@/components/genex/ada-clip-workspace";
+import {
+  AdaFigmaAmbientBackground,
+  AdaFigmaClipHub,
+  AdaFigmaMainHeader,
+  AdaFigmaSidebarNav,
+  type FigmaMainNavId,
+} from "@/components/genex/ada-figma-dashboard";
 import { SettingsRail } from "@/components/genex/settings-rail";
-import { SiteFooter } from "@/components/genex/site-footer";
-import { SiteNav } from "@/components/genex/site-nav";
-import { WorkspaceChrome } from "@/components/genex/workspace-chrome";
 import { RefinementChatDialog } from "@/components/refinement-chat-dialog";
 import {
   VideoVariationWorkspace,
@@ -131,7 +122,8 @@ export function HomeWorkspace({
   const [signInOpen, setSignInOpen] = useState(false);
   const [buyOpen, setBuyOpen] = useState(false);
   const [clipSettingsOpen, setClipSettingsOpen] = useState(false);
-  const [workspaceTab, setWorkspaceTab] = useState<"video" | "clip">("video");
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [workspaceTab, setWorkspaceTab] = useState<"video" | "clip">("clip");
   const [inputMode, setInputMode] = useState<"text" | "url" | "file">("text");
   const [selectedModel, setSelectedModel] = useState("gpt-4o");
   const [text, setText] = useState("");
@@ -606,6 +598,16 @@ export function HomeWorkspace({
     });
   };
 
+  const sidebarRecentItems = myClipCards.slice(0, 12).map((clip) => ({
+    id: clip.id,
+    label: clip.title,
+    onSelect: () => {
+      openClip(clip);
+      setMobileNavOpen(false);
+      setWorkspaceTab("clip");
+    },
+  }));
+
   const initials =
     user?.email?.trim().charAt(0).toUpperCase() ??
     user?.email?.slice(0, 2).toUpperCase() ??
@@ -627,30 +629,14 @@ export function HomeWorkspace({
     />
   );
 
-  const creditsPill = (
-    <button
-      type="button"
-      onClick={() => setBuyOpen(true)}
-      className={cn(
-        "rounded-full border border-[#E8E4F8] bg-white px-3 py-1.5 text-sm font-semibold text-[#0F0A1E] shadow-sm transition hover:bg-[#FAFAFC] dark:border-white/10 dark:bg-zinc-900 dark:text-zinc-100",
-        !creditsUnlimited &&
-          creditsRemaining <= 0 &&
-          "border-red-300 text-red-700 dark:border-red-500/40 dark:text-red-300",
-      )}
-    >
-      {creditsUnlimited
-        ? "⚡ Unlimited (test)"
-        : `⚡ ${creditsRemaining} credits`}
-    </button>
-  );
-
   const accountMenu = user ? (
     <DropdownMenu>
       <DropdownMenuTrigger>
         <Button
+          id="account-menu-trigger"
           variant="ghost"
           size="sm"
-          className="size-9 rounded-full border border-[#E8E4F8] bg-white font-semibold shadow-sm dark:border-white/10 dark:bg-zinc-900"
+          className="size-9 rounded-ada-pill border border-ada-border bg-ada-card font-semibold text-ada-primary hover:bg-ada-card-hover"
         >
           {initials}
         </Button>
@@ -667,7 +653,7 @@ export function HomeWorkspace({
     <Button
       variant="ghost"
       size="sm"
-      className="gap-1.5 rounded-full border border-transparent hover:border-[#E8E4F8]"
+      className="gap-1.5 rounded-ada-pill border border-transparent text-ada-secondary hover:border-ada-border hover:bg-ada-card hover:text-ada-primary"
       onClick={() => setSignInOpen(true)}
     >
       <User className="size-4" />
@@ -675,504 +661,327 @@ export function HomeWorkspace({
     </Button>
   );
 
-  const scrollToWorkspace = () => {
-    document.getElementById("workspace")?.scrollIntoView({
-      behavior: "smooth",
-      block: "start",
-    });
-  };
+  const figmaCreditsPill = (
+    <button
+      type="button"
+      onClick={() => setBuyOpen(true)}
+      className={cn(
+        "rounded-[32px] border border-white/48 bg-white/10 px-3 py-2 text-sm font-medium tracking-[0.14px] text-white transition-colors hover:bg-white/16 font-[family-name:var(--font-instrument-sans)]",
+        !creditsUnlimited &&
+          creditsRemaining <= 0 &&
+          "border-red-400/80 text-red-200",
+      )}
+    >
+      {creditsUnlimited ? "⚡ Unlimited" : `⚡ ${creditsRemaining} credits`}
+    </button>
+  );
+
+  const showClipHub =
+    workspaceTab === "clip" &&
+    !loading &&
+    !streamedText.trim() &&
+    inputMode === "text" &&
+    !uploadFile &&
+    !url.trim();
+
+  const figmaActiveMain: FigmaMainNavId =
+    workspaceTab === "video" ? "video" : "search";
+
+  const handleFigmaMainNav = useCallback((id: FigmaMainNavId) => {
+    if (id === "video") {
+      setWorkspaceTab("video");
+      setMobileNavOpen(false);
+      return;
+    }
+    if (id === "search" || id === "ai_chat") {
+      setWorkspaceTab("clip");
+      setMobileNavOpen(false);
+    }
+  }, []);
+
+  const figmaRecentSection =
+    sidebarRecentItems.length === 0 ? (
+      <p className="px-3 text-xs text-white/45">No recent clip packages yet.</p>
+    ) : (
+      <>
+        <p className="px-3 pb-2 text-[10px] font-medium uppercase tracking-widest text-white/40">
+          Recent
+        </p>
+        <div className="flex flex-col gap-1">
+          {sidebarRecentItems.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => {
+                item.onSelect();
+                setMobileNavOpen(false);
+              }}
+              className="truncate rounded-lg px-3 py-2 text-left text-sm text-white/80 transition-colors hover:bg-white/10"
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </>
+    );
+
+  const recentDropdown = (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        className="inline-flex items-center gap-2 rounded-[32px] border border-white/48 px-3 py-2 text-sm font-medium tracking-[0.14px] text-white transition-colors hover:bg-white/10 font-[family-name:var(--font-instrument-sans)]"
+      >
+        <Clock className="size-4 shrink-0 text-white" aria-hidden />
+        Recent
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="end"
+        className="max-h-72 min-w-56 overflow-y-auto border border-ada-border bg-ada-card text-ada-primary"
+      >
+        {sidebarRecentItems.length === 0 ? (
+          <div className="px-3 py-2 text-sm text-ada-secondary">No recent items yet.</div>
+        ) : (
+          sidebarRecentItems.map((item) => (
+            <DropdownMenuItem
+              key={item.id}
+              onClick={() => {
+                item.onSelect();
+              }}
+            >
+              {item.label}
+            </DropdownMenuItem>
+          ))
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
+  const handleFigmaAccount = useCallback(() => {
+    if (!user) {
+      setSignInOpen(true);
+      return;
+    }
+    document.getElementById("account-menu-trigger")?.click();
+  }, [user]);
 
   const onVideoJobFinished = useCallback(() => {
     void router.refresh();
   }, [router]);
 
-  const handleGetStarted = () => {
-    if (user) scrollToWorkspace();
-    else setSignInOpen(true);
-  };
-
   const openWorkspaceSettings = useCallback(() => {
     if (typeof window === "undefined") return;
+    if (workspaceTab === "clip") {
+      setClipSettingsOpen(true);
+      return;
+    }
     const wide = window.matchMedia("(min-width: 1024px)").matches;
-    const railId =
-      workspaceTab === "clip" ? "clip-settings-rail" : "video-settings-rail";
     if (wide) {
-      document.getElementById(railId)?.scrollIntoView({
+      document.getElementById("video-settings-rail")?.scrollIntoView({
         behavior: "smooth",
         block: "nearest",
         inline: "nearest",
       });
       return;
     }
-    if (workspaceTab === "clip") {
-      setClipSettingsOpen(true);
-    } else {
-      videoWorkspaceRef.current?.openSettings();
-    }
+    videoWorkspaceRef.current?.openSettings();
   }, [workspaceTab]);
 
+  const hubTitle =
+    workspaceTab === "video" ? "Video" : showClipHub ? "New Search" : "Clip package";
+
   return (
-    <div className="flex min-h-screen flex-col">
-      <SiteNav
-        creditsPill={creditsPill}
-        accountSection={accountMenu}
-        onGetStarted={handleGetStarted}
-      />
+    <>
+      <div className="relative flex h-screen overflow-hidden bg-[#0A050F]">
+        <AdaFigmaAmbientBackground />
 
-      <Hero isSignedIn={Boolean(user)} onPrimaryCta={handleGetStarted} />
-
-      <section id="workspace" className="relative scroll-mt-24 px-4 py-10">
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute -right-16 top-8 h-48 w-48 rounded-full opacity-40 blur-3xl"
-          style={{
-            background: "radial-gradient(circle, #d946ef 0%, #7c3aed 100%)",
-          }}
-        />
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute bottom-16 -left-12 h-36 w-36 rounded-full opacity-30 blur-3xl"
-          style={{
-            background: "radial-gradient(circle, #c471ed 0%, #818cf8 100%)",
-          }}
-        />
-        <div className="relative mx-auto max-w-6xl overflow-hidden rounded-3xl border border-white/40 bg-white/60 shadow-[0_32px_80px_-24px_rgba(180,120,255,0.25)] backdrop-blur-xl dark:border-white/10 dark:bg-zinc-900/60 dark:backdrop-blur-xl">
-          <WorkspaceChrome
-            workspaceTab={workspaceTab}
-            onWorkspaceTab={setWorkspaceTab}
+        <aside className="relative z-[1] hidden shrink-0 lg:block">
+          <AdaFigmaSidebarNav
+            activeMain={figmaActiveMain}
+            onSelectMain={handleFigmaMainNav}
             onUpgrade={() => setBuyOpen(true)}
-            onOpenSettings={openWorkspaceSettings}
-            onPlayPreview={() => {
-              const id = workspaceTab === "clip" ? "output-section" : "video-output";
-              document.getElementById(id)?.scrollIntoView({
-                behavior: "smooth",
-                block: "start",
-              });
-            }}
-            accountSection={user ? accountMenu : null}
+            onSettings={openWorkspaceSettings}
+            onAccount={handleFigmaAccount}
+            recentSection={figmaRecentSection}
           />
-          <div className="p-4 sm:p-6 lg:p-8">
+        </aside>
+
+        <Dialog open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
+          <DialogContent
+            showCloseButton
+            className="fixed top-0 left-0 z-50 h-full max-h-none w-[min(100%,280px)] max-w-[280px] translate-x-0 translate-y-0 gap-0 overflow-hidden rounded-none border-0 border-r border-white p-0 sm:max-w-[280px]"
+          >
+            <AdaFigmaSidebarNav
+              activeMain={figmaActiveMain}
+              onSelectMain={(id) => {
+                handleFigmaMainNav(id);
+                setMobileNavOpen(false);
+              }}
+              onUpgrade={() => {
+                setBuyOpen(true);
+                setMobileNavOpen(false);
+              }}
+              onSettings={() => {
+                openWorkspaceSettings();
+                setMobileNavOpen(false);
+              }}
+              onAccount={() => {
+                handleFigmaAccount();
+                setMobileNavOpen(false);
+              }}
+              recentSection={figmaRecentSection}
+            />
+          </DialogContent>
+        </Dialog>
+
+        <main className="relative z-[1] flex min-w-0 flex-1 flex-col overflow-hidden">
+          <AdaFigmaMainHeader
+            menuButton={
+              <button
+                type="button"
+                className="shrink-0 text-white/80 hover:text-white lg:hidden"
+                aria-label="Open menu"
+                onClick={() => setMobileNavOpen(true)}
+              >
+                ☰
+              </button>
+            }
+            title={hubTitle}
+            recentTrigger={recentDropdown}
+            trailing={
+              <div className="flex items-center gap-2">
+                {user ? (
+                  <span className="hidden text-[10px] text-white/50 md:inline">
+                    {totalClipCount} saved
+                  </span>
+                ) : null}
+                {figmaCreditsPill}
+                {accountMenu}
+              </div>
+            }
+          />
+
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             {workspaceTab === "video" ? (
-              <VideoVariationWorkspace
-                ref={videoWorkspaceRef}
-                hideMarketingTitle
-                user={user}
-                creditsRemaining={creditsRemaining}
-                creditsUnlimited={creditsUnlimited}
-                setCreditsRemaining={setCreditsRemaining}
-                onOpenBuy={() => setBuyOpen(true)}
-                onOpenSignIn={() => setSignInOpen(true)}
-                onJobFinished={onVideoJobFinished}
+              <div className="flex-1 overflow-y-auto p-4 lg:p-6">
+                <VideoVariationWorkspace
+                  ref={videoWorkspaceRef}
+                  hideMarketingTitle
+                  user={user}
+                  creditsRemaining={creditsRemaining}
+                  creditsUnlimited={creditsUnlimited}
+                  setCreditsRemaining={setCreditsRemaining}
+                  onOpenBuy={() => setBuyOpen(true)}
+                  onOpenSignIn={() => setSignInOpen(true)}
+                  onJobFinished={onVideoJobFinished}
+                />
+              </div>
+            ) : showClipHub ? (
+              <AdaFigmaClipHub
+                text={text}
+                onTextChange={(v) => {
+                  setText(v);
+                  setInputMode("text");
+                }}
+                canSubmit={canSubmit}
+                onSubmit={() => setRefinementOpen(true)}
+                onPickSuggestion={(prompt) => {
+                  setText(prompt);
+                  setInputMode("text");
+                  setUrl("");
+                  setUploadFile(null);
+                }}
               />
             ) : (
-              <>
-                <div className="grid grid-cols-1 gap-6 lg:grid-cols-[240px_minmax(0,1fr)_208px]">
-                  <div className="space-y-6 lg:min-w-0">
-                    <div className="flex justify-end lg:hidden">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="rounded-full border-[#E8E4F8]"
-                        aria-label="Open settings"
-                        onClick={() => setClipSettingsOpen(true)}
-                      >
-                        Settings
-                      </Button>
-                    </div>
-
-                    <section className="space-y-4">
-                      <div className="overflow-hidden rounded-3xl border border-white/55 bg-white/40 shadow-[0_20px_60px_-18px_rgba(124,58,237,0.28)] backdrop-blur-2xl dark:border-white/10 dark:bg-zinc-950/40">
-                        <div className="max-h-[min(50vh,480px)] min-h-[220px] overflow-y-auto border-b border-white/45 bg-white/90 p-4 sm:p-6 dark:border-white/10 dark:bg-zinc-950/70">
-                          <ClipWorkspaceConversation
-                            inputMode={inputMode}
-                            inputSummary={clipOriginalPromptSummary}
-                            streamedText={streamedText}
-                            verticalPreviewText={verticalPreviewText}
-                            loading={loading}
-                            fetchingYoutubeTranscript={fetchingYoutubeTranscript}
-                            generationSteps={generationSteps}
-                            getElapsed={getElapsed}
-                          />
-                        </div>
-                        <div className="space-y-4 bg-linear-to-b from-white/60 to-white/90 p-4 sm:p-5 dark:from-zinc-900/50 dark:to-zinc-950/80">
-                          <AiInputPanel
-                            embedded
-                            inputMode={inputMode}
-                            onInputModeChange={(mode) => {
-                              setInputMode(mode);
-                              if (mode !== "file") {
-                                setUploadFile(null);
-                              }
-                            }}
-                            text={text}
-                            onTextChange={setText}
-                            url={url}
-                            onUrlChange={setUrl}
-                            uploadFile={uploadFile}
-                            onFileChange={setUploadFile}
-                            selectedModel={selectedModel}
-                            onModelChange={setSelectedModel}
-                            loading={loading}
-                            canSubmit={canSubmit}
-                            onSubmit={() => setRefinementOpen(true)}
-                            onQuickAction={(id) => {
-                              const map: Record<string, string> = {
-                                hook: "viral_hook",
-                                thread: "contrarian",
-                                repurpose: "educational",
-                              };
-                              const p = map[id];
-                              if (p) {
-                                setPreset((cur) =>
-                                  cur === p ? null : (p as GenerationPresetId),
-                                );
-                              }
-                            }}
-                            maxUploadMb={Math.round(
-                              MAX_MEDIA_UPLOAD_BYTES / (1024 * 1024),
-                            )}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="flex flex-wrap gap-2">
-                        <p className="w-full text-xs font-medium uppercase tracking-wide text-[#9B8EC4] dark:text-zinc-400">
-                          Style
-                        </p>
-                        {PRESET_CHIPS.map(({ id, emoji, label }) => (
-                          <Button
-                            key={id}
-                            type="button"
-                            size="sm"
-                            variant={preset === id ? "default" : "outline"}
-                            disabled={loading}
-                            onClick={() => setPreset((cur) => (cur === id ? null : id))}
-                            className={cn(
-                              "rounded-full border-violet-200/60 bg-white/60 backdrop-blur-sm dark:border-violet-500/25 dark:bg-zinc-900/50",
-                              preset === id &&
-                                "genex-cta-glow border-transparent bg-[#6C47FF] text-white hover:bg-[#5835E8]",
-                            )}
-                          >
-                            <span className="mr-1">{emoji}</span>
-                            {label}
-                          </Button>
-                        ))}
-                      </div>
-
-                      {error ? (
-                        <p className="text-destructive text-sm" role="alert">
-                          {error}
-                        </p>
-                      ) : null}
-
-                      {loading ? (
-                        <div className="space-y-3">
-                          <Progress
-                            value={fetchingYoutubeTranscript ? 18 : progress}
-                            className="w-full"
-                          >
-                            <div className="flex w-full items-center justify-between gap-2">
-                              <ProgressLabel>
-                                {fetchingYoutubeTranscript
-                                  ? "YouTube"
-                                  : generationSteps.at(-1)?.label ?? "Generating"}
-                              </ProgressLabel>
-                              <ProgressValue />
-                            </div>
-                          </Progress>
-                          <p className="text-muted-foreground text-xs">
-                            {fetchingYoutubeTranscript
-                              ? "Fetching captions before generation…"
-                              : generationSteps.length > 0
-                                ? "Steps also show in the chat panel above."
-                                : "Connecting to the server…"}
-                          </p>
-                        </div>
-                      ) : null}
-
-                      <RefinementChatDialog
-                        open={refinementOpen}
-                        onOpenChange={setRefinementOpen}
-                        kind="text_generation"
-                        platformIds={CLIP_PLATFORMS}
-                        inputSummary={
-                          inputMode === "text"
-                            ? text.trim().slice(0, 120) || "Text / idea"
-                            : inputMode === "url"
-                              ? url.trim() || "URL"
-                              : uploadFile
-                                ? `File: ${uploadFile.name}`
-                                : "Upload"
-                        }
-                        onConfirm={(ctx) => {
-                          const ctxWithModel: GenerationContextV1 = {
-                            ...ctx,
-                            answers: {
-                              ...ctx.answers,
-                              preferredModel: selectedModel,
-                            },
-                          };
-                          pendingGenerationContextRef.current = ctxWithModel;
-                          setLastClipGenerationContext(ctxWithModel);
-                          setRefinementOpen(false);
-                          void runGeneration();
-                        }}
-                      />
-                    </section>
-                  </div>
-
-                  <div className="min-w-0 space-y-4">
-                    <div className="flex justify-center lg:justify-start">
-                      <span className="inline-flex items-center gap-2 rounded-full border border-white/50 bg-white/70 px-3 py-1 text-xs font-medium text-[#6B6B8A] shadow-sm backdrop-blur-sm dark:border-white/10 dark:bg-zinc-900/70">
-                        English · Casual tone
-                      </span>
-                    </div>
-
-                    {(streamedText.trim() || loading) && (
-                      <section
-                        id="output-section"
-                        className="scroll-mt-24 space-y-4 rounded-2xl border border-white/50 bg-white/55 p-4 shadow-[0_12px_40px_-16px_rgba(124,58,237,0.15)] backdrop-blur-xl sm:p-5 dark:border-white/10 dark:bg-zinc-950/50"
-                      >
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                          <h2 className="text-xl font-semibold text-[#0F0A1E] dark:text-white">
-                            Your clip package
-                          </h2>
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            size="sm"
-                            className="rounded-full border-[#E8E4F8]"
-                            disabled={loading || !canSubmit}
-                            onClick={() => setRefinementOpen(true)}
-                          >
-                            Regenerate
-                          </Button>
-                        </div>
-
-                        <div className="space-y-4">
-                          {loading && !streamedText.trim() ? (
-                            <div className="space-y-3 animate-pulse">
-                              {[...Array(6)].map((_, i) => (
-                                <div
-                                  key={i}
-                                  className="h-4 rounded-full bg-white/8"
-                                  style={{ width: `${85 - i * 8}%` }}
-                                />
-                              ))}
-                            </div>
-                          ) : (
-                            <>
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="inline-flex rounded-full border border-[#6C47FF]/35 bg-[#6C47FF]/10 px-3 py-1 text-xs font-medium text-[#6C47FF]">
-                                  TikTok · Reels · Shorts
-                                </span>
-                                {clipFormatTags.map((tag) => (
-                                  <span
-                                    key={tag}
-                                    className="rounded-full bg-[#F0EFFE] px-2.5 py-0.5 text-xs font-medium text-[#0F0A1E] dark:bg-zinc-800 dark:text-zinc-200"
-                                  >
-                                    {tag}
-                                  </span>
-                                ))}
-                              </div>
-
-                              <div className="mx-auto w-[min(100%,240px)] rounded-[2rem] border-4 border-[#E8E4F8] bg-[#0F0A1E] p-2 dark:border-white/10">
-                                <div
-                                  className={cn(
-                                    "relative aspect-9/16 min-h-[200px] overflow-y-auto rounded-[1.5rem] bg-zinc-950 p-3 text-[12px] leading-snug text-zinc-100",
-                                    loading && "genex-shimmer",
-                                  )}
-                                >
-                                  <p className="mb-2 text-[10px] tracking-wide text-zinc-500 uppercase">
-                                    9:16 preview
-                                  </p>
-                                  <pre className="font-sans wrap-break-word whitespace-pre-wrap">
-                                    {verticalPreviewText.trim()
-                                      ? verticalPreviewText
-                                      : loading
-                                        ? "Streaming…"
-                                        : "Script appears here."}
-                                  </pre>
-                                </div>
-                              </div>
-
-                              <div className="grid gap-3">
-                                {CLIP_SECTIONS.map((section) => {
-                                  const block = parsedClipPackage[section.id];
-                                  return (
-                                    <Card
-                                      key={section.id}
-                                      size="sm"
-                                      className="border-[#E8E4F8] shadow-sm transition duration-200 hover:scale-[1.02] hover:shadow-md dark:border-white/10"
-                                    >
-                                      <CardHeader className="flex-row items-start justify-between gap-2 space-y-0">
-                                        <CardTitle className="text-base">{section.label}</CardTitle>
-                                        <Button
-                                          type="button"
-                                          size="xs"
-                                          variant="outline"
-                                          disabled={!block}
-                                          onClick={() => void copyText(section.id, block)}
-                                        >
-                                          {copiedId === section.id ? "Copied" : "Copy"}
-                                        </Button>
-                                      </CardHeader>
-                                      <CardContent>
-                                        <pre className="font-sans text-sm whitespace-pre-wrap wrap-break-word">
-                                          {block || (loading ? "Waiting…" : "No content yet.")}
-                                        </pre>
-                                      </CardContent>
-                                    </Card>
-                                  );
-                                })}
-                              </div>
-
-                              {!loading && streamedText.trim() ? (
-                                <>
-                                  <div className="rounded-xl bg-zinc-950 px-4 py-3 ring-1 ring-white/10">
-                                    <RatingWidget
-                                      kind="text"
-                                      generationId={textRatingGenerationId}
-                                    />
-                                  </div>
-                                  <GenerationFeedbackPanel
-                                    mode="clip"
-                                    originalPrompt={clipOriginalPromptSummary || "Clip package"}
-                                    generationContext={lastClipGenerationContext}
-                                    variationsOutput={streamedText}
-                                  />
-                                </>
-                              ) : null}
-                            </>
-                          )}
-                        </div>
-                      </section>
-                    )}
-                  </div>
-
-                  <div id="clip-settings-rail" className="hidden lg:block lg:min-w-0">
-                    {clipSettingsRail}
-                  </div>
-                </div>
-
-                <Dialog open={clipSettingsOpen} onOpenChange={setClipSettingsOpen}>
-                  <DialogContent
-                    showCloseButton
-                    className="fixed right-auto bottom-0 left-1/2 top-auto max-h-[min(88dvh,640px)] w-full max-w-full translate-x-[-50%] translate-y-0 overflow-y-auto rounded-t-2xl rounded-b-none border-[#E8E4F8] p-6 sm:max-w-md"
-                  >
-                    <DialogHeader>
-                      <DialogTitle>Settings</DialogTitle>
-                    </DialogHeader>
-                    {clipSettingsRail}
-                  </DialogContent>
-                </Dialog>
-              </>
+              <div className="min-h-0 min-w-0 flex-1 overflow-hidden bg-[#0A050F]/50">
+                <AdaClipWorkspace
+                  inputMode={inputMode}
+                  onInputModeChange={(mode) => {
+                    setInputMode(mode);
+                    if (mode !== "file") setUploadFile(null);
+                  }}
+                  text={text}
+                  onTextChange={setText}
+                  url={url}
+                  onUrlChange={setUrl}
+                  uploadFile={uploadFile}
+                  onFileChange={setUploadFile}
+                  selectedModel={selectedModel}
+                  onModelChange={setSelectedModel}
+                  preset={preset}
+                  onPresetChange={setPreset}
+                  loading={loading}
+                  canSubmit={canSubmit}
+                  onSubmit={() => setRefinementOpen(true)}
+                  maxUploadMb={Math.round(MAX_MEDIA_UPLOAD_BYTES / (1024 * 1024))}
+                  generationSteps={generationSteps}
+                  getElapsed={getElapsed}
+                  error={error}
+                  fetchingYoutubeTranscript={fetchingYoutubeTranscript}
+                  progress={progress}
+                  streamedText={streamedText}
+                  parsedClipPackage={parsedClipPackage}
+                  clipFormatTags={clipFormatTags}
+                  verticalPreviewText={verticalPreviewText}
+                  copiedId={copiedId}
+                  onCopy={copyText}
+                  onRegenerate={() => setRefinementOpen(true)}
+                  textRatingGenerationId={textRatingGenerationId}
+                  lastClipGenerationContext={lastClipGenerationContext}
+                  clipOriginalPromptSummary={clipOriginalPromptSummary}
+                />
+              </div>
             )}
           </div>
-        </div>
-      </section>
+        </main>
+      </div>
 
-      <main className="flex-1">
-        <HowItWorks />
-        <PlatformsGrid />
-        <section
-          id="pricing"
-          className="scroll-mt-24 border-t border-[#E8E4F8] py-16 dark:border-white/10"
-        >
-          <div className="mx-auto max-w-6xl px-4 text-center">
-            <h2 className="text-2xl font-bold tracking-tight text-[#0F0A1E] dark:text-white">
-              Simple pricing
-            </h2>
-            <p className="text-muted-foreground mx-auto mt-3 max-w-xl text-sm sm:text-base">
-              Upgrade from the workspace toolbar or tap your credits pill. Stripe checkout is
-              coming soon — join the waitlist inside Upgrade.
-            </p>
-            <Button
-              type="button"
-              className="mt-6 rounded-full bg-[#6C47FF] px-6 font-semibold text-white hover:bg-[#5835E8] genex-cta-glow"
-              onClick={() => setBuyOpen(true)}
+      {workspaceTab === "clip" ? (
+        <>
+          <RefinementChatDialog
+            open={refinementOpen}
+            onOpenChange={setRefinementOpen}
+            kind="text_generation"
+            platformIds={CLIP_PLATFORMS}
+            inputSummary={
+              inputMode === "text"
+                ? text.trim().slice(0, 120) || "Text / idea"
+                : inputMode === "url"
+                  ? url.trim() || "URL"
+                  : uploadFile
+                    ? `File: ${uploadFile.name}`
+                    : "Upload"
+            }
+            onConfirm={(ctx) => {
+              const ctxWithModel: GenerationContextV1 = {
+                ...ctx,
+                answers: {
+                  ...ctx.answers,
+                  preferredModel: selectedModel,
+                },
+              };
+              pendingGenerationContextRef.current = ctxWithModel;
+              setLastClipGenerationContext(ctxWithModel);
+              setRefinementOpen(false);
+              void runGeneration();
+            }}
+          />
+          <Dialog open={clipSettingsOpen} onOpenChange={setClipSettingsOpen}>
+            <DialogContent
+              showCloseButton
+              className="fixed top-auto right-auto bottom-0 left-1/2 max-h-[min(88dvh,640px)] w-full max-w-full translate-x-[-50%] translate-y-0 overflow-y-auto rounded-t-2xl rounded-b-none border border-ada-border bg-ada-card p-6 text-ada-primary sm:max-w-md"
             >
-              View plans
-            </Button>
-          </div>
-        </section>
-
-        <section className="mx-auto max-w-6xl space-y-4 border-t border-[#E8E4F8] px-4 py-16 dark:border-white/10">
-          <div className="flex items-center justify-between gap-2">
-            <h2 className="text-xl font-semibold text-[#0F0A1E] dark:text-white">My Clips</h2>
-            {user && totalClipCount > 5 ? (
-              <span className="text-muted-foreground text-sm">View all — coming soon</span>
-            ) : null}
-          </div>
-          {!user ? (
-            <Card
-              size="sm"
-              className="border-[#E8E4F8] shadow-sm dark:border-white/10"
-            >
-              <CardContent className="pt-6">
-                <p className="text-muted-foreground text-sm">
-                  Sign in to save and access your clip history across devices.
-                </p>
-                <Button
-                  variant="link"
-                  className="mt-2 h-auto px-0 text-[#6C47FF]"
-                  onClick={() => setSignInOpen(true)}
-                >
-                  Sign in
-                </Button>
-              </CardContent>
-            </Card>
-          ) : myClipCards.length === 0 ? (
-            <p className="text-muted-foreground text-sm">No saved clips yet.</p>
-          ) : (
-            <div className="grid gap-3 sm:grid-cols-2">
-              {myClipCards.map((clip) => (
-                <Card
-                  key={clip.id}
-                  size="sm"
-                  className="border-[#E8E4F8] shadow-sm transition duration-200 hover:scale-[1.02] hover:shadow-md dark:border-white/10"
-                >
-                  <CardHeader>
-                    <CardTitle className="text-base">{clip.title}</CardTitle>
-                    <CardDescription>
-                      {new Date(clip.createdAt).toLocaleString()}
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    {isGenerationContextV1(clip.generationContext) ? (
-                      <p className="mb-2 line-clamp-2 text-xs font-medium text-[#6C47FF]">
-                        Refinement:{" "}
-                        {Object.values(clip.generationContext.answers)
-                          .filter(Boolean)
-                          .slice(0, 2)
-                          .join(" · ")}
-                      </p>
-                    ) : null}
-                    <p className="text-muted-foreground line-clamp-2 text-sm">
-                      {(clip.inputText ?? clip.inputUrl ?? "")
-                        .replace(/\s+/g, " ")
-                        .slice(0, 120)}
-                    </p>
-                  </CardContent>
-                  <CardFooter>
-                    <Button type="button" size="sm" onClick={() => openClip(clip)}>
-                      Open
-                    </Button>
-                  </CardFooter>
-                </Card>
-              ))}
-            </div>
-          )}
-        </section>
-      </main>
-
-      <SiteFooter />
+              <DialogHeader>
+                <DialogTitle>Settings</DialogTitle>
+              </DialogHeader>
+              {clipSettingsRail}
+            </DialogContent>
+          </Dialog>
+        </>
+      ) : null}
 
       <Dialog open={signInOpen} onOpenChange={setSignInOpen}>
-        <DialogContent className="border-[#E8E4F8] bg-white sm:max-w-md dark:border-white/10 dark:bg-zinc-950">
+        <DialogContent className="border border-ada-border bg-ada-card text-ada-primary sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-[#0F0A1E] dark:text-white">Sign in</DialogTitle>
+            <DialogTitle>Sign in</DialogTitle>
             <DialogDescription>
               Sign in to save your clips and buy more credits.
             </DialogDescription>
@@ -1181,7 +990,7 @@ export function HomeWorkspace({
             <input type="hidden" name="next" value="/" />
             <Button
               type="submit"
-              className="w-full rounded-xl bg-[#6C47FF] font-semibold text-white hover:bg-[#5835E8] genex-cta-glow"
+              className="w-full rounded-ada-input bg-linear-to-r from-[#7B5CFA] to-[#9B6FFF] font-semibold text-white transition-opacity hover:opacity-90"
             >
               Continue with Google
             </Button>
@@ -1195,7 +1004,7 @@ export function HomeWorkspace({
         creditsRemaining={creditsRemaining}
         creditsUnlimited={creditsUnlimited}
       />
-    </div>
+    </>
   );
 }
 
@@ -1243,9 +1052,9 @@ function BuyCreditsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto border-[#E8E4F8] bg-white sm:max-w-lg dark:border-white/10 dark:bg-zinc-950">
+      <DialogContent className="max-h-[90vh] overflow-y-auto border border-ada-border bg-ada-card text-ada-primary sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle className="text-[#0F0A1E] dark:text-white">Upgrade & credits</DialogTitle>
+          <DialogTitle>Upgrade & credits</DialogTitle>
           <DialogDescription>
             {creditsUnlimited ? (
               <>
@@ -1267,7 +1076,11 @@ function BuyCreditsDialog({
             { name: "Creator", credits: "100 credits", price: "$12" },
             { name: "Pro", credits: "Unlimited / mo", price: "$29/mo" },
           ].map((p) => (
-            <Card key={p.name} size="sm" className="border-[#E8E4F8] shadow-sm dark:border-white/10">
+            <Card
+              key={p.name}
+              size="sm"
+              className="border border-ada-border bg-ada-elevated transition-colors hover:border-ada-border-active"
+            >
               <CardHeader>
                 <CardTitle className="text-base">{p.name}</CardTitle>
                 <CardDescription>
@@ -1283,20 +1096,20 @@ function BuyCreditsDialog({
           ))}
         </div>
 
-        <div className="space-y-2 rounded-lg border border-dashed border-[#C4BAF0] bg-[#FAFAFC] p-4 dark:border-violet-500/25 dark:bg-zinc-900/40">
+        <div className="space-y-2 rounded-lg border border-dashed border-ada-border-active bg-ada-app/80 p-4">
           <Label htmlFor="waitlist-email">Notify me at</Label>
           <div className="flex flex-col gap-2 sm:flex-row">
             <input
               id="waitlist-email"
               type="email"
-              className="flex-1 rounded-md border border-[#E8E4F8] bg-white px-3 py-2 text-sm text-[#0F0A1E] outline-none ring-[#6C47FF]/25 focus-visible:ring-[3px] dark:border-white/10 dark:bg-zinc-950"
+              className="flex-1 rounded-ada-input border border-ada-border bg-ada-input px-3 py-2 text-sm text-ada-primary outline-none transition-colors placeholder:text-ada-disabled focus:border-ada-focus"
               placeholder="you@example.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
             />
             <Button
               type="button"
-              className="rounded-full bg-[#6C47FF] font-semibold text-white hover:bg-[#5835E8] genex-cta-glow"
+              className="rounded-ada-input bg-linear-to-r from-[#7B5CFA] to-[#9B6FFF] font-semibold text-white transition-opacity hover:opacity-90"
               disabled={busy}
               onClick={() => void submitWaitlist()}
             >

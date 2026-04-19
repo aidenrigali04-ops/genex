@@ -8,6 +8,7 @@
     "start": "next start",
     "start:api": "next start",
     "lint": "eslint",
+    "tailwind:build": "mkdir -p .tmp && tailwindcss -i ./app/globals.css -o ./.tmp/tailwind-snapshot.css --minify",
     "worker": "npm run start --prefix worker"
   },
   "dependencies": {
@@ -33,6 +34,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@tailwindcss/cli": "^4",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

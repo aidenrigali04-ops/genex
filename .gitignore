@@ -21,6 +21,9 @@
 # production
 /build
 
+# Tailwind CLI snapshot (`npm run tailwind:build`)
+.tmp/
+
 # misc
 .DS_Store
 *.pem

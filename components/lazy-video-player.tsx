@@ -50,7 +50,10 @@ export const LazyVideoPlayer = forwardRef<HTMLVideoElement, LazyVideoPlayerProps
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const [shouldLoad, setShouldLoad] = useState(false);
     const onVideoMountRef = useRef(onVideoMount);
-    onVideoMountRef.current = onVideoMount;
+
+    useEffect(() => {
+      onVideoMountRef.current = onVideoMount;
+    }, [onVideoMount]);
 
     const setVideoNode = useCallback(
       (node: HTMLVideoElement | null) => {

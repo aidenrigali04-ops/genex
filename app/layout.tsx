@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Instrument_Sans, Instrument_Serif, Inter } from "next/font/google";
 import { Toaster } from "sonner";
 
 import "./globals.css";
@@ -7,6 +7,19 @@ import "./globals.css";
 const inter = Inter({
   variable: "--font-inter",
   subsets: ["latin"],
+  display: "swap",
+});
+
+const instrumentSerif = Instrument_Serif({
+  weight: "400",
+  subsets: ["latin"],
+  variable: "--font-instrument-serif",
+  display: "swap",
+});
+
+const instrumentSans = Instrument_Sans({
+  subsets: ["latin"],
+  variable: "--font-instrument-sans",
   display: "swap",
 });
 
@@ -22,10 +35,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${inter.variable} font-sans h-full antialiased`}>
-      <body className="min-h-full flex flex-col bg-[#F0EFFE] text-[#0F0A1E] dark:bg-zinc-950 dark:text-zinc-50">
+    <html
+      lang="en"
+      className={`${inter.variable} ${instrumentSerif.variable} ${instrumentSans.variable} dark h-full font-sans antialiased`}
+    >
+      <body className="flex min-h-full flex-col bg-ada-app text-ada-primary">
         {children}
-        <Toaster richColors closeButton theme="light" />
+        <Toaster richColors closeButton theme="dark" />
       </body>
     </html>
   );

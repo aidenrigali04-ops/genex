@@ -206,9 +206,9 @@ export function GenerationFeedbackPanel({
   const chips = mode === "video" ? VIDEO_CHIPS : CLIP_CHIPS;
 
   return (
-    <section className="mt-10 space-y-4 border-t border-[#E8E4F8] pt-8 dark:border-white/10">
+    <section className="mt-6 space-y-4 rounded-ada-card border border-ada-border bg-ada-card p-5">
       <div>
-        <h3 className="text-lg font-semibold text-[#0F0A1E] dark:text-white">AI Feedback</h3>
+        <h3 className="text-lg font-semibold text-ada-primary">AI Feedback</h3>
         <p className="text-muted-foreground text-sm">
           Ask the strategist about these results. Each message uses{" "}
           <strong>1 credit</strong> (signed-in users).
@@ -221,7 +221,7 @@ export function GenerationFeedbackPanel({
         ) : null}
       </div>
 
-      <div className="flex max-h-64 flex-col gap-3 overflow-y-auto rounded-xl border border-[#E8E4F8] bg-[#FAFAFC] p-3 dark:border-white/10 dark:bg-zinc-900/30">
+      <div className="flex max-h-72 flex-col gap-3 overflow-y-auto rounded-ada-input bg-ada-app p-3">
         {messages.length === 0 ? (
           <p className="text-muted-foreground text-sm">
             Ask anything about pacing, hooks, platform fit, or rewrites.
@@ -233,8 +233,8 @@ export function GenerationFeedbackPanel({
               className={cn(
                 "max-w-[95%] rounded-2xl px-3 py-2 text-sm leading-relaxed",
                 m.role === "user"
-                  ? "ml-auto rounded-br-md bg-[#6C47FF] text-white"
-                  : "mr-auto rounded-bl-md border border-[#E8E4F8] bg-white text-[#0F0A1E] dark:border-white/10 dark:bg-zinc-950 dark:text-zinc-100",
+                  ? "ml-auto rounded-br-md bg-ada-accent text-white"
+                  : "mr-auto rounded-bl-md border border-ada-border bg-ada-elevated text-ada-primary",
               )}
             >
               <pre className="font-sans whitespace-pre-wrap wrap-break-word">
@@ -252,7 +252,7 @@ export function GenerationFeedbackPanel({
             type="button"
             size="sm"
             variant="outline"
-            className="rounded-full border-[#E8E4F8] text-xs hover:border-[#C4BAF0] dark:border-white/10"
+            className="rounded-ada-pill border border-ada-border bg-transparent text-xs text-ada-secondary hover:border-ada-border-active hover:text-ada-primary"
             disabled={streaming}
             onClick={() => void sendFeedback(c)}
           >
@@ -285,7 +285,7 @@ export function GenerationFeedbackPanel({
         <Label htmlFor="feedback-input">Ask AI about these results…</Label>
         <textarea
           id="feedback-input"
-          className="min-h-[88px] w-full resize-y rounded-lg border border-[#E8E4F8] bg-white px-3 py-2 text-sm text-[#0F0A1E] outline-none ring-[#6C47FF]/25 focus-visible:ring-[3px] dark:border-white/10 dark:bg-zinc-950 dark:text-zinc-100"
+          className="min-h-[80px] w-full resize-none rounded-ada-input border border-ada-border bg-ada-input px-3 py-2 text-sm text-ada-primary outline-none transition-colors placeholder:text-ada-disabled focus:border-ada-focus"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           disabled={streaming}
@@ -293,7 +293,7 @@ export function GenerationFeedbackPanel({
         />
         <Button
           type="button"
-          className="rounded-full bg-[#6C47FF] font-semibold text-white hover:bg-[#5835E8] genex-cta-glow"
+          className="rounded-ada-input bg-linear-to-r from-[#7B5CFA] to-[#9B6FFF] px-5 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-40"
           disabled={streaming || !input.trim()}
           onClick={() => void sendFeedback(input)}
         >
