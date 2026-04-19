@@ -939,8 +939,9 @@ export function HomeWorkspace({
   return (
     <>
       <div className="relative flex h-screen overflow-hidden bg-[#0A050F]">
-        <AdaFigmaAmbientBackground />
+        {workspaceTab !== "video" ? <AdaFigmaAmbientBackground /> : null}
 
+        {workspaceTab !== "video" ? (
         <aside className="relative z-[1] hidden shrink-0 lg:block">
           <AdaFigmaSidebarNav
             activeMain={figmaActiveMain}
@@ -956,7 +957,9 @@ export function HomeWorkspace({
             }
           />
         </aside>
+        ) : null}
 
+        {workspaceTab !== "video" ? (
         <Dialog open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
           <DialogContent
             showCloseButton
@@ -989,8 +992,10 @@ export function HomeWorkspace({
             />
           </DialogContent>
         </Dialog>
+        ) : null}
 
         <main className="relative z-[1] flex min-w-0 flex-1 flex-col overflow-hidden">
+          {workspaceTab !== "video" ? (
           <AdaFigmaMainHeader
             menuButton={
               <button
@@ -1016,6 +1021,7 @@ export function HomeWorkspace({
               </div>
             }
           />
+          ) : null}
 
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             {workspaceTab === "video" ? (
@@ -1029,6 +1035,20 @@ export function HomeWorkspace({
                   }}
                   onJobFinished={onVideoJobFinished}
                   onUpgrade={() => setBuyOpen(true)}
+                  onWorkspaceSettings={openWorkspaceSettings}
+                  onWorkspaceAccount={handleFigmaAccount}
+                  headerTrailing={
+                    <div className="flex items-center gap-2">
+                      {figmaCreditsPill}
+                      {accountMenu}
+                    </div>
+                  }
+                  onSidebarNavigate={(id) => {
+                    if (id !== "video") {
+                      setWorkspaceTab("clip");
+                      setMobileNavOpen(false);
+                    }
+                  }}
                   variant="adaKit"
                 />
               </div>
