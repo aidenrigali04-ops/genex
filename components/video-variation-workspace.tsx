@@ -197,7 +197,10 @@ function putVideoToSignedUploadUrl(
       }
       let msg = xhr.statusText;
       try {
-        const j = JSON.parse(xhr.responseText) as { message?: string; error?: string };
+        const j = JSON.parse(xhr.responseText) as {
+          message?: string;
+          error?: string;
+        };
         if (j.message) msg = j.message;
         else if (j.error) msg = j.error;
       } catch {
@@ -205,7 +208,8 @@ function putVideoToSignedUploadUrl(
       }
       reject(new Error(msg || "Storage upload failed."));
     };
-    xhr.onerror = () => reject(new Error("Network error during upload to storage."));
+    xhr.onerror = () =>
+      reject(new Error("Network error during upload to storage."));
     xhr.send(fd);
   });
 }
@@ -242,7 +246,12 @@ async function submitUploadJobViaDirectStorage(params: {
   };
   if (!prepRes.ok || !prep.id) {
     throw new Error(
-      String(prep.message || prep.error || prepRes.statusText || "Could not start upload."),
+      String(
+        prep.message ||
+          prep.error ||
+          prepRes.statusText ||
+          "Could not start upload.",
+      ),
     );
   }
   const signedUrl = prep.directUpload?.signedUrl;
@@ -326,7 +335,8 @@ function formatVariationsForFeedback(list: VideoVariationItem[]): string {
   return list
     .map((v) => {
       const n = v.variation_number ?? 0;
-      const err = typeof v.error === "string" && v.error ? `Error: ${v.error}` : "";
+      const err =
+        typeof v.error === "string" && v.error ? `Error: ${v.error}` : "";
       const url = typeof v.url === "string" && v.url ? `Output: ${v.url}` : "";
       return `Variation ${n}: ${v.label}\nNotes: ${v.style_note ?? ""}\n${err || url}`;
     })
@@ -354,7 +364,11 @@ type VariationPreviewRegistry = {
 const VariationPreviewRegistryContext =
   createContext<VariationPreviewRegistry | null>(null);
 
-function VariationPreviewRegistryProvider({ children }: { children: ReactNode }) {
+function VariationPreviewRegistryProvider({
+  children,
+}: {
+  children: ReactNode;
+}) {
   const pausersRef = useRef(new Map<string, () => void>());
 
   const registry = useMemo<VariationPreviewRegistry>(
@@ -382,7 +396,13 @@ function VariationPreviewRegistryProvider({ children }: { children: ReactNode })
 }
 
 /** One live decode at a time (exclusive hover), poster still when idle; `preload=metadata` until play. */
-function VariationHoverVideo({ src, instanceId }: { src: string; instanceId: string }) {
+function VariationHoverVideo({
+  src,
+  instanceId,
+}: {
+  src: string;
+  instanceId: string;
+}) {
   const ref = useRef<HTMLVideoElement>(null);
   const preview = useContext(VariationPreviewRegistryContext);
   const [posterUrl, setPosterUrl] = useState<string | null>(null);
@@ -475,7 +495,8 @@ function VariationHoverVideo({ src, instanceId }: { src: string; instanceId: str
       onMouseLeave={pauseStill}
       onClick={() => {
         if (typeof window === "undefined" || !window.matchMedia) return;
-        if (window.matchMedia("(hover: hover) and (pointer: fine)").matches) return;
+        if (window.matchMedia("(hover: hover) and (pointer: fine)").matches)
+          return;
         const el = ref.current;
         if (!el) return;
         if (el.paused) {
@@ -589,82 +610,84 @@ export const VideoVariationWorkspace = forwardRef<
     }
   };
 
-  const fetchJob = useCallback(
-    async (id: string) => {
-      const fetchOnce = async (slim: boolean) => {
-        const url = `/api/video-jobs/${id}${slim ? "?slim=true" : ""}`;
-        return fetch(url, {
-          credentials: "same-origin",
-          cache: "no-store",
-        });
-      };
+  const fetchJob = useCallback(async (id: string) => {
+    const fetchOnce = async (slim: boolean) => {
+      const url = `/api/video-jobs/${id}${slim ? "?slim=true" : ""}`;
+      return fetch(url, {
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+    };
 
-      const readErrorMessage = async (res: Response) => {
-        const raw = await res.text();
-        let msg = raw || res.statusText;
-        try {
-          const j = JSON.parse(raw) as { error?: string; message?: string };
-          if (j.message) msg = j.message;
-          else if (j.error) msg = j.error;
-        } catch {
-          /* keep */
-        }
-        return msg;
-      };
-
-      let res = await fetchOnce(true);
-      if (!res.ok) {
-        setError(`Could not load job (${res.status}): ${await readErrorMessage(res)}`);
-        return;
+    const readErrorMessage = async (res: Response) => {
+      const raw = await res.text();
+      let msg = raw || res.statusText;
+      try {
+        const j = JSON.parse(raw) as { error?: string; message?: string };
+        if (j.message) msg = j.message;
+        else if (j.error) msg = j.error;
+      } catch {
+        /* keep */
       }
-      setError(null);
-      let row = (await res.json()) as JobRow;
+      return msg;
+    };
 
-      if (row.status === "complete") {
-        res = await fetchOnce(false);
-        if (!res.ok) {
-          setError(
-            `Could not load job (${res.status}): ${await readErrorMessage(res)}`,
-          );
-          return;
-        }
-        row = (await res.json()) as JobRow;
-      }
-      setJobStatus(row.status);
-      const awaitingLink =
-        row.status === "queued" &&
-        row.input_type === "upload" &&
-        !(typeof row.storage_path === "string" && row.storage_path.trim()) &&
-        !!(typeof row.pending_storage_path === "string" && row.pending_storage_path.trim());
-      setJobAwaitingUploadLink(awaitingLink);
-      setVariations(parseVariations(row.variations));
-      setJobPartialNotice(
-        row.status === "complete" && row.error_message?.trim()
-          ? row.error_message.trim()
-          : null,
+    let res = await fetchOnce(true);
+    if (!res.ok) {
+      setError(
+        `Could not load job (${res.status}): ${await readErrorMessage(res)}`,
       );
-      const gc = row.generation_context;
-      setJobGenerationContext(isGenerationContextV1(gc) ? gc : null);
+      return;
+    }
+    setError(null);
+    let row = (await res.json()) as JobRow;
 
-      if (row.status === "failed") {
-        stopPoll();
-        if (failedToastJobIdRef.current !== id) {
-          failedToastJobIdRef.current = id;
-          toast.error(row.error_message?.trim() || "Video job failed.");
-        }
+    if (row.status === "complete") {
+      res = await fetchOnce(false);
+      if (!res.ok) {
+        setError(
+          `Could not load job (${res.status}): ${await readErrorMessage(res)}`,
+        );
         return;
       }
+      row = (await res.json()) as JobRow;
+    }
+    setJobStatus(row.status);
+    const awaitingLink =
+      row.status === "queued" &&
+      row.input_type === "upload" &&
+      !(typeof row.storage_path === "string" && row.storage_path.trim()) &&
+      !!(
+        typeof row.pending_storage_path === "string" &&
+        row.pending_storage_path.trim()
+      );
+    setJobAwaitingUploadLink(awaitingLink);
+    setVariations(parseVariations(row.variations));
+    setJobPartialNotice(
+      row.status === "complete" && row.error_message?.trim()
+        ? row.error_message.trim()
+        : null,
+    );
+    const gc = row.generation_context;
+    setJobGenerationContext(isGenerationContextV1(gc) ? gc : null);
 
-      if (row.status === "complete") {
-        stopPoll();
-        if (row.error_message?.trim()) {
-          toast.info(row.error_message.trim());
-        }
-        onJobFinishedRef.current();
+    if (row.status === "failed") {
+      stopPoll();
+      if (failedToastJobIdRef.current !== id) {
+        failedToastJobIdRef.current = id;
+        toast.error(row.error_message?.trim() || "Video job failed.");
       }
-    },
-    [],
-  );
+      return;
+    }
+
+    if (row.status === "complete") {
+      stopPoll();
+      if (row.error_message?.trim()) {
+        toast.info(row.error_message.trim());
+      }
+      onJobFinishedRef.current();
+    }
+  }, []);
 
   useEffect(() => {
     if (!jobId) return;
@@ -766,9 +789,7 @@ export const VideoVariationWorkspace = forwardRef<
   };
 
   const activeStepIndex =
-    jobStatus && jobStatus !== "failed"
-      ? statusToStep(jobStatus)
-      : -1;
+    jobStatus && jobStatus !== "failed" ? statusToStep(jobStatus) : -1;
 
   const pipelineProgressValue =
     jobStatus && jobStatus !== "failed"
@@ -903,7 +924,9 @@ export const VideoVariationWorkspace = forwardRef<
                 size="sm"
                 variant="outline"
                 className="rounded-full border-white/40 bg-transparent text-sm font-medium tracking-wide text-white hover:bg-white/10"
-                onClick={() => toast.message("Recent generations will live here soon.")}
+                onClick={() =>
+                  toast.message("Recent generations will live here soon.")
+                }
               >
                 Recent
               </Button>
@@ -921,9 +944,11 @@ export const VideoVariationWorkspace = forwardRef<
           >
             {!hideMarketingTitle && !showPreGenerationHub ? (
               <p className="mb-6 max-w-2xl text-sm leading-relaxed text-white/70">
-                Upload a video or paste YouTube, describe the edit in plain English, and get five
-                short-form variations for TikTok and Reels. Usually{" "}
-                <strong className="text-white/90">2–4 minutes</strong> end-to-end.
+                Upload a video or paste YouTube, describe the edit in plain
+                English, and get five short-form variations for TikTok and
+                Reels. Usually{" "}
+                <strong className="text-white/90">2–4 minutes</strong>{" "}
+                end-to-end.
               </p>
             ) : null}
 
@@ -984,31 +1009,33 @@ export const VideoVariationWorkspace = forwardRef<
                     ref={videoHubCarouselRef}
                     className="flex snap-x snap-mandatory gap-4 overflow-x-auto pb-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
                   >
-                    {VIDEO_HUB_CAROUSEL_CARDS.map(({ prompt: cardPrompt, thumb }) => (
-                      <button
-                        key={cardPrompt}
-                        type="button"
-                        onClick={() => setPrompt(cardPrompt)}
-                        className="group relative flex h-[220px] w-[280px] shrink-0 snap-start flex-col justify-end overflow-hidden rounded-2xl p-3 text-left outline outline-1 -outline-offset-1 outline-[rgba(10,5,15,0.16)] transition-transform hover:scale-[1.02]"
-                        style={{ background: thumb }}
-                      >
-                        <div className="pointer-events-none absolute inset-0 bg-black/15 transition-colors group-hover:bg-black/5" />
-                        <div className="relative flex items-center gap-2 rounded-xl bg-[rgba(10,5,15,0.16)] px-3 py-2.5 backdrop-blur-[50px]">
-                          <p
-                            className="min-w-0 flex-1 text-base leading-6 tracking-[0.16px] text-white"
-                            style={{ fontWeight: 500 }}
-                          >
-                            {cardPrompt}
-                          </p>
-                          <span
-                            className="flex size-10 shrink-0 items-center justify-center rounded-full bg-white text-[#0A050F]"
-                            aria-hidden
-                          >
-                            <ArrowRight className="size-4" strokeWidth={2} />
-                          </span>
-                        </div>
-                      </button>
-                    ))}
+                    {VIDEO_HUB_CAROUSEL_CARDS.map(
+                      ({ prompt: cardPrompt, thumb }) => (
+                        <button
+                          key={cardPrompt}
+                          type="button"
+                          onClick={() => setPrompt(cardPrompt)}
+                          className="group relative flex h-[220px] w-[280px] shrink-0 snap-start flex-col justify-end overflow-hidden rounded-2xl p-3 text-left outline outline-1 -outline-offset-1 outline-[rgba(10,5,15,0.16)] transition-transform hover:scale-[1.02]"
+                          style={{ background: thumb }}
+                        >
+                          <div className="pointer-events-none absolute inset-0 bg-black/15 transition-colors group-hover:bg-black/5" />
+                          <div className="relative flex items-center gap-2 rounded-xl bg-[rgba(10,5,15,0.16)] px-3 py-2.5 backdrop-blur-[50px]">
+                            <p
+                              className="min-w-0 flex-1 text-base leading-6 tracking-[0.16px] text-white"
+                              style={{ fontWeight: 500 }}
+                            >
+                              {cardPrompt}
+                            </p>
+                            <span
+                              className="flex size-10 shrink-0 items-center justify-center rounded-full bg-white text-[#0A050F]"
+                              aria-hidden
+                            >
+                              <ArrowRight className="size-4" strokeWidth={2} />
+                            </span>
+                          </div>
+                        </button>
+                      ),
+                    )}
                   </div>
 
                   <div className="mt-1 flex justify-between px-2 sm:px-4">
@@ -1033,329 +1060,377 @@ export const VideoVariationWorkspace = forwardRef<
               </div>
             ) : (
               <>
-            {(lastSubmittedPrompt.trim() ||
-              (refinementOpen && prompt.trim()) ||
-              (submitting && prompt.trim())) ? (
-              <div className="mb-6 flex w-full flex-col items-end gap-2">
-                <div className="flex max-w-[min(100%,600px)] items-end gap-3">
-                  <div className="min-w-0 rounded-[20px_4px_20px_20px] bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)] p-4 shadow-[0_16px_24px_rgba(136,1,220,0.16)] outline outline-1 -outline-offset-1 outline-white/25">
-                    <div className="mb-2 flex items-center gap-2 text-sm text-white">
-                      <MessageSquare className="size-4 shrink-0 opacity-95" />
-                      <span className="tracking-wide">Message</span>
+                {lastSubmittedPrompt.trim() ||
+                (refinementOpen && prompt.trim()) ||
+                (submitting && prompt.trim()) ? (
+                  <div className="mb-6 flex w-full flex-col items-end gap-2">
+                    <div className="flex max-w-[min(100%,600px)] items-end gap-3">
+                      <div className="min-w-0 rounded-[20px_4px_20px_20px] bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)] p-4 shadow-[0_16px_24px_rgba(136,1,220,0.16)] outline outline-1 -outline-offset-1 outline-white/25">
+                        <div className="mb-2 flex items-center gap-2 text-sm text-white">
+                          <MessageSquare className="size-4 shrink-0 opacity-95" />
+                          <span className="tracking-wide">Message</span>
+                        </div>
+                        <p className="whitespace-pre-wrap text-sm leading-5 tracking-wide text-white">
+                          {lastSubmittedPrompt.trim() || prompt.trim()}
+                        </p>
+                      </div>
+                      <div
+                        className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[#CCC1F0] text-xs font-semibold text-[#2d1b4e]"
+                        aria-hidden
+                      >
+                        {userInitials}
+                      </div>
                     </div>
-                    <p className="whitespace-pre-wrap text-sm leading-5 tracking-wide text-white">
-                      {lastSubmittedPrompt.trim() || prompt.trim()}
+                  </div>
+                ) : null}
+
+                {refinementOpen && !submitting ? (
+                  <div className="mb-8 flex w-full justify-start">
+                    <div className="w-full max-w-[min(100%,720px)] shadow-[0_12px_40px_rgba(0,0,0,0.35)]">
+                      <RefinementChatPanel
+                        active={refinementOpen}
+                        kind="video_variations"
+                        platformIds={VIDEO_REFINEMENT_PLATFORMS}
+                        inputSummary={
+                          sourceMode === "upload"
+                            ? videoFile
+                              ? `Upload: ${videoFile.name}`
+                              : "Video upload"
+                            : `YouTube: ${youtubeUrl.trim() || "…"}`
+                        }
+                        variant="adaKit"
+                        embedInChat
+                        className="max-h-[min(72vh,640px)]"
+                        onConfirm={(ctx) =>
+                          void submitWithRefinementContext(ctx)
+                        }
+                        onCancel={() => setRefinementOpen(false)}
+                      />
+                    </div>
+                  </div>
+                ) : null}
+
+                {submitting && uploadPct > 0 && uploadPct < 99 ? (
+                  <div className="mb-4 max-w-md space-y-1">
+                    <Progress value={uploadPct}>
+                      <div className="flex w-full justify-between text-xs text-white/80">
+                        <ProgressLabel>Uploading to app</ProgressLabel>
+                        <ProgressValue />
+                      </div>
+                    </Progress>
+                  </div>
+                ) : null}
+                {submitting && finishingOnServer ? (
+                  <div className="mb-4 max-w-md space-y-2">
+                    <Progress value={99}>
+                      <div className="flex w-full justify-between text-xs text-white/80">
+                        <ProgressLabel>Finishing on server</ProgressLabel>
+                        <ProgressValue />
+                      </div>
+                    </Progress>
+                    <p className="text-xs text-white/55">
+                      Large files upload straight to storage, then the app links
+                      the job. That step can take a bit before status updates
+                      below.
                     </p>
                   </div>
-                  <div
-                    className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[#CCC1F0] text-xs font-semibold text-[#2d1b4e]"
-                    aria-hidden
-                  >
-                    {userInitials}
-                  </div>
-                </div>
-              </div>
-            ) : null}
+                ) : null}
 
-            {refinementOpen && !submitting ? (
-              <div className="mb-6 flex w-full justify-start">
-                <div className="w-full max-w-[min(100%,720px)]">
-                  <RefinementChatPanel
-                    active={refinementOpen}
-                    kind="video_variations"
-                    platformIds={VIDEO_REFINEMENT_PLATFORMS}
-                    inputSummary={
-                      sourceMode === "upload"
-                        ? videoFile
-                          ? `Upload: ${videoFile.name}`
-                          : "Video upload"
-                        : `YouTube: ${youtubeUrl.trim() || "…"}`
-                    }
-                    variant="adaKit"
-                    embedInChat
-                    className="max-h-[min(72vh,640px)]"
-                    onConfirm={(ctx) => void submitWithRefinementContext(ctx)}
-                    onCancel={() => setRefinementOpen(false)}
-                  />
-                </div>
-              </div>
-            ) : null}
-
-            {submitting && uploadPct > 0 && uploadPct < 99 ? (
-              <div className="mb-4 max-w-md space-y-1">
-                <Progress value={uploadPct}>
-                  <div className="flex w-full justify-between text-xs text-white/80">
-                    <ProgressLabel>Uploading to app</ProgressLabel>
-                    <ProgressValue />
-                  </div>
-                </Progress>
-              </div>
-            ) : null}
-            {submitting && finishingOnServer ? (
-              <div className="mb-4 max-w-md space-y-2">
-                <Progress value={99}>
-                  <div className="flex w-full justify-between text-xs text-white/80">
-                    <ProgressLabel>Finishing on server</ProgressLabel>
-                    <ProgressValue />
-                  </div>
-                </Progress>
-                <p className="text-xs text-white/55">
-                  Large files upload straight to storage, then the app links the job. That step can
-                  take a bit before status updates below.
-                </p>
-              </div>
-            ) : null}
-
-            {(submitting ||
-              (jobId &&
-                jobStatus &&
-                jobStatus !== "complete" &&
-                jobStatus !== "failed")) ? (
-              <div className="mb-6 flex w-full justify-center">
-                <div className="inline-flex items-center gap-2 rounded-xl border border-white/60 px-3 py-2 text-sm text-white">
-                  <span className="size-4 animate-pulse rounded-full border border-white" />
-                  Generating…
-                </div>
-              </div>
-            ) : null}
-
-            {user && jobId && jobStatus ? (
-              <div className="mb-8 flex w-full flex-col items-start gap-3">
-                <div className="flex max-w-[min(100%,640px)] items-end gap-3">
-                  <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)] shadow-[0_0_20px_rgba(203,45,206,0.24)]">
-                    <Film className="size-5 text-white" />
-                  </div>
-                  <div className="min-w-0 flex-1 rounded-[20px_20px_20px_4px] bg-white/[0.08] p-4 shadow-[0_12px_24px_rgba(11,6,16,0.24)] outline outline-1 -outline-offset-1 outline-white/25">
-                    <div className="mb-3 flex items-center gap-2">
-                      <span className="size-3.5 rounded-sm bg-[#C717D8]" aria-hidden />
-                      <span className="text-sm font-medium tracking-wide text-[#C717D8]">Video</span>
+                {submitting ||
+                (jobId &&
+                  jobStatus &&
+                  jobStatus !== "complete" &&
+                  jobStatus !== "failed") ? (
+                  <div className="mb-6 flex w-full justify-center">
+                    <div className="inline-flex items-center gap-2 rounded-xl border border-white/60 px-3 py-2 text-sm text-white">
+                      <span className="size-4 animate-pulse rounded-full border border-white" />
+                      Generating…
                     </div>
-
-                    {jobStatus === "failed" ? (
-                      <p className="text-sm text-red-300">
-                        This job failed. Check the toast for details.
-                      </p>
-                    ) : jobStatus === "complete" && variations.length > 0 ? (
-                      <VariationPreviewRegistryProvider>
-                        <div className="space-y-4">
-                          <p className="text-sm leading-5 tracking-wide text-white">
-                            Here are your short-form cuts — preview each variation, download the
-                            ones you like, or open{" "}
-                            <span className="text-white/90">Settings</span> from the composer bar
-                            to review defaults.
-                          </p>
-                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                            {variations.map((v, idx) => {
-                              const num = v.variation_number ?? idx + 1;
-                              const previewInstanceId = `${jobId}-var-${idx}`;
-                              return (
-                                <div
-                                  key={v.url ? `${v.url}::${num}` : `${jobId}-var-${idx}-${num}`}
-                                  className="overflow-hidden rounded-lg bg-black/40 ring-1 ring-white/10"
-                                >
-                                  <p className="truncate px-2 pt-2 text-xs font-medium text-white/80">
-                                    {v.label}
-                                    <span className="text-white/50"> · Variation {num}</span>
-                                    {v.style_note ? (
-                                      <span className="text-white/45"> — {v.style_note}</span>
-                                    ) : null}
-                                  </p>
-                                  <div className="px-0 pb-2 pt-1">
-                                    {v.error ? (
-                                      <div className="mx-2 flex min-h-[160px] flex-col justify-center gap-2 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-4 text-xs text-red-200">
-                                        <p className="font-medium">This variation failed.</p>
-                                        <p className="wrap-break-word font-mono text-[10px] text-red-100/80">
-                                          {v.error}
-                                        </p>
-                                      </div>
-                                    ) : (
-                                      <VariationHoverVideo
-                                        src={v.url}
-                                        instanceId={previewInstanceId}
-                                      />
-                                    )}
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-
-                          <div className="flex flex-wrap items-center gap-3 border-t border-white/10 pt-3">
-                            {firstCompletedVariation ? (
-                              <>
-                                <button
-                                  type="button"
-                                  className="inline-flex size-9 items-center justify-center rounded-xl text-white hover:bg-white/10"
-                                  aria-label="Copy first variation link"
-                                  onClick={() => {
-                                    void navigator.clipboard.writeText(firstCompletedVariation.url);
-                                    toast.success("Link copied");
-                                  }}
-                                >
-                                  <Copy className="size-3.5" />
-                                </button>
-                                <button
-                                  type="button"
-                                  className="inline-flex size-9 items-center justify-center rounded-xl text-white hover:bg-white/10"
-                                  aria-label="Share first variation"
-                                  onClick={() => {
-                                    void navigator.clipboard.writeText(firstCompletedVariation.url);
-                                    toast.success("Link copied for sharing");
-                                  }}
-                                >
-                                  <Share2 className="size-3.5" />
-                                </button>
-                              </>
-                            ) : null}
-                            <DropdownMenu>
-                              <DropdownMenuTrigger
-                                type="button"
-                                className="inline-flex items-center gap-2 rounded-xl px-1 py-1.5 text-sm text-white hover:bg-white/10"
-                              >
-                                <Download className="size-3.5" />
-                                Download
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent
-                                align="start"
-                                className="border-white/10 bg-[#1a1024] text-white"
-                              >
-                                {variations
-                                  .filter((v) => !v.error && v.url)
-                                  .map((v, idx) => {
-                                    const num = v.variation_number ?? idx + 1;
-                                    return (
-                                      <DropdownMenuItem
-                                        key={`dl-${v.url}-${num}`}
-                                        className="cursor-pointer text-white focus:bg-white/10 focus:text-white"
-                                        onClick={() => {
-                                          const a = document.createElement("a");
-                                          a.href = v.url;
-                                          a.target = "_blank";
-                                          a.rel = "noreferrer";
-                                          a.download = "";
-                                          document.body.appendChild(a);
-                                          a.click();
-                                          a.remove();
-                                        }}
-                                      >
-                                        Variation {num}
-                                      </DropdownMenuItem>
-                                    );
-                                  })}
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                            <button
-                              type="button"
-                              className="inline-flex items-center gap-2 rounded-xl px-1 py-1.5 text-sm text-white hover:bg-white/10"
-                              onClick={() => {
-                                if (!user) {
-                                  onOpenSignIn();
-                                  return;
-                                }
-                                resetJobUi({ keepSubmittedPrompt: true });
-                                setRefinementOpen(true);
-                              }}
-                            >
-                              <RefreshCw className="size-3.5" />
-                              Regenerate
-                            </button>
-                            <button
-                              type="button"
-                              className="inline-flex items-center gap-2 rounded-xl px-1 py-1.5 text-sm text-white hover:bg-white/10"
-                              onClick={() => setSettingsOpen(true)}
-                            >
-                              <SlidersHorizontal className="size-3.5" />
-                              Customize
-                            </button>
-                          </div>
-
-                          {jobStatus === "complete" && jobPartialNotice ? (
-                            <div
-                              className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"
-                              role="status"
-                            >
-                              <p className="font-medium">Some variations did not finish</p>
-                              <p className="mt-1 text-amber-50/90">{jobPartialNotice}</p>
-                            </div>
-                          ) : null}
-
-                          {jobId ? (
-                            <div className="rounded-xl bg-black/50 px-4 py-3 ring-1 ring-white/10">
-                              <RatingWidget kind="video" jobId={jobId} />
-                            </div>
-                          ) : null}
-                          <GenerationFeedbackPanel
-                            mode="video"
-                            videoJobId={jobId}
-                            originalPrompt={prompt}
-                            generationContext={jobGenerationContext}
-                            variationsOutput={formatVariationsForFeedback(variations)}
-                            onCreditsUpdated={setCreditsRemaining}
-                            onVideoForked={(newId) => {
-                              stopPoll();
-                              setJobId(newId);
-                              setJobStatus("queued");
-                              setVariations([]);
-                              setJobPartialNotice(null);
-                              setJobGenerationContext(null);
-                              failedToastJobIdRef.current = null;
-                            }}
-                          />
-                        </div>
-                      </VariationPreviewRegistryProvider>
-                    ) : (
-                      <>
-                        <div
-                          className="mb-4 h-14 w-full max-w-xl overflow-hidden rounded-xl opacity-95"
-                          style={{
-                            background:
-                              "linear-gradient(115deg, rgba(54,0,170,0.5) 0%, rgba(104,0,186,0.45) 40%, rgba(164,0,167,0.5) 100%)",
-                          }}
-                          aria-hidden
-                        />
-                        <p className="mb-3 text-sm text-white/70">{PIPELINE_STEPS.join(" → ")}</p>
-                        <div className="max-w-xl space-y-2">
-                          <Progress value={pipelineProgressValue}>
-                            <div className="flex w-full justify-between text-xs text-white/80">
-                              <ProgressLabel>{pipelineHeadline}</ProgressLabel>
-                              <ProgressValue />
-                            </div>
-                          </Progress>
-                        </div>
-                        {jobStatus === "queued" && jobAwaitingUploadLink ? (
-                          <p className="mt-3 text-sm text-white/60" role="status">
-                            Linking your upload to this job… The worker starts only after the file is
-                            attached. If this stays here, check that the finalize step completed
-                            (Network tab) or try submitting again.
-                          </p>
-                        ) : null}
-                        <ol className="mt-4 flex flex-wrap gap-x-3 gap-y-2 text-sm text-white/55">
-                          {PIPELINE_STEPS.map((label, i) => (
-                            <li
-                              key={label}
-                              className={cn(
-                                "flex items-center gap-1.5",
-                                activeStepIndex >= i && "font-medium text-white",
-                              )}
-                            >
-                              <span
-                                className={cn(
-                                  "size-2 rounded-full",
-                                  activeStepIndex >= i ? "bg-[#D31CD7]" : "bg-white/25",
-                                )}
-                              />
-                              {label}
-                            </li>
-                          ))}
-                        </ol>
-                      </>
-                    )}
                   </div>
-                </div>
-              </div>
-            ) : user ? (
-              <p className="text-sm text-white/55">Describe your edit below to start a new run.</p>
-            ) : null}
+                ) : null}
+
+                {user && jobId && jobStatus ? (
+                  <div className="mb-8 flex w-full flex-col items-start gap-3">
+                    <div className="flex max-w-[min(100%,640px)] items-end gap-3">
+                      <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)] shadow-[0_0_20px_rgba(203,45,206,0.24)]">
+                        <Film className="size-5 text-white" />
+                      </div>
+                      <div className="min-w-0 flex-1 rounded-[20px_20px_20px_4px] bg-white/[0.08] p-4 shadow-[0_12px_24px_rgba(11,6,16,0.24)] outline outline-1 -outline-offset-1 outline-white/25">
+                        <div className="mb-3 flex items-center gap-2">
+                          <span
+                            className="size-3.5 rounded-sm bg-[#C717D8]"
+                            aria-hidden
+                          />
+                          <span className="text-sm font-medium tracking-wide text-[#C717D8]">
+                            Video
+                          </span>
+                        </div>
+
+                        {jobStatus === "failed" ? (
+                          <p className="text-sm text-red-300">
+                            This job failed. Check the toast for details.
+                          </p>
+                        ) : jobStatus === "complete" &&
+                          variations.length > 0 ? (
+                          <VariationPreviewRegistryProvider>
+                            <div className="space-y-4">
+                              <p className="text-sm leading-5 tracking-wide text-white">
+                                Here are your short-form cuts — preview each
+                                variation, download the ones you like, or open{" "}
+                                <span className="text-white/90">Settings</span>{" "}
+                                from the composer bar to review defaults.
+                              </p>
+                              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                {variations.map((v, idx) => {
+                                  const num = v.variation_number ?? idx + 1;
+                                  const previewInstanceId = `${jobId}-var-${idx}`;
+                                  return (
+                                    <div
+                                      key={
+                                        v.url
+                                          ? `${v.url}::${num}`
+                                          : `${jobId}-var-${idx}-${num}`
+                                      }
+                                      className="overflow-hidden rounded-lg bg-black/40 ring-1 ring-white/10"
+                                    >
+                                      <p className="truncate px-2 pt-2 text-xs font-medium text-white/80">
+                                        {v.label}
+                                        <span className="text-white/50">
+                                          {" "}
+                                          · Variation {num}
+                                        </span>
+                                        {v.style_note ? (
+                                          <span className="text-white/45">
+                                            {" "}
+                                            — {v.style_note}
+                                          </span>
+                                        ) : null}
+                                      </p>
+                                      <div className="px-0 pb-2 pt-1">
+                                        {v.error ? (
+                                          <div className="mx-2 flex min-h-[160px] flex-col justify-center gap-2 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-4 text-xs text-red-200">
+                                            <p className="font-medium">
+                                              This variation failed.
+                                            </p>
+                                            <p className="wrap-break-word font-mono text-[10px] text-red-100/80">
+                                              {v.error}
+                                            </p>
+                                          </div>
+                                        ) : (
+                                          <VariationHoverVideo
+                                            src={v.url}
+                                            instanceId={previewInstanceId}
+                                          />
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-3 border-t border-white/10 pt-3">
+                                {firstCompletedVariation ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="inline-flex size-9 items-center justify-center rounded-xl text-white hover:bg-white/10"
+                                      aria-label="Copy first variation link"
+                                      onClick={() => {
+                                        void navigator.clipboard.writeText(
+                                          firstCompletedVariation.url,
+                                        );
+                                        toast.success("Link copied");
+                                      }}
+                                    >
+                                      <Copy className="size-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="inline-flex size-9 items-center justify-center rounded-xl text-white hover:bg-white/10"
+                                      aria-label="Share first variation"
+                                      onClick={() => {
+                                        void navigator.clipboard.writeText(
+                                          firstCompletedVariation.url,
+                                        );
+                                        toast.success(
+                                          "Link copied for sharing",
+                                        );
+                                      }}
+                                    >
+                                      <Share2 className="size-3.5" />
+                                    </button>
+                                  </>
+                                ) : null}
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger
+                                    type="button"
+                                    className="inline-flex items-center gap-2 rounded-xl px-1 py-1.5 text-sm text-white hover:bg-white/10"
+                                  >
+                                    <Download className="size-3.5" />
+                                    Download
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent
+                                    align="start"
+                                    className="border-white/10 bg-[#1a1024] text-white"
+                                  >
+                                    {variations
+                                      .filter((v) => !v.error && v.url)
+                                      .map((v, idx) => {
+                                        const num =
+                                          v.variation_number ?? idx + 1;
+                                        return (
+                                          <DropdownMenuItem
+                                            key={`dl-${v.url}-${num}`}
+                                            className="cursor-pointer text-white focus:bg-white/10 focus:text-white"
+                                            onClick={() => {
+                                              const a =
+                                                document.createElement("a");
+                                              a.href = v.url;
+                                              a.target = "_blank";
+                                              a.rel = "noreferrer";
+                                              a.download = "";
+                                              document.body.appendChild(a);
+                                              a.click();
+                                              a.remove();
+                                            }}
+                                          >
+                                            Variation {num}
+                                          </DropdownMenuItem>
+                                        );
+                                      })}
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                                <button
+                                  type="button"
+                                  className="inline-flex items-center gap-2 rounded-xl px-1 py-1.5 text-sm text-white hover:bg-white/10"
+                                  onClick={() => {
+                                    if (!user) {
+                                      onOpenSignIn();
+                                      return;
+                                    }
+                                    resetJobUi({ keepSubmittedPrompt: true });
+                                    setRefinementOpen(true);
+                                  }}
+                                >
+                                  <RefreshCw className="size-3.5" />
+                                  Regenerate
+                                </button>
+                                <button
+                                  type="button"
+                                  className="inline-flex items-center gap-2 rounded-xl px-1 py-1.5 text-sm text-white hover:bg-white/10"
+                                  onClick={() => setSettingsOpen(true)}
+                                >
+                                  <SlidersHorizontal className="size-3.5" />
+                                  Customize
+                                </button>
+                              </div>
+
+                              {jobStatus === "complete" && jobPartialNotice ? (
+                                <div
+                                  className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"
+                                  role="status"
+                                >
+                                  <p className="font-medium">
+                                    Some variations did not finish
+                                  </p>
+                                  <p className="mt-1 text-amber-50/90">
+                                    {jobPartialNotice}
+                                  </p>
+                                </div>
+                              ) : null}
+
+                              {jobId ? (
+                                <div className="rounded-xl bg-black/50 px-4 py-3 ring-1 ring-white/10">
+                                  <RatingWidget kind="video" jobId={jobId} />
+                                </div>
+                              ) : null}
+                              <GenerationFeedbackPanel
+                                mode="video"
+                                videoJobId={jobId}
+                                originalPrompt={prompt}
+                                generationContext={jobGenerationContext}
+                                variationsOutput={formatVariationsForFeedback(
+                                  variations,
+                                )}
+                                onCreditsUpdated={setCreditsRemaining}
+                                onVideoForked={(newId) => {
+                                  stopPoll();
+                                  setJobId(newId);
+                                  setJobStatus("queued");
+                                  setVariations([]);
+                                  setJobPartialNotice(null);
+                                  setJobGenerationContext(null);
+                                  failedToastJobIdRef.current = null;
+                                }}
+                              />
+                            </div>
+                          </VariationPreviewRegistryProvider>
+                        ) : (
+                          <>
+                            <div
+                              className="mb-4 h-14 w-full max-w-xl overflow-hidden rounded-xl opacity-95 ring-1 ring-white/15"
+                              style={{
+                                background:
+                                  "linear-gradient(118deg, rgba(54,0,170,0.55) 0%, rgba(104,0,186,0.48) 42%, rgba(164,0,167,0.52) 100%)",
+                              }}
+                              aria-hidden
+                            />
+                            <p className="mb-3 text-sm text-white/70">
+                              {PIPELINE_STEPS.join(" → ")}
+                            </p>
+                            <div className="max-w-xl space-y-2">
+                              <Progress value={pipelineProgressValue}>
+                                <div className="flex w-full justify-between text-xs text-white/80">
+                                  <ProgressLabel>
+                                    {pipelineHeadline}
+                                  </ProgressLabel>
+                                  <ProgressValue />
+                                </div>
+                              </Progress>
+                            </div>
+                            {jobStatus === "queued" && jobAwaitingUploadLink ? (
+                              <p
+                                className="mt-3 text-sm text-white/60"
+                                role="status"
+                              >
+                                Linking your upload to this job… The worker
+                                starts only after the file is attached. If this
+                                stays here, check that the finalize step
+                                completed (Network tab) or try submitting again.
+                              </p>
+                            ) : null}
+                            <ol className="mt-4 flex flex-wrap gap-x-3 gap-y-2 text-sm text-white/55">
+                              {PIPELINE_STEPS.map((label, i) => (
+                                <li
+                                  key={label}
+                                  className={cn(
+                                    "flex items-center gap-1.5",
+                                    activeStepIndex >= i &&
+                                      "font-medium text-white",
+                                  )}
+                                >
+                                  <span
+                                    className={cn(
+                                      "size-2 rounded-full",
+                                      activeStepIndex >= i
+                                        ? "bg-[#D31CD7]"
+                                        : "bg-white/25",
+                                    )}
+                                  />
+                                  {label}
+                                </li>
+                              ))}
+                            </ol>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : user ? (
+                  <p className="text-sm text-white/55">
+                    Describe your edit below to start a new run.
+                  </p>
+                ) : null}
               </>
             )}
           </div>
@@ -1408,7 +1483,11 @@ export const VideoVariationWorkspace = forwardRef<
                     onChange={(e) => setPrompt(e.target.value)}
                     disabled={!user || submitting}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey && (e.metaKey || e.ctrlKey)) {
+                      if (
+                        e.key === "Enter" &&
+                        !e.shiftKey &&
+                        (e.metaKey || e.ctrlKey)
+                      ) {
                         e.preventDefault();
                         handleSubmit();
                       }
@@ -1422,13 +1501,17 @@ export const VideoVariationWorkspace = forwardRef<
                       disabled={!user || submitting}
                       className={cn(
                         "inline-flex h-8 shrink-0 items-center gap-1 rounded-full border border-white/25 px-2 text-[11px] font-medium text-white outline-none hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-[#8800DC]/50 disabled:pointer-events-none disabled:opacity-40 sm:px-2.5 sm:text-xs",
-                        sourceMode === "upload" && "border-white/40 bg-white/15",
+                        sourceMode === "upload" &&
+                          "border-white/40 bg-white/15",
                         sourceMode === "url" && "border-white/40 bg-white/15",
                       )}
                       aria-label="Choose video source"
                     >
                       {sourceMode === "upload" ? "Upload" : "YouTube"}
-                      <ChevronDown className="size-3.5 opacity-80" aria-hidden />
+                      <ChevronDown
+                        className="size-3.5 opacity-80"
+                        aria-hidden
+                      />
                     </DropdownMenuTrigger>
                     <DropdownMenuContent
                       align="end"
@@ -1535,14 +1618,16 @@ export const VideoVariationWorkspace = forwardRef<
             ) : null}
             {user && !creditsUnlimited ? (
               <p className="mt-2 text-xs text-amber-200/90">
-                This will use <strong>{VIDEO_JOB_CREDIT_COST} credits</strong> ({creditsRemaining}{" "}
-                remaining). You will confirm before submit.
+                This will use <strong>{VIDEO_JOB_CREDIT_COST} credits</strong> (
+                {creditsRemaining} remaining). You will confirm before submit.
               </p>
             ) : null}
 
             <div className="mt-3 flex items-start gap-2 text-xs leading-6 tracking-wide text-white/60">
               <span className="mt-1 inline-block size-3.5 shrink-0 rounded border border-white/50" />
-              <span>Ada is beta release and may give incorrect or harmful info</span>
+              <span>
+                Ada is beta release and may give incorrect or harmful info
+              </span>
             </div>
           </div>
         </div>
@@ -1562,7 +1647,6 @@ export const VideoVariationWorkspace = forwardRef<
           </div>
         </DialogContent>
       </Dialog>
-
     </div>
   );
 });

@@ -2,14 +2,19 @@ import { createWriteStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 
-const EL_KEY = process.env.ELEVENLABS_API_KEY;
+function elevenLabsKey() {
+  return process.env.ELEVENLABS_API_KEY?.trim() ?? "";
+}
 
 /**
  * Generate a voiceover MP3 for the full script (ElevenLabs streaming).
  */
 export async function generateVoiceover(script, voiceId, outputPath) {
-  if (!EL_KEY) {
-    throw new Error("Missing ELEVENLABS_API_KEY");
+  const key = elevenLabsKey();
+  if (!key) {
+    throw new Error(
+      "Missing ELEVENLABS_API_KEY. Set it in worker/.env or repo root .env.local, or host env.",
+    );
   }
   const id = voiceId || process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
   const outputFormat =
@@ -24,7 +29,7 @@ export async function generateVoiceover(script, voiceId, outputPath) {
   const res = await fetch(url, {
     method: "POST",
     headers: {
-      "xi-api-key": EL_KEY,
+      "xi-api-key": key,
       Accept: "audio/mpeg",
       "Content-Type": "application/json",
     },

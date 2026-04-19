@@ -2,21 +2,28 @@ import { createWriteStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 
-const PEXELS_KEY = process.env.PEXELS_API_KEY;
+/** Read at call time so dotenv in worker.js has already run (imports run before dotenv otherwise). */
+function pexelsKey() {
+  return process.env.PEXELS_API_KEY?.trim() ?? "";
+}
 
 /**
  * Search Pexels for a vertical (portrait) video matching keyword.
  * Returns { url, duration, width, height } of the best match.
  */
-const pexelsHeaders = () => ({
-  Authorization: PEXELS_KEY,
-  /** Pexels asks for a descriptive User-Agent. */
-  "User-Agent": "GenEx-TextVideo/1.0 (https://github.com/aidenrigali04-ops/genex)",
-});
+function pexelsHeaders() {
+  return {
+    Authorization: pexelsKey(),
+    /** Pexels asks for a descriptive User-Agent. */
+    "User-Agent": "GenEx-TextVideo/1.0 (https://github.com/aidenrigali04-ops/genex)",
+  };
+}
 
 export async function fetchPexelsClip(keyword, targetDuration) {
-  if (!PEXELS_KEY) {
-    throw new Error("Missing PEXELS_API_KEY");
+  if (!pexelsKey()) {
+    throw new Error(
+      "Missing PEXELS_API_KEY. Add it to worker/.env or the repo root .env.local (see https://www.pexels.com/api/), or set it in your host env (e.g. Railway).",
+    );
   }
   const encoded = encodeURIComponent(keyword);
   const td = Math.max(3, Math.round(targetDuration || 5));

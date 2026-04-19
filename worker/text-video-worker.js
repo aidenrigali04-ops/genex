@@ -10,11 +10,6 @@ import fs from "node:fs";
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 
-import {
-  claimNextTextVideoJob,
-  processTextVideoJob,
-} from "./text-video-job-runner.js";
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, ".env") });
 const rootEnvLocal = path.join(__dirname, "..", ".env.local");
@@ -39,6 +34,10 @@ const supabase = createClient(supabaseUrl, serviceKey, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
+const { claimNextTextVideoJob, processTextVideoJob } = await import(
+  "./text-video-job-runner.js",
+);
+
 async function verifySupabaseServiceRole() {
   const { error } = await supabase.auth.admin.listUsers({
     page: 1,
@@ -61,18 +60,11 @@ async function poll() {
 }
 
 console.log("[text-video-worker] Started, polling every", POLL_MS, "ms");
-console.log(
-  "[text-video-worker] Pexels API key:",
-  process.env.PEXELS_API_KEY ? "set" : "MISSING",
-);
-console.log(
-  "[text-video-worker] ElevenLabs API key:",
-  process.env.ELEVENLABS_API_KEY ? "set" : "MISSING",
-);
-console.log(
-  "[text-video-worker] OpenAI (shot planner):",
-  process.env.OPENAI_API_KEY ? "set" : "MISSING",
-);
+console.log("[text-video-worker] text-video keys", {
+  pexels: Boolean(process.env.PEXELS_API_KEY?.trim()),
+  elevenlabs: Boolean(process.env.ELEVENLABS_API_KEY?.trim()),
+  openai: Boolean(process.env.OPENAI_API_KEY?.trim()),
+});
 
 await verifySupabaseServiceRole();
 setInterval(() => void poll().catch(console.error), POLL_MS);

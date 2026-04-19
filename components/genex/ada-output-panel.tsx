@@ -61,6 +61,27 @@ export function AdaOutputPanel({
   const kit = variant === "adaKit";
   const showBody = streamedText.trim() || loading;
 
+  const regenClass = (embedded: boolean) =>
+    cn(
+      "shrink-0 rounded-full font-medium transition-colors duration-150 disabled:opacity-40",
+      embedded ? "px-3 py-1.5 text-[11px]" : "px-4 py-2 text-xs",
+      kit
+        ? "border border-white/48 text-white hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/50"
+        : "rounded-ada-input border border-ada-border text-ada-secondary hover:border-ada-border-active hover:text-ada-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ada-accent/35",
+    );
+
+  const regenerateButton = (embedded: boolean) => (
+    <button
+      type="button"
+      disabled={loading || !canRegenerate}
+      onClick={onRegenerate}
+      className={regenClass(embedded)}
+      style={kit ? { fontWeight: 500 } : undefined}
+    >
+      Regenerate
+    </button>
+  );
+
   if (!showBody) {
     if (chatEmbedded) return null;
     return (
@@ -77,41 +98,64 @@ export function AdaOutputPanel({
     );
   }
 
-  const body = (
-    <>
-      <div
+  const titleBlock = (
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <h2
         className={cn(
-          "flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between",
-          chatEmbedded && "gap-2",
+          kit
+            ? "font-[family-name:var(--font-instrument-serif)] text-2xl font-normal tracking-[0.36px] text-white"
+            : "text-lg font-semibold tracking-tight text-ada-primary",
         )}
       >
-        <h2
-          className={cn(
-            kit
-              ? chatEmbedded
-                ? "text-xs font-medium uppercase tracking-widest text-white/50"
-                : "font-[family-name:var(--font-instrument-serif)] text-2xl font-normal tracking-[0.36px] text-white"
-              : "text-lg font-semibold tracking-tight text-ada-primary",
-          )}
-        >
-          {chatEmbedded && kit ? "Clip package" : "Your clip package"}
-        </h2>
-        <button
-          type="button"
-          disabled={loading || !canRegenerate}
-          onClick={onRegenerate}
-          className={cn(
-            "rounded-full px-4 py-2 text-xs font-medium transition-colors disabled:opacity-40",
-            kit
-              ? "border border-white/48 text-white hover:bg-white/10"
-              : "rounded-ada-input border border-ada-border text-ada-secondary hover:border-ada-border-active hover:text-ada-primary",
-          )}
-          style={kit ? { fontWeight: 500 } : undefined}
-        >
-          Regenerate
-        </button>
-      </div>
+        Your clip package
+      </h2>
+      {regenerateButton(false)}
+    </div>
+  );
 
+  const mergedEmbeddedHeader = (
+    <div
+      className={cn(
+        "flex flex-wrap items-end justify-between gap-x-3 gap-y-2 border-b pb-3",
+        kit ? "border-white/10" : "border-ada-border",
+      )}
+    >
+      <div className="flex min-w-0 flex-1 items-center gap-2.5 sm:gap-3">
+        <div
+          className={cn(
+            "flex size-9 shrink-0 items-center justify-center rounded-full shadow-[0_0_18px_rgba(203,45,206,0.28)]",
+            kit
+              ? "bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)]"
+              : "bg-ada-accent shadow-sm",
+          )}
+        >
+          <Sparkles className="size-[18px] text-white" aria-hidden />
+        </div>
+        <div className="min-w-0">
+          <p
+            className={cn(
+              "text-xs font-medium tracking-wide",
+              kit ? "text-[#E8B4FF]" : "font-semibold text-ada-primary",
+            )}
+          >
+            GenEx
+          </p>
+          <p
+            className={cn(
+              "truncate text-[11px] font-medium uppercase tracking-widest",
+              kit ? "text-white/50" : "text-ada-secondary",
+            )}
+          >
+            Clip package
+          </p>
+        </div>
+      </div>
+      {regenerateButton(true)}
+    </div>
+  );
+
+  const bodyRest = (
+    <>
       {loading && !streamedText.trim() ? (
         <div className="space-y-3">
           {[100, 85, 70, 90, 60].map((w, i) => (
@@ -132,7 +176,10 @@ export function AdaOutputPanel({
               className={cn(
                 "inline-flex rounded-full px-3 py-1 text-xs font-medium",
                 kit
-                  ? cn(MAGENTA, "border border-white/10 text-white shadow-[0_0_16px_rgba(203,45,206,0.2)]")
+                  ? cn(
+                      MAGENTA,
+                      "border border-white/10 text-white shadow-[0_0_16px_rgba(203,45,206,0.2)]",
+                    )
                   : "rounded-ada-pill border border-ada-accent/35 bg-ada-accent-subtle text-ada-accent-hover",
               )}
             >
@@ -156,7 +203,9 @@ export function AdaOutputPanel({
           <div
             className={cn(
               "mx-auto w-[min(100%,240px)] rounded-[2rem] p-2",
-              kit ? "border-2 border-white/15 bg-black/25" : "border-4 border-ada-border bg-ada-app",
+              kit
+                ? "border-2 border-white/15 bg-black/25"
+                : "border-4 border-ada-border bg-ada-app",
             )}
           >
             <div
@@ -242,7 +291,11 @@ export function AdaOutputPanel({
                             Generating…
                           </span>
                         ) : (
-                          <span className={kit ? "text-white/40" : "text-ada-disabled"}>
+                          <span
+                            className={
+                              kit ? "text-white/40" : "text-ada-disabled"
+                            }
+                          >
                             Content will appear here
                           </span>
                         ))}
@@ -255,24 +308,26 @@ export function AdaOutputPanel({
 
           {!loading && streamedText.trim() ? (
             <>
-              {parsedClipPackage.script.trim() ? (
-                <TextToVideoLauncher
-                  script={parsedClipPackage.script}
-                  hooks={parsedClipPackage.hooks}
-                  generationId={generationId}
-                  onCreditChange={onTextVideoCreditsRemainingChange}
-                  variant={kit ? "adaKit" : "default"}
-                />
-              ) : null}
-              <div
-                className={cn(
-                  "rounded-2xl border px-4 py-3",
-                  kit
-                    ? "border-white/14 bg-white/[0.05] backdrop-blur-sm"
-                    : "rounded-ada-card border-ada-border bg-ada-sidebar",
-                )}
-              >
-                <RatingWidget kind="text" generationId={generationId} />
+              <div className="space-y-3">
+                {parsedClipPackage.script.trim() ? (
+                  <TextToVideoLauncher
+                    script={parsedClipPackage.script}
+                    hooks={parsedClipPackage.hooks}
+                    generationId={generationId}
+                    onCreditChange={onTextVideoCreditsRemainingChange}
+                    variant={kit ? "adaKit" : "default"}
+                  />
+                ) : null}
+                <div
+                  className={cn(
+                    "rounded-xl border px-3 py-2.5",
+                    kit
+                      ? "border-white/12 bg-white/[0.04]"
+                      : "border-ada-border bg-ada-sidebar/80",
+                  )}
+                >
+                  <RatingWidget kind="text" generationId={generationId} />
+                </div>
               </div>
               <GenerationFeedbackPanel
                 mode="clip"
@@ -288,20 +343,33 @@ export function AdaOutputPanel({
     </>
   );
 
+  const embeddedShellClass = kit
+    ? "w-full max-w-[min(100%,920px)] space-y-4 rounded-[20px_20px_20px_4px] border border-white/15 bg-white/[0.08] p-4 pb-5 shadow-[0_12px_32px_rgba(0,0,0,0.28)] outline outline-1 -outline-offset-1 outline-white/15"
+    : "w-full max-w-[min(100%,920px)] space-y-4 rounded-2xl rounded-bl-md border border-ada-border bg-ada-card p-4 pb-5 shadow-md ring-1 ring-ada-border/30";
+
   if (chatEmbedded && kit) {
     return (
       <div
         id="output-section"
-        className="scroll-mt-4 flex w-full justify-start font-[family-name:var(--font-instrument-sans)] text-white"
+        className="scroll-mt-6 flex w-full justify-start font-[family-name:var(--font-instrument-sans)] text-white"
       >
-        <div className="w-full max-w-[min(100%,920px)] space-y-4 rounded-[20px_20px_20px_4px] border border-white/15 bg-white/[0.08] p-4 shadow-[0_12px_24px_rgba(11,6,16,0.24)] outline outline-1 -outline-offset-1 outline-white/20">
-          <div className="flex items-center gap-2 border-b border-white/10 pb-2">
-            <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)] shadow-[0_0_16px_rgba(203,45,206,0.24)]">
-              <Sparkles className="size-4 text-white" aria-hidden />
-            </div>
-            <span className="text-xs font-medium tracking-wide text-[#E8B4FF]">GenEx</span>
-          </div>
-          {body}
+        <div className={embeddedShellClass}>
+          {mergedEmbeddedHeader}
+          {bodyRest}
+        </div>
+      </div>
+    );
+  }
+
+  if (chatEmbedded && !kit) {
+    return (
+      <div
+        id="output-section"
+        className="scroll-mt-6 flex w-full justify-start text-ada-primary"
+      >
+        <div className={embeddedShellClass}>
+          {mergedEmbeddedHeader}
+          {bodyRest}
         </div>
       </div>
     );
@@ -315,7 +383,8 @@ export function AdaOutputPanel({
         kit && "font-[family-name:var(--font-instrument-sans)] text-white",
       )}
     >
-      {body}
+      {titleBlock}
+      {bodyRest}
     </div>
   );
 }

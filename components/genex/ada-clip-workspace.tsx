@@ -126,7 +126,10 @@ export function AdaClipWorkspace({
     !error;
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    const id = requestAnimationFrame(() => {
+      endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+    return () => cancelAnimationFrame(id);
   }, [
     streamedText,
     generationSteps.length,
@@ -137,12 +140,12 @@ export function AdaClipWorkspace({
   ]);
 
   const userBubbleClass = kit
-    ? "max-w-[min(100%,85%)] whitespace-pre-wrap rounded-[20px_4px_20px_20px] bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)] px-4 py-3 text-sm leading-relaxed text-white shadow-[0_16px_24px_rgba(136,1,220,0.16)] outline outline-1 -outline-offset-1 outline-white/25"
-    : "max-w-[min(100%,85%)] whitespace-pre-wrap rounded-2xl rounded-br-md border border-ada-border bg-ada-elevated px-4 py-3 text-sm leading-relaxed text-ada-primary";
+    ? "max-w-[min(100%,85%)] whitespace-pre-wrap rounded-[20px_4px_20px_20px] bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)] px-4 py-3.5 text-[15px] leading-snug text-white shadow-[0_16px_32px_rgba(136,1,220,0.22)] outline outline-1 -outline-offset-1 outline-white/25"
+    : "max-w-[min(100%,85%)] whitespace-pre-wrap rounded-2xl rounded-br-md border border-ada-border bg-ada-card px-4 py-3.5 text-[15px] leading-snug text-ada-primary shadow-md ring-1 ring-ada-border/25";
 
   const assistantShell = kit
-    ? "w-full max-w-[min(100%,920px)] space-y-3 rounded-[20px_20px_20px_4px] border border-white/15 bg-white/[0.08] p-4 shadow-[0_12px_24px_rgba(11,6,16,0.24)] outline outline-1 -outline-offset-1 outline-white/20"
-    : "w-full max-w-[min(100%,920px)] space-y-3 rounded-2xl rounded-bl-md border border-ada-border bg-ada-card p-4 shadow-sm";
+    ? "w-full max-w-[min(100%,920px)] space-y-3.5 rounded-[20px_20px_20px_4px] border border-white/15 bg-white/[0.08] p-4 pb-5 shadow-[0_12px_32px_rgba(0,0,0,0.28)] outline outline-1 -outline-offset-1 outline-white/15"
+    : "w-full max-w-[min(100%,920px)] space-y-3.5 rounded-2xl rounded-bl-md border border-ada-border bg-ada-card p-4 pb-5 shadow-md ring-1 ring-ada-border/30";
 
   return (
     <div
@@ -151,25 +154,30 @@ export function AdaClipWorkspace({
         kit && "font-[family-name:var(--font-instrument-sans)] text-white",
       )}
     >
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
-        <div className="mx-auto flex max-w-[920px] flex-col gap-4">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain scroll-pb-8 px-4 py-5 sm:px-6">
+        <div className="mx-auto flex max-w-[920px] flex-col gap-5">
           {showIdleHint ? (
             <div
               className={cn(
-                "flex min-h-[38vh] flex-col items-center justify-center gap-3 rounded-2xl border border-dashed px-6 py-12 text-center text-sm",
+                "flex min-h-[36vh] flex-col items-center justify-center gap-4 rounded-2xl border border-dashed px-6 py-14 text-center",
                 kit
-                  ? "border-white/15 text-white/45"
-                  : "border-ada-border text-ada-secondary",
+                  ? "border-white/12 bg-white/[0.02] text-white/50"
+                  : "border-ada-border bg-ada-sidebar/30 text-ada-secondary",
               )}
             >
               <Sparkles
-                className={cn("size-10", kit ? "text-white/35" : "text-ada-disabled")}
+                className={cn("size-11 stroke-[1.25]", kit ? "text-white/30" : "text-ada-disabled")}
                 aria-hidden
               />
-              <p className="max-w-sm">
-                Chat with GenEx below — refinement and your clip package stream here in one
-                thread.
-              </p>
+              <div className="max-w-sm space-y-2">
+                <p className={cn("text-sm font-medium", kit ? "text-white/70" : "text-ada-primary")}>
+                  Clip workspace
+                </p>
+                <p className="text-sm leading-relaxed">
+                  Use the composer below. You will answer a few quick questions, then your TikTok ·
+                  Reels · Shorts package streams here in one thread.
+                </p>
+              </div>
             </div>
           ) : null}
 
@@ -228,14 +236,19 @@ export function AdaClipWorkspace({
 
                 {kit ? (
                   <div
-                    className="h-11 w-full overflow-hidden rounded-xl opacity-90"
+                    className="h-12 w-full overflow-hidden rounded-xl opacity-95 ring-1 ring-white/10"
                     style={{
                       background:
-                        "linear-gradient(110deg, rgba(54,0,170,0.45) 0%, rgba(136,0,220,0.35) 45%, rgba(164,0,167,0.4) 100%)",
+                        "linear-gradient(112deg, rgba(54,0,170,0.5) 0%, rgba(136,0,220,0.38) 48%, rgba(164,0,167,0.45) 100%)",
                     }}
                     aria-hidden
                   />
-                ) : null}
+                ) : (
+                  <div
+                    className="h-2.5 w-full max-w-md rounded-full bg-linear-to-r from-ada-accent/25 via-ada-accent/10 to-transparent"
+                    aria-hidden
+                  />
+                )}
 
                 <div
                   className={cn(
@@ -341,13 +354,16 @@ export function AdaClipWorkspace({
             <div className="flex justify-start">
               <div
                 className={cn(
-                  "max-w-[min(100%,92%)] rounded-2xl border px-4 py-3 text-sm",
+                  "max-w-[min(100%,92%)] rounded-2xl border px-4 py-3.5 text-sm leading-relaxed",
                   kit
-                    ? "border-red-400/35 bg-red-950/50 text-red-100"
-                    : "border-ada-error/30 bg-ada-error/10 text-ada-error",
+                    ? "border-red-400/40 bg-red-950/55 text-red-50 shadow-[0_8px_24px_rgba(0,0,0,0.35)]"
+                    : "border-ada-error/35 bg-ada-error/10 text-ada-error shadow-sm",
                 )}
                 role="alert"
               >
+                <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide opacity-90">
+                  Something went wrong
+                </span>
                 {error}
               </div>
             </div>
@@ -369,23 +385,23 @@ export function AdaClipWorkspace({
               originalPrompt={clipOriginalPromptSummary}
               variant={variant}
               onTextVideoCreditsRemainingChange={onTextVideoCreditsRemainingChange}
-              chatEmbedded={kit}
+              chatEmbedded
             />
           ) : null}
 
-          <div ref={endRef} className="h-px shrink-0 scroll-mt-24" aria-hidden />
+          <div ref={endRef} className="h-2 shrink-0 scroll-mt-28" aria-hidden />
         </div>
       </div>
 
       <footer
         className={cn(
-          "shrink-0 border-t px-4 py-3 sm:px-6",
+          "shrink-0 border-t px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6",
           kit
-            ? "border-white/10 bg-[#0A050F]/85 backdrop-blur-md"
-            : "border-ada-border bg-ada-app/95 backdrop-blur-sm",
+            ? "border-white/10 bg-[#0A050F]/90 backdrop-blur-xl supports-backdrop-filter:bg-[#0A050F]/80"
+            : "border-ada-border bg-ada-app/95 backdrop-blur-md supports-backdrop-filter:bg-ada-app/85",
         )}
       >
-        <div className="mx-auto w-full max-w-[920px]">
+        <div className="mx-auto w-full max-w-[920px] pb-0.5">
           <AdaInputCard
             inputMode={inputMode}
             onInputModeChange={onInputModeChange}

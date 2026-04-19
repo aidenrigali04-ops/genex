@@ -142,8 +142,8 @@ export function RefinementChatPanel({
 
   const shell = embedInChat
     ? kit
-      ? "flex flex-col overflow-hidden rounded-2xl border border-white/12 bg-white/[0.04] backdrop-blur-sm"
-      : "flex flex-col overflow-hidden rounded-2xl border border-border bg-card/50"
+      ? "flex flex-col overflow-hidden rounded-[20px_20px_20px_4px] border border-white/14 bg-white/[0.06] shadow-[0_12px_32px_rgba(0,0,0,0.28)] backdrop-blur-md outline outline-1 -outline-offset-1 outline-white/10"
+      : "flex flex-col overflow-hidden rounded-2xl rounded-bl-md border border-ada-border bg-ada-card/95 shadow-md ring-1 ring-ada-border/40 backdrop-blur-sm"
     : kit
       ? "divide-y divide-white/10 overflow-hidden rounded-2xl border border-white/14 bg-white/[0.06] backdrop-blur-sm outline outline-1 -outline-offset-1 outline-white/10"
       : "flex max-h-[min(90vh,720px)] flex-col gap-0 overflow-hidden rounded-xl border border-[#E8E4F8] bg-white dark:border-white/10 dark:bg-zinc-950";
@@ -194,7 +194,9 @@ export function RefinementChatPanel({
               kit ? "text-white/70" : "text-muted-foreground",
             )}
           >
-            A few quick questions for the best clip output
+            {kind === "video_variations"
+              ? "Quick questions so your five cuts match your goal."
+              : "Quick questions so your clip package matches your voice."}
           </p>
           {onCancel ? (
             <button
@@ -211,14 +213,32 @@ export function RefinementChatPanel({
         </div>
       ) : null}
 
-      <div
-        className={cn(
-          "text-muted-foreground shrink-0 border-b px-4 py-2 text-xs font-medium",
-          kit ? "border-white/10 text-white/50" : "border-[#E8E4F8] dark:border-white/10",
-        )}
-      >
-        Step {Math.min(step + 1, totalSteps)} of {totalSteps}
-      </div>
+      {embedInChat ? (
+        <div
+          className={cn(
+            "shrink-0 border-b px-4 py-2.5",
+            kit ? "border-white/10 bg-black/15" : "border-ada-border bg-ada-sidebar/40",
+          )}
+        >
+          <span
+            className={cn(
+              "inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium tabular-nums tracking-wide",
+              kit ? "bg-white/10 text-white/80" : "bg-ada-elevated text-ada-secondary",
+            )}
+          >
+            Step {Math.min(step + 1, totalSteps)} of {totalSteps}
+          </span>
+        </div>
+      ) : (
+        <div
+          className={cn(
+            "text-muted-foreground shrink-0 border-b px-4 py-2 text-xs font-medium",
+            kit ? "border-white/10 text-white/50" : "border-[#E8E4F8] dark:border-white/10",
+          )}
+        >
+          Step {Math.min(step + 1, totalSteps)} of {totalSteps}
+        </div>
+      )}
 
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-3">
         {!embedInChat ? (
@@ -241,8 +261,9 @@ export function RefinementChatPanel({
               <div className={bubbleAssistant}>
                 {step === 0 ? (
                   <>
-                    To get the strongest clip package from your prompt, I need a bit of
-                    context first.
+                    {kind === "video_variations"
+                      ? "Before we queue your five cuts, a few choices help the editor match length, goal, and delivery."
+                      : "To get the strongest clip package from your prompt, I need a bit of context first."}
                     <br />
                     <br />
                   </>
@@ -308,8 +329,9 @@ export function RefinementChatPanel({
                     size="sm"
                     variant="secondary"
                     className={cn(
-                      "rounded-full",
-                      kit && "border border-white/18 bg-white/10 text-white hover:bg-white/16",
+                      "rounded-full transition-colors duration-150 active:scale-[0.98]",
+                      kit &&
+                        "border border-white/18 bg-white/10 text-white hover:bg-white/16 hover:border-white/28",
                     )}
                     onClick={() => handlePill(currentDef.fieldKey, p.value)}
                   >
@@ -333,7 +355,7 @@ export function RefinementChatPanel({
                 ) : null}
                 <br />
                 <br />
-                Ready to generate?
+                {kind === "video_variations" ? "Ready to start this job?" : "Ready to generate?"}
               </div>
             </div>
 
@@ -365,7 +387,7 @@ export function RefinementChatPanel({
                 )}
                 onClick={handleConfirmGenerate}
               >
-                Looks good, Generate
+                {kind === "video_variations" ? "Looks good — start job" : "Looks good, generate"}
               </Button>
               <Button
                 type="button"

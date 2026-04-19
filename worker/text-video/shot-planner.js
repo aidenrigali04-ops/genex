@@ -1,12 +1,26 @@
 import OpenAI from "openai";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+/** Lazy client: worker static imports run before `dotenv.config()`; read env on first use. */
+let openaiCached;
+function getOpenAI() {
+  const key = process.env.OPENAI_API_KEY?.trim();
+  if (!key) {
+    throw new Error(
+      "Missing OPENAI_API_KEY. Set in worker/.env, repo root .env.local, or host env (Railway).",
+    );
+  }
+  if (!openaiCached) {
+    openaiCached = new OpenAI({ apiKey: key });
+  }
+  return openaiCached;
+}
 
 /**
  * Given a script, returns a shot list:
  * [{ keyword: string, duration: number, caption: string }]
  */
 export async function planShots(script) {
+  const openai = getOpenAI();
   const systemPrompt = `You are a short-form video director.
 Given a TikTok/Reels script, output a JSON object with a single key "shots" whose value is an array of shots.
 Each shot:

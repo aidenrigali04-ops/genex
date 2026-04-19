@@ -7,9 +7,9 @@
 [deploy]
 startCommand = "npm start"
 
-# Stage 2 text→video: add a second Railway service (same repo), root directory `worker`,
-# start command: `node text-video-worker.js`, Dockerfile: worker/Dockerfile (ffmpeg image).
-# Env: SUPABASE_* , OPENAI_API_KEY, PEXELS_API_KEY, ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID, TEXT_VIDEO_CREDIT_COST
+# Text→video jobs run inside the main `worker.js` tick (same process as video_jobs).
+# Set on that worker service: PEXELS_API_KEY, ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID (plus SUPABASE_* , OPENAI_API_KEY).
+# Optional second service: root `worker`, `node text-video-worker.js`, worker/Dockerfile (ffmpeg).
 #
 # [[services]]
 # name = "text-video-worker"

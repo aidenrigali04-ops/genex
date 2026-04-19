@@ -12,14 +12,23 @@ import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import OpenAI from "openai";
 
-import {
-  claimNextTextVideoJob,
-  processTextVideoJob,
-} from "./text-video-job-runner.js";
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, ".env") });
+// Monorepo: Next app keys often live in repo root `.env.local` (same as text-video-worker).
+const rootEnvLocal = path.join(__dirname, "..", ".env.local");
+if (fs.existsSync(rootEnvLocal)) {
+  dotenv.config({ path: rootEnvLocal, override: false });
+}
 dotenv.config();
+
+/** Dynamic import so Pexels/ElevenLabs/OpenAI load after dotenv (ESM hoists static imports above). */
+let textVideoRunnerPromise;
+function loadTextVideoRunner() {
+  if (!textVideoRunnerPromise) {
+    textVideoRunnerPromise = import("./text-video-job-runner.js");
+  }
+  return textVideoRunnerPromise;
+}
 
 const POLL_MS = 5000;
 const TMP_ROOT = "/tmp/genex";
@@ -1007,6 +1016,8 @@ async function tick() {
     await processJob(vjob);
     return true;
   }
+  const { claimNextTextVideoJob, processTextVideoJob } =
+    await loadTextVideoRunner();
   const tvJob = await claimNextTextVideoJob(supabaseAdmin);
   if (tvJob) {
     log(tvJob.id, "text-video claimed (queued → planning).");
@@ -1020,6 +1031,11 @@ async function main() {
   ensureDir(TMP_ROOT);
   console.log("[worker] starting", { pollMs: POLL_MS, bucket: VIDEOS_BUCKET });
   await verifySupabaseServiceRole();
+  console.log("[worker] text-video keys", {
+    pexels: Boolean(process.env.PEXELS_API_KEY?.trim()),
+    elevenlabs: Boolean(process.env.ELEVENLABS_API_KEY?.trim()),
+    openai: Boolean(process.env.OPENAI_API_KEY?.trim()),
+  });
 
   let idleTicks = 0;
   for (;;) {
