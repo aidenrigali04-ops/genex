@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import type { JSX, ReactNode } from "react";
 import { Bell, Play, Settings } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,10 @@ export type WorkspaceChromeProps = {
   onOpenSettings?: () => void;
   onPlayPreview?: () => void;
   accountSection?: ReactNode;
+  /** Main workspace below the chrome bar (video tab). */
+  videoWorkspace?: ReactNode;
+  /** Main workspace below the chrome bar (clip tab). */
+  clipWorkspace?: ReactNode;
 };
 
 const TAB_LABEL: Record<"video" | "clip", string> = {
@@ -34,12 +38,22 @@ export function WorkspaceChrome({
   onOpenSettings,
   onPlayPreview,
   accountSection,
-}: WorkspaceChromeProps) {
+  videoWorkspace,
+  clipWorkspace,
+}: WorkspaceChromeProps): JSX.Element {
+  const hasMain = videoWorkspace != null || clipWorkspace != null;
+
   return (
     <div
       className={cn(
-        "flex flex-wrap items-center justify-between gap-3 border-b border-[#E8E4F8] bg-[#FAFAFC]/80 px-4 py-3 backdrop-blur-md dark:border-white/10 dark:bg-zinc-900/40",
+        "flex min-h-0 min-w-0 flex-1 flex-col",
+        hasMain && "overflow-hidden",
         className,
+      )}
+    >
+    <div
+      className={cn(
+        "flex flex-wrap items-center justify-between gap-3 border-b border-[#E8E4F8] bg-[#FAFAFC]/80 px-4 py-3 backdrop-blur-md dark:border-white/10 dark:bg-zinc-900/40",
       )}
     >
       <div
@@ -113,6 +127,12 @@ export function WorkspaceChrome({
           Upgrade
         </Button>
       </div>
+    </div>
+    {hasMain ? (
+      <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+        {workspaceTab === "video" ? videoWorkspace : clipWorkspace}
+      </div>
+    ) : null}
     </div>
   );
 }

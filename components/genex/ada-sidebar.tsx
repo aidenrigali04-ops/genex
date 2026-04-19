@@ -41,15 +41,15 @@ export type AdaSidebarProps = {
 const NAV_ITEMS = [
   {
     id: "video" as const,
-    label: "Video Clips",
+    label: "Make a Video",
     icon: Video,
-    desc: "Cut real footage into clips",
+    desc: "YouTube URL → short-form clip",
   },
   {
     id: "clip" as const,
-    label: "Clip Package",
+    label: "Write Content",
     icon: FileText,
-    desc: "Turn ideas into copy",
+    desc: "Hooks, scripts & captions",
   },
 ];
 

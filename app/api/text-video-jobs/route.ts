@@ -45,6 +45,33 @@ type CreditRow = {
   remaining: number;
 };
 
+export async function GET() {
+  const supabase = await createClient();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  if (!session?.user?.id) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { data, error } = await supabase
+    .from("text_video_jobs")
+    .select(
+      "id, script, status, output_url, error_message, credit_cost, created_at",
+    )
+    .eq("user_id", session.user.id)
+    .order("created_at", { ascending: false })
+    .limit(12);
+
+  if (error) {
+    console.error("[text-video-jobs] list_failed", error.message);
+    return Response.json({ error: "list_failed" }, { status: 500 });
+  }
+
+  return Response.json({ data: data ?? [] });
+}
+
 export async function POST(req: Request) {
   const supabase = await createClient();
   const {

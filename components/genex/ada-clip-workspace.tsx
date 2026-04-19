@@ -18,6 +18,11 @@ import type { GenerationUiStep } from "@/lib/generation-stream-protocol";
 import { trackAha } from "@/lib/analytics";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
+import type { AdaSidebarVoiceProfile } from "@/components/genex/ada-sidebar";
+import {
+  AdaVoiceProfileModal,
+  type VoiceProfileData,
+} from "@/components/genex/ada-voice-profile-modal";
 
 export type AdaClipWorkspaceProps = {
   turns: ClipTurn[];
@@ -68,6 +73,10 @@ export type AdaClipWorkspaceProps = {
   emptyStateHasGenerated?: boolean;
   isAuthenticated?: boolean;
   hasGenerated?: boolean;
+  voiceProfile?: AdaSidebarVoiceProfile | null;
+  voiceProfileOpen?: boolean;
+  onVoiceProfileOpenChange?: (open: boolean) => void;
+  onSaveVoiceProfile?: (data: VoiceProfileData) => Promise<void>;
 };
 
 export function AdaClipWorkspace({
@@ -115,6 +124,10 @@ export function AdaClipWorkspace({
   emptyStateHasGenerated = false,
   isAuthenticated: isAuthenticatedProp,
   hasGenerated: hasGeneratedProp,
+  voiceProfile = null,
+  voiceProfileOpen = false,
+  onVoiceProfileOpenChange,
+  onSaveVoiceProfile,
 }: AdaClipWorkspaceProps) {
   const kit = variant === "adaKit";
   const isAuthenticated = isAuthenticatedProp ?? emptyStateIsAuthenticated;
@@ -369,6 +382,24 @@ export function AdaClipWorkspace({
           onDismiss={() => setShowCelebration(false)}
         />
       ) : null}
+
+      <AdaVoiceProfileModal
+        open={voiceProfileOpen}
+        initial={
+          voiceProfile
+            ? {
+                niche: voiceProfile.niche ?? undefined,
+                tone_preference: voiceProfile.tone_preference ?? undefined,
+                hook_style: voiceProfile.hook_style ?? undefined,
+              }
+            : null
+        }
+        onSave={async (data) => {
+          await onSaveVoiceProfile?.(data);
+        }}
+        onClose={() => onVoiceProfileOpenChange?.(false)}
+        variant={variant}
+      />
     </div>
   );
 }

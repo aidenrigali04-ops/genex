@@ -1,13 +1,13 @@
 "use client";
 
-import type { ReactNode } from "react";
+import type { JSX, ReactNode } from "react";
 import { useCallback, useRef } from "react";
 import {
   ArrowUp,
   ChevronLeft,
   ChevronRight,
-  Clapperboard,
   Crown,
+  FileText,
   Flame,
   Mic,
   Paperclip,
@@ -65,10 +65,10 @@ export type AdaFigmaSidebarNavProps = {
 const MAIN_NAV: {
   id: FigmaMainNavId;
   label: string;
-  icon: typeof Clapperboard;
+  icon: typeof FileText | typeof Video;
 }[] = [
-  { id: "clip", label: "Clip generation", icon: Clapperboard },
-  { id: "video", label: "Video", icon: Video },
+  { id: "video", label: "Make a Video", icon: Video },
+  { id: "clip", label: "Write Content", icon: FileText },
 ];
 
 export function AdaFigmaSidebarNav({
@@ -507,7 +507,7 @@ export function AdaFigmaClipHub({
 export type AdaFigmaMainHeaderProps = {
   menuButton?: ReactNode;
   title: string;
-  recentTrigger: ReactNode;
+  recentTrigger?: ReactNode;
   trailing: ReactNode;
 };
 
@@ -516,7 +516,7 @@ export function AdaFigmaMainHeader({
   title,
   recentTrigger,
   trailing,
-}: AdaFigmaMainHeaderProps) {
+}: AdaFigmaMainHeaderProps): JSX.Element {
   return (
     <header className="relative z-[1] flex h-20 shrink-0 items-center justify-between border-b border-white px-6">
       <div className="flex min-w-0 items-center gap-3">

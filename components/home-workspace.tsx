@@ -55,6 +55,7 @@ import { type PlatformId } from "@/lib/platforms";
 import type { AdaSidebarVoiceProfile } from "@/components/genex/ada-sidebar";
 import { AdaSidebar } from "@/components/genex/ada-sidebar";
 import { AdaClipWorkspace } from "@/components/genex/ada-clip-workspace";
+import type { VoiceProfileData } from "@/components/genex/ada-voice-profile-modal";
 import {
   AdaFigmaAmbientBackground,
   AdaFigmaClipHub,
@@ -63,14 +64,11 @@ import {
   type FigmaMainNavId,
 } from "@/components/genex/ada-figma-dashboard";
 import { SettingsRail } from "@/components/genex/settings-rail";
-import { VoiceProfileModal } from "@/components/genex/voice-profile-modal";
-import {
-  VideoVariationWorkspace,
-  type VideoVariationWorkspaceHandle,
-} from "@/components/video-variation-workspace";
+import { AdaVideoWorkspace } from "@/components/genex/ada-video-workspace";
 import type { GenerationContextV1 } from "@/lib/generation-context";
 import { isGenerationContextV1 } from "@/lib/generation-context";
 import { cn } from "@/lib/utils";
+import { createClient } from "@/lib/supabase/client";
 
 const CLIP_PLATFORMS: PlatformId[] = ["clip_package"];
 
@@ -136,7 +134,7 @@ export function HomeWorkspace({
   const [buyOpen, setBuyOpen] = useState(false);
   const [clipSettingsOpen, setClipSettingsOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [workspaceTab, setWorkspaceTab] = useState<"video" | "clip">("clip");
+  const [workspaceTab, setWorkspaceTab] = useState<"video" | "clip">("video");
   const [inputMode, setInputMode] = useState<"text" | "url" | "file">("text");
   const [selectedModel, setSelectedModel] = useState("gpt-4o");
   const [text, setText] = useState("");
@@ -161,7 +159,6 @@ export function HomeWorkspace({
   const abortRef = useRef<AbortController | null>(null);
   const pendingGenerationContextRef = useRef<GenerationContextV1 | null>(null);
   const startTsRef = useRef<number | null>(null);
-  const videoWorkspaceRef = useRef<VideoVariationWorkspaceHandle | null>(null);
 
   const [refinementOpen, setRefinementOpen] = useState(false);
   const [lastClipGenerationContext, setLastClipGenerationContext] =
@@ -169,10 +166,11 @@ export function HomeWorkspace({
   const [currentStreak, setCurrentStreak] = useState(initialCurrentStreak);
   const [showFirstGenCelebration, setShowFirstGenCelebration] =
     useState(false);
-  const [voiceProfileModalOpen, setVoiceProfileModalOpen] = useState(false);
+  const [voiceProfileOpen, setVoiceProfileOpen] = useState(false);
   const [voiceProfile, setVoiceProfile] = useState<AdaSidebarVoiceProfile | null>(
     initialVoiceProfile,
   );
+  const supabase = useMemo(() => createClient(), []);
 
   useEffect(() => {
     setUser(initialUser);
@@ -211,6 +209,31 @@ export function HomeWorkspace({
     toast.success(s);
     router.replace("/", { scroll: false });
   }, [authSuccess, router]);
+
+  const handleSaveVoiceProfile = useCallback(
+    async (data: VoiceProfileData) => {
+      if (!user) throw new Error("Sign in required.");
+      const { error } = await supabase
+        .from("profiles")
+        .update({
+          niche: data.niche,
+          tone_preference: data.tone_preference,
+          hook_style: data.hook_style,
+        })
+        .eq("id", user.id);
+      if (error) throw error;
+      setVoiceProfile((prev) =>
+        prev
+          ? { ...prev, ...data }
+          : {
+              niche: data.niche,
+              tone_preference: data.tone_preference,
+              hook_style: data.hook_style,
+            },
+      );
+    },
+    [user, supabase],
+  );
 
   useEffect(() => {
     setTurns((prev) => {
@@ -891,11 +914,15 @@ export function HomeWorkspace({
       setClipSettingsOpen(true);
       return;
     }
-    videoWorkspaceRef.current?.openSettings();
+    setBuyOpen(true);
   }, [workspaceTab]);
 
   const hubTitle =
-    workspaceTab === "video" ? "Video" : showClipHub ? "New Search" : "Clip package";
+    workspaceTab === "video"
+      ? "Make a Video"
+      : showClipHub
+        ? "New Search"
+        : "Clip package";
 
   return (
     <>
@@ -913,7 +940,7 @@ export function HomeWorkspace({
             generationStreak={currentStreak}
             voiceProfile={user ? voiceProfile : null}
             onEditVoiceProfile={
-              user ? () => setVoiceProfileModalOpen(true) : undefined
+              user ? () => setVoiceProfileOpen(true) : undefined
             }
           />
         </aside>
@@ -945,55 +972,51 @@ export function HomeWorkspace({
               generationStreak={currentStreak}
               voiceProfile={user ? voiceProfile : null}
               onEditVoiceProfile={
-                user ? () => setVoiceProfileModalOpen(true) : undefined
+                user ? () => setVoiceProfileOpen(true) : undefined
               }
             />
           </DialogContent>
         </Dialog>
 
         <main className="relative z-[1] flex min-w-0 flex-1 flex-col overflow-hidden">
-          {workspaceTab !== "video" ? (
-            <AdaFigmaMainHeader
-              menuButton={
-                <button
-                  type="button"
-                  className="shrink-0 text-white/80 hover:text-white lg:hidden"
-                  aria-label="Open menu"
-                  onClick={() => setMobileNavOpen(true)}
-                >
-                  ☰
-                </button>
-              }
-              title={hubTitle}
-              recentTrigger={recentDropdown}
-              trailing={
-                <div className="flex items-center gap-2">
-                  {user ? (
-                    <span className="hidden text-[10px] text-white/50 md:inline">
-                      {totalClipCount} saved
-                    </span>
-                  ) : null}
-                  {figmaCreditsPill}
-                  {accountMenu}
-                </div>
-              }
-            />
-          ) : null}
+          <AdaFigmaMainHeader
+            menuButton={
+              <button
+                type="button"
+                className="shrink-0 text-white/80 hover:text-white lg:hidden"
+                aria-label="Open menu"
+                onClick={() => setMobileNavOpen(true)}
+              >
+                ☰
+              </button>
+            }
+            title={hubTitle}
+            recentTrigger={workspaceTab === "clip" ? recentDropdown : undefined}
+            trailing={
+              <div className="flex items-center gap-2">
+                {workspaceTab === "clip" && user ? (
+                  <span className="hidden text-[10px] text-white/50 md:inline">
+                    {totalClipCount} saved
+                  </span>
+                ) : null}
+                {figmaCreditsPill}
+                {accountMenu}
+              </div>
+            }
+          />
 
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             {workspaceTab === "video" ? (
               <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                <VideoVariationWorkspace
-                  ref={videoWorkspaceRef}
-                  hideMarketingTitle
-                  user={user}
+                <AdaVideoWorkspace
+                  userId={user?.id ?? null}
                   creditsRemaining={creditsRemaining}
                   creditsUnlimited={creditsUnlimited}
-                  setCreditsRemaining={setCreditsRemaining}
-                  onOpenBuy={() => setBuyOpen(true)}
-                  onOpenSignIn={() => setSignInOpen(true)}
+                  onCreditChange={(n) => {
+                    if (!creditsUnlimited) setCreditsRemaining(n);
+                  }}
                   onJobFinished={onVideoJobFinished}
-                  onOpenMobileNav={() => setMobileNavOpen(true)}
+                  variant="adaKit"
                 />
               </div>
             ) : showClipHub ? (
@@ -1116,6 +1139,12 @@ export function HomeWorkspace({
                     setUploadFile(null);
                   }}
                   showFirstGenCelebration={showFirstGenCelebration}
+                  voiceProfile={user ? voiceProfile : null}
+                  voiceProfileOpen={voiceProfileOpen}
+                  onVoiceProfileOpenChange={setVoiceProfileOpen}
+                  onSaveVoiceProfile={
+                    user ? handleSaveVoiceProfile : undefined
+                  }
                 />
               </div>
             )}
@@ -1155,7 +1184,7 @@ export function HomeWorkspace({
                     recentItems={sidebarRecentItems}
                     voiceProfile={voiceProfile}
                     onEditVoiceProfile={() => {
-                      setVoiceProfileModalOpen(true);
+                      setVoiceProfileOpen(true);
                       setClipSettingsOpen(false);
                     }}
                     generationStreak={currentStreak}
@@ -1201,17 +1230,6 @@ export function HomeWorkspace({
         creditsUnlimited={creditsUnlimited}
       />
 
-      <VoiceProfileModal
-        open={voiceProfileModalOpen}
-        onOpenChange={setVoiceProfileModalOpen}
-        variant="adaKit"
-        onSaved={(p) => {
-          setVoiceProfile(p);
-          queueMicrotask(() => {
-            void router.refresh();
-          });
-        }}
-      />
     </>
   );
 }
