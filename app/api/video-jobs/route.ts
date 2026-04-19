@@ -26,6 +26,17 @@ function pickGenerationContextFromBody(
   return null;
 }
 
+/** Pasted links often omit `https://`; workers expect a full URL. */
+function normalizeYoutubeUrlInput(raw: string): string {
+  const t = raw.trim();
+  if (!t) return "";
+  if (/^https?:\/\//i.test(t)) return t;
+  if (/^(www\.)?(youtube\.com|youtu\.be)\b/i.test(t)) {
+    return `https://${t.replace(/^\/+/, "")}`;
+  }
+  return t;
+}
+
 type CreditRow = { success: boolean; reason: string | null; remaining: number };
 
 async function consumeCreditsIfNeeded(
@@ -96,7 +107,7 @@ async function handleJsonUrlJob(
 ): Promise<Response> {
   const t0 = performance.now();
   const prompt = String(body.prompt ?? "").trim();
-  const youtubeUrl = String(body.youtubeUrl ?? "").trim();
+  const youtubeUrl = normalizeYoutubeUrlInput(String(body.youtubeUrl ?? ""));
 
   if (!prompt) {
     return Response.json({ error: "Prompt is required." }, { status: 400 });
@@ -332,9 +343,13 @@ export async function POST(req: Request) {
     return Response.json({ error: "Invalid inputType." }, { status: 400 });
   }
 
-  const youtubeUrl = String(form.get("youtubeUrl") ?? "").trim();
   const fileField = form.get("file");
   const file = fileField instanceof File && fileField.size > 0 ? fileField : null;
+
+  let youtubeUrl = "";
+  if (inputType === "url") {
+    youtubeUrl = normalizeYoutubeUrlInput(String(form.get("youtubeUrl") ?? ""));
+  }
 
   if (inputType === "upload") {
     if (!file) {

@@ -30,7 +30,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -41,7 +40,6 @@ import {
 import {
   ArrowRight,
   ArrowUp,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Copy,
@@ -128,6 +126,26 @@ const VIDEO_HUB_CAROUSEL_CARDS: { prompt: string; thumb: string }[] = [
       "linear-gradient(145deg, #2a1a40 0%, #4a3080 50%, #6b48a8 100%), linear-gradient(210deg, rgba(136,0,220,0.28) 0%, transparent 48%)",
   },
 ];
+
+function normalizeYoutubeUrlForJob(raw: string): string {
+  const t = raw.trim();
+  if (!t) return "";
+  if (/^https?:\/\//i.test(t)) return t;
+  if (/^(www\.)?(youtube\.com|youtu\.be)\b/i.test(t)) {
+    return `https://${t.replace(/^\/+/, "")}`;
+  }
+  return t;
+}
+
+function isValidHttpUrl(s: string): boolean {
+  if (!s) return false;
+  try {
+    const u = new URL(s);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
 
 async function postVideoJobUrlJson(params: {
   prompt: string;
@@ -555,7 +573,6 @@ export const VideoVariationWorkspace = forwardRef<
     onOpenMobileNav,
     hideMarketingTitle = false,
   } = props;
-  const [sourceMode, setSourceMode] = useState<"upload" | "url">("upload");
   const [prompt, setPrompt] = useState("");
   const [youtubeUrl, setYoutubeUrl] = useState("");
   const [videoFile, setVideoFile] = useState<File | null>(null);
@@ -564,13 +581,7 @@ export const VideoVariationWorkspace = forwardRef<
   const videoHubCarouselRef = useRef<HTMLDivElement>(null);
 
   const openVideoFilePicker = useCallback(() => {
-    setSourceMode("upload");
     window.setTimeout(() => fileRef.current?.click(), 0);
-  }, []);
-
-  const selectYoutubeUrlSource = useCallback(() => {
-    setSourceMode("url");
-    window.setTimeout(() => youtubeUrlRef.current?.focus(), 0);
   }, []);
 
   const [uploadPct, setUploadPct] = useState(0);
@@ -753,29 +764,25 @@ export const VideoVariationWorkspace = forwardRef<
       setError("Describe what you want the AI to do.");
       return;
     }
-    if (sourceMode === "upload" && !videoFile) {
-      setError("Choose a video file (MP4 or MOV).");
-      return;
-    }
-    if (sourceMode === "url" && !youtubeUrl.trim()) {
-      setError("Paste a YouTube URL.");
-      return;
+    if (videoFile) {
+      // file from paperclip — upload path
+    } else {
+      const normalized = normalizeYoutubeUrlForJob(youtubeUrl);
+      if (!isValidHttpUrl(normalized)) {
+        setError(
+          "Paste a YouTube link (https://… or youtube.com/…) or attach MP4/MOV with the paperclip.",
+        );
+        return;
+      }
     }
 
     setRefinementOpen(true);
   };
 
   const hasInput = useMemo(() => {
-    if (sourceMode === "upload") return videoFile != null;
-    const trimmed = youtubeUrl.trim();
-    if (!trimmed) return false;
-    try {
-      const u = new URL(trimmed);
-      return u.protocol === "http:" || u.protocol === "https:";
-    } catch {
-      return false;
-    }
-  }, [sourceMode, videoFile, youtubeUrl]);
+    if (videoFile != null) return true;
+    return isValidHttpUrl(normalizeYoutubeUrlForJob(youtubeUrl));
+  }, [videoFile, youtubeUrl]);
 
   const submitWithRefinementContext = async (ctx: GenerationContextV1) => {
     setRefinementOpen(false);
@@ -788,7 +795,7 @@ export const VideoVariationWorkspace = forwardRef<
 
     try {
       const { id, remainingCredits } =
-        sourceMode === "upload" && videoFile
+        videoFile != null
           ? await submitUploadJobViaDirectStorage({
               file: videoFile,
               prompt: prompt.trim(),
@@ -798,7 +805,7 @@ export const VideoVariationWorkspace = forwardRef<
             })
           : await postVideoJobUrlJson({
               prompt: prompt.trim(),
-              youtubeUrl: youtubeUrl.trim(),
+              youtubeUrl: normalizeYoutubeUrlForJob(youtubeUrl),
               generationContext: ctx,
             });
       if (typeof remainingCredits === "number") {
@@ -1121,11 +1128,9 @@ export const VideoVariationWorkspace = forwardRef<
                         kind="video_variations"
                         platformIds={VIDEO_REFINEMENT_PLATFORMS}
                         inputSummary={
-                          sourceMode === "upload"
-                            ? videoFile
-                              ? `Upload: ${videoFile.name}`
-                              : "Video upload"
-                            : `YouTube: ${youtubeUrl.trim() || "…"}`
+                          videoFile
+                            ? `Upload: ${videoFile.name}`
+                            : `YouTube: ${normalizeYoutubeUrlForJob(youtubeUrl) || youtubeUrl.trim() || "…"}`
                         }
                         variant="adaKit"
                         embedInChat
@@ -1471,7 +1476,11 @@ export const VideoVariationWorkspace = forwardRef<
               accept=".mp4,.mov,video/mp4,video/quicktime"
               className="sr-only"
               disabled={!user || submitting}
-              onChange={(e) => setVideoFile(e.target.files?.[0] ?? null)}
+              onChange={(e) => {
+                const f = e.target.files?.[0] ?? null;
+                setVideoFile(f);
+                if (f) setYoutubeUrl("");
+              }}
             />
             <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch">
               <div className="flex min-h-[52px] min-w-0 flex-1 items-center gap-2 overflow-x-auto rounded-[22px] border border-white/15 bg-white/10 p-1.5 pl-2 outline outline-1 -outline-offset-1 outline-white/15 sm:gap-3">
@@ -1523,65 +1532,26 @@ export const VideoVariationWorkspace = forwardRef<
                     }}
                   />
                 )}
-                <div className="ml-auto flex shrink-0 items-center gap-1 pr-0.5 sm:gap-1.5 sm:pr-1">
-                  <DropdownMenu>
-                    <DropdownMenuTrigger
-                      type="button"
-                      disabled={!user || submitting}
-                      className={cn(
-                        "inline-flex h-8 shrink-0 items-center gap-1 rounded-full border border-white/25 px-2 text-[11px] font-medium text-white outline-none hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-[#8800DC]/50 disabled:pointer-events-none disabled:opacity-40 sm:px-2.5 sm:text-xs",
-                        sourceMode === "upload" &&
-                          "border-white/40 bg-white/15",
-                        sourceMode === "url" && "border-white/40 bg-white/15",
-                      )}
-                      aria-label="Choose video source"
-                    >
-                      {sourceMode === "upload" ? "Upload" : "YouTube"}
-                      <ChevronDown
-                        className="size-3.5 opacity-80"
-                        aria-hidden
-                      />
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent
-                      align="end"
-                      className="min-w-[200px] border-white/10 bg-[#1a1024] text-white"
-                    >
-                      <DropdownMenuLabel className="text-xs text-white/55">
-                        Video source
-                      </DropdownMenuLabel>
-                      <DropdownMenuItem
-                        className="cursor-pointer text-white focus:bg-white/10 focus:text-white"
-                        onClick={() => openVideoFilePicker()}
-                      >
-                        Upload from device…
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        className="cursor-pointer text-white focus:bg-white/10 focus:text-white"
-                        onClick={() => selectYoutubeUrlSource()}
-                      >
-                        Paste YouTube URL…
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                  {sourceMode === "url" ? (
-                    <input
-                      ref={youtubeUrlRef}
-                      type="url"
-                      aria-label="YouTube URL"
-                      className="h-8 w-[min(200px,32vw)] shrink-0 rounded-lg border border-white/20 bg-white/5 px-2 text-xs text-white outline-none placeholder:text-white/40 focus-visible:ring-2 focus-visible:ring-[#8800DC]/40 sm:w-[min(260px,28vw)]"
-                      placeholder="youtube.com/…"
-                      value={youtubeUrl}
-                      onChange={(e) => setYoutubeUrl(e.target.value)}
-                      disabled={!user || submitting}
-                    />
-                  ) : (
-                    <span
-                      className="max-w-[72px] shrink-0 truncate text-[10px] text-white/45 sm:max-w-[100px] sm:text-[11px] md:max-w-[140px]"
-                      title={videoFile?.name ?? undefined}
-                    >
-                      {videoFile?.name ?? "No file yet"}
-                    </span>
-                  )}
+                <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1.5 pr-0.5 sm:gap-2 sm:pr-1">
+                  <input
+                    ref={youtubeUrlRef}
+                    type="text"
+                    inputMode="url"
+                    autoComplete="url"
+                    aria-label="YouTube link"
+                    className="h-8 min-w-0 flex-1 rounded-lg border border-white/20 bg-white/5 px-2.5 text-xs text-white outline-none placeholder:text-white/40 focus-visible:ring-2 focus-visible:ring-[#8800DC]/40 sm:max-w-[min(380px,46vw)] sm:flex-none sm:w-[min(380px,46vw)]"
+                    placeholder="YouTube link (https://…)"
+                    value={youtubeUrl}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setYoutubeUrl(v);
+                      if (v.trim()) {
+                        setVideoFile(null);
+                        if (fileRef.current) fileRef.current.value = "";
+                      }
+                    }}
+                    disabled={!user || submitting}
+                  />
                   <DropdownMenu>
                     <DropdownMenuTrigger
                       type="button"
