@@ -12,6 +12,11 @@ import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import OpenAI from "openai";
 
+import {
+  claimNextTextVideoJob,
+  processTextVideoJob,
+} from "./text-video-job-runner.js";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, ".env") });
 dotenv.config();
@@ -996,11 +1001,19 @@ async function requeueStaleJobs() {
 
 async function tick() {
   await requeueStaleJobs();
-  const job = await claimNextJob();
-  if (!job) return false;
-  log(job.id, "claimed (queued → processing).");
-  await processJob(job);
-  return true;
+  const vjob = await claimNextJob();
+  if (vjob) {
+    log(vjob.id, "claimed (queued → processing).");
+    await processJob(vjob);
+    return true;
+  }
+  const tvJob = await claimNextTextVideoJob(supabaseAdmin);
+  if (tvJob) {
+    log(tvJob.id, "text-video claimed (queued → planning).");
+    await processTextVideoJob(supabaseAdmin, tvJob);
+    return true;
+  }
+  return false;
 }
 
 async function main() {
@@ -1018,7 +1031,7 @@ async function main() {
         idleTicks += 1;
         if (idleTicks >= 12) {
           console.log(
-            "[worker] idle ~60s: no claimable `queued` row (submit a job from the app while this log runs, or check Table Editor → video_jobs).",
+            "[worker] idle ~60s: no claimable `queued` row in video_jobs or text_video_jobs (submit a job, or check Table Editor / worker_claim_next_* RPC migrations).",
           );
           await logQueueDiagnostics();
           idleTicks = 0;

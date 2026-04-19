@@ -18,7 +18,7 @@ import { GenerationFeedbackPanel } from "@/components/generation-feedback-panel"
 import { RatingWidget } from "@/components/rating-widget";
 import { LazyVideoPlayer } from "@/components/lazy-video-player";
 import { SettingsRail } from "@/components/genex/settings-rail";
-import { RefinementChatDialog } from "@/components/refinement-chat-dialog";
+import { RefinementChatPanel } from "@/components/refinement-chat-panel";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -823,8 +823,9 @@ export const VideoVariationWorkspace = forwardRef<
     el.scrollBy({ left: dir * 296, behavior: "smooth" });
   }, []);
 
-  const showPreGenerationHub =
-    !jobId && !lastSubmittedPrompt.trim() && !submitting;
+  const hubHeroOnly =
+    !jobId && !lastSubmittedPrompt.trim() && !submitting && !refinementOpen;
+  const showPreGenerationHub = hubHeroOnly;
 
   const firstCompletedVariation = useMemo(
     () => variations.find((v) => !v.error && v.url) ?? null,
@@ -1032,7 +1033,9 @@ export const VideoVariationWorkspace = forwardRef<
               </div>
             ) : (
               <>
-            {lastSubmittedPrompt.trim() ? (
+            {(lastSubmittedPrompt.trim() ||
+              (refinementOpen && prompt.trim()) ||
+              (submitting && prompt.trim())) ? (
               <div className="mb-6 flex w-full flex-col items-end gap-2">
                 <div className="flex max-w-[min(100%,600px)] items-end gap-3">
                   <div className="min-w-0 rounded-[20px_4px_20px_20px] bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)] p-4 shadow-[0_16px_24px_rgba(136,1,220,0.16)] outline outline-1 -outline-offset-1 outline-white/25">
@@ -1040,7 +1043,9 @@ export const VideoVariationWorkspace = forwardRef<
                       <MessageSquare className="size-4 shrink-0 opacity-95" />
                       <span className="tracking-wide">Message</span>
                     </div>
-                    <p className="text-sm leading-5 tracking-wide text-white">{lastSubmittedPrompt}</p>
+                    <p className="whitespace-pre-wrap text-sm leading-5 tracking-wide text-white">
+                      {lastSubmittedPrompt.trim() || prompt.trim()}
+                    </p>
                   </div>
                   <div
                     className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[#CCC1F0] text-xs font-semibold text-[#2d1b4e]"
@@ -1048,6 +1053,30 @@ export const VideoVariationWorkspace = forwardRef<
                   >
                     {userInitials}
                   </div>
+                </div>
+              </div>
+            ) : null}
+
+            {refinementOpen && !submitting ? (
+              <div className="mb-6 flex w-full justify-start">
+                <div className="w-full max-w-[min(100%,720px)]">
+                  <RefinementChatPanel
+                    active={refinementOpen}
+                    kind="video_variations"
+                    platformIds={VIDEO_REFINEMENT_PLATFORMS}
+                    inputSummary={
+                      sourceMode === "upload"
+                        ? videoFile
+                          ? `Upload: ${videoFile.name}`
+                          : "Video upload"
+                        : `YouTube: ${youtubeUrl.trim() || "…"}`
+                    }
+                    variant="adaKit"
+                    embedInChat
+                    className="max-h-[min(72vh,640px)]"
+                    onConfirm={(ctx) => void submitWithRefinementContext(ctx)}
+                    onCancel={() => setRefinementOpen(false)}
+                  />
                 </div>
               </div>
             ) : null}
@@ -1276,6 +1305,14 @@ export const VideoVariationWorkspace = forwardRef<
                       </VariationPreviewRegistryProvider>
                     ) : (
                       <>
+                        <div
+                          className="mb-4 h-14 w-full max-w-xl overflow-hidden rounded-xl opacity-95"
+                          style={{
+                            background:
+                              "linear-gradient(115deg, rgba(54,0,170,0.5) 0%, rgba(104,0,186,0.45) 40%, rgba(164,0,167,0.5) 100%)",
+                          }}
+                          aria-hidden
+                        />
                         <p className="mb-3 text-sm text-white/70">{PIPELINE_STEPS.join(" → ")}</p>
                         <div className="max-w-xl space-y-2">
                           <Progress value={pipelineProgressValue}>
@@ -1526,20 +1563,6 @@ export const VideoVariationWorkspace = forwardRef<
         </DialogContent>
       </Dialog>
 
-      <RefinementChatDialog
-        open={refinementOpen}
-        onOpenChange={setRefinementOpen}
-        kind="video_variations"
-        platformIds={VIDEO_REFINEMENT_PLATFORMS}
-        inputSummary={
-          sourceMode === "upload"
-            ? videoFile
-              ? `Upload: ${videoFile.name}`
-              : "Video upload"
-            : `YouTube: ${youtubeUrl.trim() || "…"}`
-        }
-        onConfirm={(ctx) => void submitWithRefinementContext(ctx)}
-      />
     </div>
   );
 });

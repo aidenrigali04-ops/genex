@@ -9,7 +9,8 @@
     "start:api": "next start",
     "lint": "eslint",
     "tailwind:build": "mkdir -p .tmp && tailwindcss -i ./app/globals.css -o ./.tmp/tailwind-snapshot.css --minify",
-    "worker": "npm run start --prefix worker"
+    "worker": "npm run start --prefix worker",
+    "worker:text-video": "npm run text-video --prefix worker"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.52",

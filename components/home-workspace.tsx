@@ -59,7 +59,6 @@ import {
   type FigmaMainNavId,
 } from "@/components/genex/ada-figma-dashboard";
 import { SettingsRail } from "@/components/genex/settings-rail";
-import { RefinementChatDialog } from "@/components/refinement-chat-dialog";
 import {
   VideoVariationWorkspace,
   type VideoVariationWorkspaceHandle,
@@ -680,6 +679,7 @@ export function HomeWorkspace({
     workspaceTab === "clip" &&
     !loading &&
     !streamedText.trim() &&
+    !refinementOpen &&
     inputMode === "text" &&
     !uploadFile &&
     !url.trim();
@@ -930,6 +930,31 @@ export function HomeWorkspace({
                   onTextVideoCreditsRemainingChange={(n) => {
                     if (!creditsUnlimited) setCreditsRemaining(n);
                   }}
+                  refinementOpen={refinementOpen}
+                  refinementPlatformIds={CLIP_PLATFORMS}
+                  refinementInputSummary={
+                    inputMode === "text"
+                      ? text.trim().slice(0, 120) || "Text / idea"
+                      : inputMode === "url"
+                        ? url.trim() || "URL"
+                        : uploadFile
+                          ? `File: ${uploadFile.name}`
+                          : "Upload"
+                  }
+                  onRefinementConfirm={(ctx) => {
+                    const ctxWithModel: GenerationContextV1 = {
+                      ...ctx,
+                      answers: {
+                        ...ctx.answers,
+                        preferredModel: selectedModel,
+                      },
+                    };
+                    pendingGenerationContextRef.current = ctxWithModel;
+                    setLastClipGenerationContext(ctxWithModel);
+                    setRefinementOpen(false);
+                    void runGeneration();
+                  }}
+                  onRefinementCancel={() => setRefinementOpen(false)}
                 />
               </div>
             )}
@@ -939,34 +964,6 @@ export function HomeWorkspace({
 
       {workspaceTab === "clip" ? (
         <>
-          <RefinementChatDialog
-            open={refinementOpen}
-            onOpenChange={setRefinementOpen}
-            kind="text_generation"
-            platformIds={CLIP_PLATFORMS}
-            inputSummary={
-              inputMode === "text"
-                ? text.trim().slice(0, 120) || "Text / idea"
-                : inputMode === "url"
-                  ? url.trim() || "URL"
-                  : uploadFile
-                    ? `File: ${uploadFile.name}`
-                    : "Upload"
-            }
-            onConfirm={(ctx) => {
-              const ctxWithModel: GenerationContextV1 = {
-                ...ctx,
-                answers: {
-                  ...ctx.answers,
-                  preferredModel: selectedModel,
-                },
-              };
-              pendingGenerationContextRef.current = ctxWithModel;
-              setLastClipGenerationContext(ctxWithModel);
-              setRefinementOpen(false);
-              void runGeneration();
-            }}
-          />
           <Dialog open={clipSettingsOpen} onOpenChange={setClipSettingsOpen}>
             <DialogContent
               showCloseButton

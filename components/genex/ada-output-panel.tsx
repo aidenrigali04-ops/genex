@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { GenerationFeedbackPanel } from "@/components/generation-feedback-panel";
 import { RatingWidget } from "@/components/rating-widget";
 import { TextToVideoLauncher } from "@/components/genex/text-to-video-launcher";
+import { Sparkles } from "lucide-react";
 
 const SECTION_ACCENT: Record<string, string> = {
   hooks: "#7B5CFA",
@@ -36,6 +37,8 @@ export type AdaOutputPanelProps = {
   originalPrompt: string;
   variant?: "default" | "adaKit";
   onTextVideoCreditsRemainingChange?: (remaining: number) => void;
+  /** Single-column chat: wrap output as one assistant message (adaKit bubble chrome). */
+  chatEmbedded?: boolean;
 };
 
 export function AdaOutputPanel({
@@ -53,11 +56,13 @@ export function AdaOutputPanel({
   originalPrompt,
   variant = "default",
   onTextVideoCreditsRemainingChange,
+  chatEmbedded = false,
 }: AdaOutputPanelProps) {
   const kit = variant === "adaKit";
   const showBody = streamedText.trim() || loading;
 
   if (!showBody) {
+    if (chatEmbedded) return null;
     return (
       <div
         className={cn(
@@ -72,23 +77,24 @@ export function AdaOutputPanel({
     );
   }
 
-  return (
-    <div
-      id="output-section"
-      className={cn(
-        "scroll-mt-4 space-y-4",
-        kit && "font-[family-name:var(--font-instrument-sans)] text-white",
-      )}
-    >
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+  const body = (
+    <>
+      <div
+        className={cn(
+          "flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between",
+          chatEmbedded && "gap-2",
+        )}
+      >
         <h2
           className={cn(
             kit
-              ? "font-[family-name:var(--font-instrument-serif)] text-2xl font-normal tracking-[0.36px] text-white"
+              ? chatEmbedded
+                ? "text-xs font-medium uppercase tracking-widest text-white/50"
+                : "font-[family-name:var(--font-instrument-serif)] text-2xl font-normal tracking-[0.36px] text-white"
               : "text-lg font-semibold tracking-tight text-ada-primary",
           )}
         >
-          Your clip package
+          {chatEmbedded && kit ? "Clip package" : "Your clip package"}
         </h2>
         <button
           type="button"
@@ -279,6 +285,37 @@ export function AdaOutputPanel({
           ) : null}
         </>
       )}
+    </>
+  );
+
+  if (chatEmbedded && kit) {
+    return (
+      <div
+        id="output-section"
+        className="scroll-mt-4 flex w-full justify-start font-[family-name:var(--font-instrument-sans)] text-white"
+      >
+        <div className="w-full max-w-[min(100%,920px)] space-y-4 rounded-[20px_20px_20px_4px] border border-white/15 bg-white/[0.08] p-4 shadow-[0_12px_24px_rgba(11,6,16,0.24)] outline outline-1 -outline-offset-1 outline-white/20">
+          <div className="flex items-center gap-2 border-b border-white/10 pb-2">
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)] shadow-[0_0_16px_rgba(203,45,206,0.24)]">
+              <Sparkles className="size-4 text-white" aria-hidden />
+            </div>
+            <span className="text-xs font-medium tracking-wide text-[#E8B4FF]">GenEx</span>
+          </div>
+          {body}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      id="output-section"
+      className={cn(
+        "scroll-mt-4 space-y-4",
+        kit && "font-[family-name:var(--font-instrument-sans)] text-white",
+      )}
+    >
+      {body}
     </div>
   );
 }

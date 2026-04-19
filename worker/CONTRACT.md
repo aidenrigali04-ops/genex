@@ -30,3 +30,24 @@ generating → complete | failed
 - **Inputs:** `inputs/{userId}/{timestamp}-{filename}`
 - **Outputs:** `outputs/{userId}/{jobId}/variation_{n}.mp4`
 - **Bucket:** `videos`
+
+---
+
+## Text → video jobs (`text_video_jobs`)
+
+The main process (`npm run worker` → `worker.js`) claims and runs these on the same poll loop as `video_jobs`. Optional standalone: `npm run text-video --prefix worker`.
+
+### Claim
+
+Use RPC `worker_claim_next_text_video_job()` (migration `20260425100000_worker_claim_next_text_video_job.sql`) so rows are not stuck `queued` when PostgREST cannot see them via plain `select`/`update`.
+
+### Status progression
+
+```
+queued → planning → fetching → assembling → uploading → complete | failed
+```
+
+### Storage
+
+- **Bucket:** `text-video-outputs`
+- **Output object:** `{user_id}/{job_id}/output.mp4`

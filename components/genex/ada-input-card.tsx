@@ -41,6 +41,8 @@ export type AdaInputCardProps = {
   maxUploadMb: number;
   /** Match Ada UI Kit / Figma dark glass styling (clip shell). */
   variant?: "default" | "adaKit";
+  /** When true, primary submit is disabled (refinement Q&A is in progress below). */
+  refinementActive?: boolean;
 };
 
 export function AdaInputCard({
@@ -61,6 +63,7 @@ export function AdaInputCard({
   onSubmit,
   maxUploadMb,
   variant = "default",
+  refinementActive = false,
 }: AdaInputCardProps) {
   const fileRef = useRef<HTMLInputElement>(null);
   const kit = variant === "adaKit";
@@ -68,7 +71,7 @@ export function AdaInputCard({
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
-      if (canSubmit && !loading) onSubmit();
+      if (canSubmit && !loading && !refinementActive) onSubmit();
     }
   };
 
@@ -95,7 +98,7 @@ export function AdaInputCard({
                 key={mode}
                 type="button"
                 onClick={() => onInputModeChange(mode)}
-                disabled={loading}
+                disabled={loading || refinementActive}
                 className={cn(
                   "flex items-center gap-1.5 rounded-[6px] px-2.5 py-1.5 text-xs font-medium transition-colors",
                   kit &&
@@ -126,7 +129,7 @@ export function AdaInputCard({
               key={m.id}
               type="button"
               onClick={() => onModelChange(m.id)}
-              disabled={loading}
+              disabled={loading || refinementActive}
               className={cn(
                 "rounded-[4px] px-2.5 py-1 text-xs font-medium transition-colors",
                 kit &&
@@ -158,7 +161,7 @@ export function AdaInputCard({
             value={text}
             onChange={(e) => onTextChange(e.target.value)}
             onKeyDown={handleKeyDown}
-            disabled={loading}
+            disabled={loading || refinementActive}
           />
         ) : inputMode === "url" ? (
           <div className="flex items-start gap-2 pt-1">
@@ -180,7 +183,7 @@ export function AdaInputCard({
               placeholder="https://youtube.com/watch?v=… or article URL"
               value={url}
               onChange={(e) => onUrlChange(e.target.value)}
-              disabled={loading}
+              disabled={loading || refinementActive}
             />
           </div>
         ) : (
@@ -188,7 +191,7 @@ export function AdaInputCard({
             <button
               type="button"
               onClick={() => fileRef.current?.click()}
-              disabled={loading}
+              disabled={loading || refinementActive}
               className={cn(
                 "flex items-center gap-2 rounded-xl border border-dashed px-4 py-2.5 text-sm transition-colors",
                 kit
@@ -216,7 +219,7 @@ export function AdaInputCard({
               type="file"
               className="sr-only"
               accept=".flac,.m4a,.mp3,.mp4,.mpeg,.mpga,.mov,.m4v,.oga,.ogg,.wav,.webm,.txt,.md,.markdown,.csv,.srt,.vtt,.json"
-              disabled={loading}
+              disabled={loading || refinementActive}
               onChange={(e) => onFileChange(e.target.files?.[0] ?? null)}
             />
           </div>
@@ -234,7 +237,7 @@ export function AdaInputCard({
             <button
               key={id}
               type="button"
-              disabled={loading}
+              disabled={loading || refinementActive}
               onClick={() => onPresetChange(preset === id ? null : id)}
               className={cn(
                 "rounded-full px-3 py-1 text-xs font-medium transition-all",
@@ -255,11 +258,11 @@ export function AdaInputCard({
 
         <button
           type="button"
-          disabled={loading || !canSubmit}
+          disabled={loading || !canSubmit || refinementActive}
           onClick={onSubmit}
           className={cn(
             "flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-all",
-            canSubmit && !loading
+            canSubmit && !loading && !refinementActive
               ? kit
                 ? cn(MAGENTA_BTN, "text-white hover:scale-105")
                 : "bg-linear-to-br from-[#7B5CFA] to-[#9B6FFF] text-white shadow-lg shadow-[#7B5CFA33] hover:scale-105 hover:shadow-[#7B5CFA55]"
@@ -267,7 +270,13 @@ export function AdaInputCard({
                 ? "cursor-not-allowed bg-white/10 text-white/35"
                 : "cursor-not-allowed bg-ada-border text-ada-disabled",
           )}
-          aria-label={loading ? "Generating" : "Continue to refinement"}
+          aria-label={
+            loading
+              ? "Generating"
+              : refinementActive
+                ? "Answer questions below"
+                : "Continue to refinement"
+          }
         >
           {loading ? (
             <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden>

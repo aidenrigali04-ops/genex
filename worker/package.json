@@ -5,7 +5,8 @@
   "type": "module",
   "main": "worker.js",
   "scripts": {
-    "start": "node worker.js"
+    "start": "node worker.js",
+    "text-video": "node text-video-worker.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",
