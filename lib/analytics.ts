@@ -9,6 +9,8 @@ export type AhaEvent =
   | "video_played" // text-to-video output is played
   | "second_generation" // user generates for the 2nd time (session 2 signal)
   | "voice_profile_saved" // user saves niche/tone/hook_style to profile
+  | "voice_profile_complete" // all three voice fields filled for the first time
+  | "hook_strength_high" // output panel surfaced a high hook-strength signal
   | "variation_launched" // user opens video variation workspace
   | "text_video_started"; // user launches text-to-video job
 

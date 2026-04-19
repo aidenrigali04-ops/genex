@@ -211,6 +211,61 @@ export function parseFormatTagsFromCreatorSignals(block: string): string[] {
     .slice(0, 6);
 }
 
+/**
+ * Parses FORMAT_TAGS from a creator_signals section (alias of
+ * {@link parseFormatTagsFromCreatorSignals}).
+ */
+export function parseFormatTags(creatorSignalsText: string): string[] {
+  return parseFormatTagsFromCreatorSignals(creatorSignalsText);
+}
+
+/** High / medium / low — for output panel hook signal (distinct from {@link HookStrength}). */
+export type HookStrengthSignalLevel = "high" | "medium" | "low";
+
+export type HookStrengthSignal = {
+  level: HookStrengthSignalLevel;
+  reason: string;
+};
+
+/**
+ * Parses HOOK_STRENGTH from creator_signals for UI (high | medium | low).
+ * Falls back to legacy {@link parseHookStrength} (high | strong | solid) and maps
+ * strong → medium, solid → low.
+ */
+export function parseHookStrengthSignal(
+  creatorSignalsText: string,
+): HookStrengthSignal | null {
+  if (!creatorSignalsText?.trim()) return null;
+
+  const strengthLine = creatorSignalsText
+    .split(/\r?\n/)
+    .find((l) => /HOOK_STRENGTH:/i.test(l));
+  if (!strengthLine) return null;
+
+  const modern = strengthLine.match(
+    /HOOK_STRENGTH:\s*(high|medium|low)\b(?:\s*[|]\s*(?:Reason:\s*)?(.+))?/i,
+  );
+  if (modern?.[1]) {
+    const raw = modern[1].toLowerCase();
+    if (raw === "high" || raw === "medium" || raw === "low") {
+      return {
+        level: raw as HookStrengthSignalLevel,
+        reason: (modern[2] ?? "").trim(),
+      };
+    }
+  }
+
+  const legacy = parseHookStrength(creatorSignalsText);
+  if (!legacy) return null;
+  const level: HookStrengthSignalLevel =
+    legacy.strength === "high"
+      ? "high"
+      : legacy.strength === "strong"
+        ? "medium"
+        : "low";
+  return { level, reason: legacy.reason };
+}
+
 export function parseLengthHintSeconds(block: string): number | null {
   if (!block.trim()) return null;
   const line = block

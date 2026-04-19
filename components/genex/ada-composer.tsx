@@ -72,9 +72,11 @@ export function AdaComposer({
   const kit = variant === "adaKit";
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const [phIndex] = useState(() =>
-    Math.floor(Math.random() * PLACEHOLDERS.length),
-  );
+  /** Deterministic on SSR + first client paint; rotate after mount only (avoids hydration mismatch). */
+  const [phIndex, setPhIndex] = useState(0);
+  useEffect(() => {
+    setPhIndex(Math.floor(Math.random() * PLACEHOLDERS.length));
+  }, []);
 
   useEffect(() => {
     const el = textareaRef.current;

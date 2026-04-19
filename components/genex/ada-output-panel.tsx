@@ -1,7 +1,14 @@
 "use client";
 
-import type { ClipSectionMap } from "@/lib/clip-package";
-import { CLIP_SECTIONS } from "@/lib/clip-package";
+import type { JSX } from "react";
+import { useEffect, useRef } from "react";
+
+import type { ClipSectionMap, HookStrengthSignal } from "@/lib/clip-package";
+import {
+  CLIP_SECTIONS,
+  parseFormatTags,
+  parseHookStrengthSignal,
+} from "@/lib/clip-package";
 import type { GenerationContextV1 } from "@/lib/generation-context";
 import { cn } from "@/lib/utils";
 
@@ -39,6 +46,8 @@ export type AdaOutputPanelProps = {
   onTextVideoCreditsRemainingChange?: (remaining: number) => void;
   /** Single-column chat: wrap output as one assistant message (adaKit bubble chrome). */
   chatEmbedded?: boolean;
+  /** Fires once per generation when a high hook-strength signal is shown (parent may trackAha). */
+  onHookStrengthRead?: (signal: HookStrengthSignal) => void;
 };
 
 export function AdaOutputPanel({
@@ -57,9 +66,37 @@ export function AdaOutputPanel({
   variant = "default",
   onTextVideoCreditsRemainingChange,
   chatEmbedded = false,
-}: AdaOutputPanelProps) {
+  onHookStrengthRead,
+}: AdaOutputPanelProps): JSX.Element {
   const kit = variant === "adaKit";
   const showBody = streamedText.trim() || loading;
+
+  const hookSignal = parsedClipPackage.creator_signals
+    ? parseHookStrengthSignal(parsedClipPackage.creator_signals)
+    : null;
+
+  const tagsFromSignals = parsedClipPackage.creator_signals?.trim()
+    ? parseFormatTags(parsedClipPackage.creator_signals)
+    : [];
+  const derivedFormatTags =
+    tagsFromSignals.length > 0 ? tagsFromSignals : clipFormatTags;
+
+  const hookSignalFiredRef = useRef(false);
+  const prevGenerationIdRef = useRef<string | undefined>(generationId);
+
+  useEffect(() => {
+    if (prevGenerationIdRef.current !== generationId) {
+      hookSignalFiredRef.current = false;
+      prevGenerationIdRef.current = generationId;
+    }
+  }, [generationId]);
+
+  useEffect(() => {
+    if (loading || !hookSignal || hookSignal.level !== "high") return;
+    if (hookSignalFiredRef.current) return;
+    hookSignalFiredRef.current = true;
+    onHookStrengthRead?.(hookSignal);
+  }, [hookSignal, loading, onHookStrengthRead]);
 
   const regenClass = (embedded: boolean) =>
     cn(
@@ -185,7 +222,7 @@ export function AdaOutputPanel({
             >
               TikTok · Reels · Shorts
             </span>
-            {clipFormatTags.map((tag) => (
+            {derivedFormatTags.map((tag) => (
               <span
                 key={tag}
                 className={cn(
@@ -199,6 +236,74 @@ export function AdaOutputPanel({
               </span>
             ))}
           </div>
+
+          {!loading && hookSignal ? (
+            <div
+              className={cn(
+                "flex items-center gap-2 rounded-xl border px-3 py-2.5",
+                kit
+                  ? "border-white/12 bg-white/[0.05]"
+                  : "border-ada-border bg-ada-card",
+              )}
+            >
+              <div
+                className={cn(
+                  "h-2.5 w-2.5 shrink-0 rounded-full",
+                  hookSignal.level === "high" && "bg-[var(--ada-success)]",
+                  hookSignal.level === "medium" && "bg-[var(--ada-warning)]",
+                  hookSignal.level === "low" && "bg-[var(--ada-error)]",
+                )}
+                aria-hidden
+              />
+              <div className="min-w-0 flex-1">
+                <span
+                  className={cn(
+                    "text-xs font-semibold",
+                    hookSignal.level === "high" &&
+                      (kit ? "text-[color:color-mix(in_srgb,var(--ada-success)_88%,white)]" : "text-[var(--ada-success)]"),
+                    hookSignal.level === "medium" &&
+                      (kit
+                        ? "text-[color:color-mix(in_srgb,var(--ada-warning)_85%,white)]"
+                        : "text-[var(--ada-warning)]"),
+                    hookSignal.level === "low" &&
+                      (kit
+                        ? "text-[color:color-mix(in_srgb,var(--ada-error)_85%,white)]"
+                        : "text-[var(--ada-error)]"),
+                  )}
+                >
+                  {hookSignal.level === "high"
+                    ? "Strong hook"
+                    : hookSignal.level === "medium"
+                      ? "Decent hook"
+                      : "Weak hook — regenerate"}
+                </span>
+                {hookSignal.reason ? (
+                  <span
+                    className={cn(
+                      "ml-1.5 text-xs",
+                      kit ? "text-white/50" : "text-ada-secondary",
+                    )}
+                  >
+                    {hookSignal.reason}
+                  </span>
+                ) : null}
+              </div>
+              {hookSignal.level === "low" && canRegenerate ? (
+                <button
+                  type="button"
+                  onClick={onRegenerate}
+                  className={cn(
+                    "shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors",
+                    kit
+                      ? "bg-white/10 text-white/80 hover:bg-white/20"
+                      : "border border-ada-border text-ada-secondary hover:border-ada-border-active hover:text-ada-primary",
+                  )}
+                >
+                  Try again
+                </button>
+              ) : null}
+            </div>
+          ) : null}
 
           <div
             className={cn(

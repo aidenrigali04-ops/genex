@@ -137,6 +137,7 @@ export function AdaTurn({
               "mt-1.5 text-right text-[10px]",
               kit ? "text-white/45" : "text-[var(--ada-text-disabled)]",
             )}
+            suppressHydrationWarning
           >
             {formatRelativeTime(turn.timestamp)}
           </p>
