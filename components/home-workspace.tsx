@@ -64,6 +64,10 @@ import {
   type FigmaMainNavId,
 } from "@/components/genex/ada-figma-dashboard";
 import { SettingsRail } from "@/components/genex/settings-rail";
+import {
+  AdaUpgradeModal,
+  type UpgradeTrigger,
+} from "@/components/genex/ada-upgrade-modal";
 import { AdaVideoWorkspace } from "@/components/genex/ada-video-workspace";
 import type { GenerationContextV1 } from "@/lib/generation-context";
 import { isGenerationContextV1 } from "@/lib/generation-context";
@@ -132,6 +136,9 @@ export function HomeWorkspace({
   const [signInOpen, setSignInOpen] = useState(false);
   const [guestSignupGateOpen, setGuestSignupGateOpen] = useState(false);
   const [buyOpen, setBuyOpen] = useState(false);
+  const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
+  const [upgradeTrigger, setUpgradeTrigger] =
+    useState<UpgradeTrigger>("manual");
   const [clipSettingsOpen, setClipSettingsOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [workspaceTab, setWorkspaceTab] = useState<"video" | "clip">("video");
@@ -909,6 +916,11 @@ export function HomeWorkspace({
     });
   }, [router]);
 
+  const openUpgrade = useCallback((trigger: UpgradeTrigger) => {
+    setUpgradeTrigger(trigger);
+    setUpgradeModalOpen(true);
+  }, []);
+
   const openWorkspaceSettings = useCallback(() => {
     if (workspaceTab === "clip") {
       setClipSettingsOpen(true);
@@ -933,7 +945,7 @@ export function HomeWorkspace({
           <AdaFigmaSidebarNav
             activeMain={figmaActiveMain}
             onSelectMain={handleFigmaMainNav}
-            onUpgrade={() => setBuyOpen(true)}
+            onUpgrade={() => openUpgrade("manual")}
             onSettings={openWorkspaceSettings}
             onAccount={handleFigmaAccount}
             recentSection={figmaRecentSection}
@@ -957,7 +969,7 @@ export function HomeWorkspace({
                 setMobileNavOpen(false);
               }}
               onUpgrade={() => {
-                setBuyOpen(true);
+                openUpgrade("manual");
                 setMobileNavOpen(false);
               }}
               onSettings={() => {
@@ -1016,6 +1028,7 @@ export function HomeWorkspace({
                     if (!creditsUnlimited) setCreditsRemaining(n);
                   }}
                   onJobFinished={onVideoJobFinished}
+                  onUpgrade={() => setBuyOpen(true)}
                   variant="adaKit"
                 />
               </div>
@@ -1176,7 +1189,7 @@ export function HomeWorkspace({
                       setClipSettingsOpen(false);
                     }}
                     onUpgrade={() => {
-                      setBuyOpen(true);
+                      openUpgrade("manual");
                       setClipSettingsOpen(false);
                     }}
                     onSignIn={() => setSignInOpen(true)}
@@ -1230,6 +1243,14 @@ export function HomeWorkspace({
         creditsUnlimited={creditsUnlimited}
       />
 
+      <AdaUpgradeModal
+        open={upgradeModalOpen}
+        onClose={() => setUpgradeModalOpen(false)}
+        creditsRemaining={creditsRemaining}
+        creditsUnlimited={creditsUnlimited}
+        trigger={upgradeTrigger}
+        variant="adaKit"
+      />
     </>
   );
 }
