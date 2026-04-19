@@ -6,7 +6,6 @@ import {
   AlertCircle,
   ArrowUp,
   Bird,
-  Check,
   ChevronLeft,
   ChevronRight,
   Clapperboard,
@@ -14,14 +13,20 @@ import {
   Copy,
   Download,
   Info,
+  Link2,
   Loader2,
   Menu,
+  MessageSquare,
   Mic,
   Paperclip,
   Pause,
   Play,
+  RefreshCw,
   Scissors,
   Sparkles,
+  ThumbsDown,
+  ThumbsUp,
+  User,
   Video,
   Zap,
 } from "lucide-react";
@@ -524,11 +529,80 @@ function AdaVideoControlDock({
   );
 }
 
-type VideoClipCardProps = { job: VideoJob };
+function UserPromptBubble({ text }: { text: string }): JSX.Element {
+  return (
+    <div className="flex w-full flex-col items-end">
+      <div className="flex max-w-full items-end gap-3">
+        <div className="max-w-[min(100%,560px)] rounded-tl-[20px] rounded-tr-[4px] rounded-br-[20px] rounded-bl-[20px] border border-white/24 bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] p-4 shadow-[0_16px_24px_rgba(136,1,220,0.16)]">
+          <div className="mb-3 flex items-center gap-2">
+            <MessageSquare className="size-4 shrink-0 text-white" aria-hidden />
+            <span className="text-[14px] font-normal leading-5 tracking-[0.14px] text-white">Message</span>
+          </div>
+          <p className="text-[14px] font-normal leading-5 tracking-[0.14px] text-white">{text}</p>
+        </div>
+        <div
+          className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[#CCC1F0] text-[#4A3D6D]"
+          aria-hidden
+        >
+          <User className="size-5" aria-hidden />
+        </div>
+      </div>
+    </div>
+  );
+}
 
-function VideoClipCard({ job }: VideoClipCardProps): JSX.Element {
+function GeneratingStatusPill({
+  startedAt,
+  onCancel,
+}: {
+  startedAt: string;
+  onCancel: () => void;
+}): JSX.Element {
+  return (
+    <div className="flex w-full flex-col items-center gap-3">
+      <div
+        className="inline-flex items-center gap-2 rounded-xl border border-white/64 px-3 py-2 text-[14px] font-normal leading-5 text-white"
+        role="status"
+      >
+        <Loader2 className="size-4 shrink-0 animate-spin text-white" aria-hidden />
+        <span>Generating...</span>
+        <ElapsedTimer startedAt={startedAt} />
+      </div>
+      <button
+        type="button"
+        onClick={() => void onCancel()}
+        className="text-[12px] text-white/50 transition-colors hover:text-red-400"
+        aria-label="Cancel video generation"
+      >
+        Cancel
+      </button>
+    </div>
+  );
+}
+
+function adaClipResponseBody(job: VideoJob): string {
+  const st = job.status;
+  if (st === "complete" && job.output_url) {
+    return "I've clipped your video from that prompt. Preview it below and download when you're ready!";
+  }
+  if (st === "failed") {
+    return job.error_message?.trim() || "Generation didn't finish.";
+  }
+  if (st === "cancelled") {
+    return "This clip generation was cancelled.";
+  }
+  return STATUS_MAP[st]?.label ?? "Working on your clip…";
+}
+
+type AdaVideoClipResponseCardProps = {
+  job: VideoJob;
+  onRegenerate: (script: string) => void;
+};
+
+function AdaVideoClipResponseCard({ job, onRegenerate }: AdaVideoClipResponseCardProps): JSX.Element {
   const [playing, setPlaying] = useState(false);
   const [hovered, setHovered] = useState(false);
+  const [thumb, setThumb] = useState<"up" | "down" | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const st = job.status;
   const complete = st === "complete" && !!job.output_url;
@@ -551,142 +625,182 @@ function VideoClipCard({ job }: VideoClipCardProps): JSX.Element {
   };
 
   return (
-    <div
-      className="group flex flex-col overflow-hidden rounded-2xl border border-white/12 bg-white/8 transition-all duration-200 hover:border-white/24 hover:bg-white/12"
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-    >
-      <div className="relative aspect-[9/16] w-full overflow-hidden bg-[#180532]">
-        {complete ? (
-          <>
-            <video
-              ref={videoRef}
-              src={job.output_url!}
-              className="h-full w-full object-cover"
-              preload="metadata"
-              muted
-              playsInline
-              loop
-              onEnded={() => setPlaying(false)}
-              onPause={() => setPlaying(false)}
-              onPlay={() => setPlaying(true)}
-              aria-label="Video clip preview"
-            />
-            <button
-              type="button"
-              onClick={handlePlayToggle}
-              className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors hover:bg-black/25"
-              aria-label={playing ? "Pause clip" : "Play clip"}
-            >
-              <div
-                className={cn(
-                  "flex h-12 w-12 items-center justify-center rounded-full bg-white/90 shadow-lg transition-all duration-200",
-                  playing || hovered ? "scale-100 opacity-100" : "scale-90 opacity-0 md:group-hover:scale-100 md:group-hover:opacity-100",
-                )}
-              >
-                {playing ? (
-                  <Pause className="h-5 w-5 text-[#7B5CFA]" aria-hidden />
-                ) : (
-                  <Play className="ml-0.5 h-5 w-5 text-[#7B5CFA]" aria-hidden />
-                )}
-              </div>
-            </button>
-            <div className="absolute bottom-2 right-2 rounded-md bg-black/60 px-1.5 py-0.5 text-[11px] font-medium text-white backdrop-blur-sm">
-              0:45
-            </div>
-            <div className="absolute left-2 top-2 flex items-center gap-1 rounded-full bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] px-2 py-0.5 text-[11px] font-semibold text-white shadow-md">
-              <Zap className="h-3 w-3" aria-hidden />
-              94%
-            </div>
-          </>
-        ) : st === "failed" || st === "cancelled" ? (
-          <div className="flex h-full items-center justify-center">
-            <div className="flex flex-col items-center gap-2 text-center">
-              <AlertCircle className="h-8 w-8 text-white/30" aria-hidden />
-              <p className="text-[12px] capitalize text-white/40">{st}</p>
-            </div>
-          </div>
-        ) : (
-          <div className="flex h-full flex-col items-center justify-center gap-3 bg-linear-to-b from-[#180532] to-[#0A050F]">
-            <div className="relative">
-              <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/10 border-t-[#D31CD7]" />
-              <div className="absolute inset-0 flex items-center justify-center">
-                <Video className="h-4 w-4 text-white/40" aria-hidden />
-              </div>
-            </div>
-            <div className="flex items-center gap-1.5">
-              {STEP_HINTS.map((hint) => {
-                const hIdx = stepOrderIndex(hint.status);
-                const done = statusIdx >= 0 && hIdx >= 0 && hIdx < statusIdx;
-                const active = hint.status === st;
-                return (
-                  <div
-                    key={hint.status}
-                    className={cn(
-                      "h-1.5 w-1.5 rounded-full transition-all",
-                      done ? "bg-[#D31CD7]" : active ? "animate-pulse bg-[#8800DC]" : "bg-white/20",
-                    )}
-                  />
-                );
-              })}
-            </div>
-            <p className="text-[12px] font-medium text-white/60">
-              {STATUS_MAP[st]?.label ?? "Processing…"}
-            </p>
-          </div>
-        )}
+    <div className="flex w-full max-w-[600px] items-end gap-3">
+      <div
+        className="flex size-10 shrink-0 items-center justify-center rounded-[32px] bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] shadow-[0_0_20px_rgba(203,45,206,0.24)]"
+        aria-hidden
+      >
+        <Bird className="size-[22px] rotate-[15deg] text-white" aria-hidden />
       </div>
-
-      <div className="flex flex-col gap-2 p-3">
-        <p className="line-clamp-2 text-[13px] font-medium leading-[20px] tracking-[0.13px] text-white/80">
-          {job.script || "Processing your clip…"}
+      <div
+        className="min-w-0 flex-1 rounded-tl-[20px] rounded-tr-[20px] rounded-br-[20px] rounded-bl-[4px] border border-white/24 bg-white/8 p-4 shadow-[0_12px_24px_rgba(11,6,16,0.24)]"
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+      >
+        <div className="mb-3 flex items-center gap-2">
+          <Video className="size-4 shrink-0 text-[#C717D8]" aria-hidden />
+          <span className="text-[14px] font-medium leading-[18px] tracking-[0.28px] text-[#C717D8]">Video</span>
+        </div>
+        <p className="mb-3 text-[14px] font-normal leading-5 tracking-[0.14px] text-white">
+          {adaClipResponseBody(job)}
         </p>
 
-        <div className="flex items-center justify-between">
-          <span
-            className={cn(
-              "rounded-full px-2 py-0.5 text-[11px] font-medium capitalize",
-              st === "complete"
-                ? "bg-emerald-500/15 text-emerald-400"
-                : st === "failed"
-                  ? "bg-red-500/15 text-red-400"
-                  : st === "cancelled"
-                    ? "bg-white/10 text-white/40"
-                    : "bg-[#D31CD7]/15 text-[#D31CD7]",
+        <div className="relative mx-auto mb-4 w-full max-w-[504px] overflow-hidden rounded-lg bg-[#180532]">
+          <div className="relative aspect-[9/16] w-full">
+            {complete ? (
+              <>
+                <video
+                  ref={videoRef}
+                  src={job.output_url!}
+                  className="h-full w-full object-cover"
+                  preload="metadata"
+                  muted
+                  playsInline
+                  loop
+                  onEnded={() => setPlaying(false)}
+                  onPause={() => setPlaying(false)}
+                  onPlay={() => setPlaying(true)}
+                  aria-label="Video clip preview"
+                />
+                <button
+                  type="button"
+                  onClick={handlePlayToggle}
+                  className="group/v absolute inset-0 flex items-center justify-center bg-black/0 transition-colors hover:bg-black/25"
+                  aria-label={playing ? "Pause clip" : "Play clip"}
+                >
+                  <div
+                    className={cn(
+                      "flex h-12 w-12 items-center justify-center rounded-full bg-white/90 shadow-lg transition-all duration-200",
+                      playing || hovered ? "scale-100 opacity-100" : "scale-90 opacity-0 md:group-hover/v:scale-100 md:group-hover/v:opacity-100",
+                    )}
+                  >
+                    {playing ? (
+                      <Pause className="h-5 w-5 text-[#7B5CFA]" aria-hidden />
+                    ) : (
+                      <Play className="ml-0.5 h-5 w-5 text-[#7B5CFA]" aria-hidden />
+                    )}
+                  </div>
+                </button>
+                <div className="absolute bottom-2 right-2 rounded-md bg-black/60 px-1.5 py-0.5 text-[11px] font-medium text-white backdrop-blur-sm">
+                  0:45
+                </div>
+                <div className="absolute left-2 top-2 flex items-center gap-1 rounded-full bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] px-2 py-0.5 text-[11px] font-semibold text-white shadow-md">
+                  <Zap className="h-3 w-3" aria-hidden />
+                  94%
+                </div>
+              </>
+            ) : st === "failed" || st === "cancelled" ? (
+              <div className="flex min-h-[200px] flex-col items-center justify-center gap-2 p-6 text-center">
+                <AlertCircle className="h-8 w-8 text-white/30" aria-hidden />
+                <p className="text-[12px] capitalize text-white/50">{st}</p>
+                {st === "failed" ? (
+                  <p className="text-[11px] text-white/40">No credits were charged.</p>
+                ) : null}
+              </div>
+            ) : (
+              <div className="flex min-h-[220px] flex-col items-center justify-center gap-3 bg-linear-to-b from-[#180532] to-[#0A050F] py-8">
+                <div className="relative">
+                  <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/10 border-t-[#D31CD7]" />
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <Video className="h-4 w-4 text-white/40" aria-hidden />
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {STEP_HINTS.map((hint) => {
+                    const hIdx = stepOrderIndex(hint.status);
+                    const done = statusIdx >= 0 && hIdx >= 0 && hIdx < statusIdx;
+                    const active = hint.status === st;
+                    return (
+                      <div
+                        key={hint.status}
+                        className={cn(
+                          "h-1.5 w-1.5 rounded-full transition-all",
+                          done ? "bg-[#D31CD7]" : active ? "animate-pulse bg-[#8800DC]" : "bg-white/20",
+                        )}
+                      />
+                    );
+                  })}
+                </div>
+                <p className="text-[12px] font-medium text-white/60">
+                  {STATUS_MAP[st]?.label ?? "Processing…"}
+                </p>
+              </div>
             )}
-          >
-            {st}
-          </span>
-          <span className="text-[11px] text-white/40" suppressHydrationWarning>
-            {relativeFromNow(job.created_at)}
-          </span>
+          </div>
         </div>
 
-        {complete ? (
-          <div className="flex gap-2 pt-1">
-            <a
-              href={job.output_url!}
-              download
-              target="_blank"
-              rel="noreferrer"
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-[32px] border border-white/20 py-1.5 text-[12px] font-medium text-white/70 transition-colors hover:border-white/40 hover:text-white"
-              aria-label="Download this clip"
-            >
-              <Download className="h-3.5 w-3.5" aria-hidden />
-              Download
-            </a>
-            <button
-              type="button"
-              onClick={handleCopyLink}
-              className="flex items-center justify-center rounded-[32px] border border-white/20 px-3 py-1.5 text-[12px] font-medium text-white/70 transition-colors hover:border-white/40 hover:text-white"
-              aria-label="Copy video link"
-            >
-              <Copy className="h-3.5 w-3.5" aria-hidden />
-            </button>
-          </div>
-        ) : st === "failed" ? (
-          <p className="text-[11px] text-white/30">No credits were charged.</p>
-        ) : null}
+        <div className="flex flex-wrap items-center gap-4 border-t border-white/10 pt-3">
+          <button
+            type="button"
+            onClick={() => setThumb((t) => (t === "up" ? null : "up"))}
+            className={cn(
+              "rounded-xl p-1.5 text-white/70 transition-colors hover:bg-white/10 hover:text-white",
+              thumb === "up" && "text-[#D31CD7]",
+            )}
+            aria-label="Thumbs up"
+            aria-pressed={thumb === "up"}
+          >
+            <ThumbsUp className="size-3.5" aria-hidden />
+          </button>
+          <button
+            type="button"
+            onClick={() => setThumb((t) => (t === "down" ? null : "down"))}
+            className={cn(
+              "rounded-xl p-1.5 text-white/70 transition-colors hover:bg-white/10 hover:text-white",
+              thumb === "down" && "text-[#D31CD7]",
+            )}
+            aria-label="Thumbs down"
+            aria-pressed={thumb === "down"}
+          >
+            <ThumbsDown className="size-3.5" aria-hidden />
+          </button>
+          {complete ? (
+            <>
+              <a
+                href={job.output_url!}
+                download
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-1.5 rounded-xl p-1.5 text-[14px] font-normal text-white transition-colors hover:bg-white/10"
+                aria-label="Download this clip"
+              >
+                <Download className="size-3.5" aria-hidden />
+                Download
+              </a>
+              <button
+                type="button"
+                onClick={() => onRegenerate(job.script)}
+                className="flex items-center gap-1.5 rounded-xl p-1.5 text-[14px] font-normal text-white transition-colors hover:bg-white/10"
+                aria-label="Regenerate clip with same prompt"
+              >
+                <RefreshCw className="size-3.5" aria-hidden />
+                Regenerate
+              </button>
+              <button
+                type="button"
+                disabled
+                className="flex cursor-not-allowed items-center gap-1.5 rounded-xl p-1.5 text-[14px] font-normal text-white/35"
+                aria-label="Customize (coming soon)"
+              >
+                <Link2 className="size-3.5" aria-hidden />
+                Customize
+              </button>
+              <button
+                type="button"
+                onClick={handleCopyLink}
+                className="ml-auto flex items-center gap-1.5 rounded-xl p-1.5 text-[14px] font-normal text-white/70 transition-colors hover:bg-white/10 hover:text-white md:ml-0"
+                aria-label="Copy video link"
+              >
+                <Copy className="size-3.5" aria-hidden />
+                Copy link
+              </button>
+            </>
+          ) : null}
+        </div>
+
+        <p className="mt-2 text-[11px] text-white/40" suppressHydrationWarning>
+          {relativeFromNow(job.created_at)}
+        </p>
       </div>
     </div>
   );
@@ -862,8 +976,14 @@ export function AdaVideoWorkspace({
     void loadHistory();
   }, [activeJob, loadHistory, stopPolling]);
 
-  const handleGenerate = async (): Promise<void> => {
-    const input = inputMode === "url" ? urlValue.trim() : textValue.trim();
+  const handleGenerate = async (scriptOverride?: string): Promise<void> => {
+    const trimmedOverride = scriptOverride?.trim() ?? "";
+    const input =
+      trimmedOverride.length > 0
+        ? trimmedOverride
+        : inputMode === "url"
+          ? urlValue.trim()
+          : textValue.trim();
     setSubmitError(null);
     setActiveTerminalNote(null);
     if (!userId) {
@@ -954,12 +1074,17 @@ export function AdaVideoWorkspace({
   const statusKey = activeJobData?.status ?? "queued";
   const statusInfo = STATUS_MAP[statusKey] ?? STATUS_MAP.queued;
   const progressPct = statusInfo.pct;
-  const progressHint =
-    statusKey === "fetching" && activeJobData?.error_message?.trim()
-      ? activeJobData.error_message.trim()
-      : null;
 
-  const statusIdx = stepOrderIndex(statusKey);
+  const transcriptJobs = useMemo(
+    () =>
+      [...jobHistory]
+        .filter((j) => (activeJob ? j.id !== activeJob : true))
+        .sort(
+          (a, b) =>
+            new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+        ),
+    [jobHistory, activeJob],
+  );
 
   const emptyStateA =
     !activeJob &&
@@ -986,7 +1111,7 @@ export function AdaVideoWorkspace({
     onUrlChange: setUrlValue,
     onTextChange: setTextValue,
     onSubmit: () => {
-      void handleGenerate();
+      void handleGenerate(undefined);
     },
     isSubmitting,
     activeJob,
@@ -1231,7 +1356,7 @@ export function AdaVideoWorkspace({
             </div>
           ) : (
             <>
-              <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-6 py-6 sm:px-[120px] sm:py-5">
+              <div className="flex min-h-0 flex-1 flex-col gap-10 overflow-y-auto px-6 py-5 sm:px-[140px]">
                 {emptyStateA ? (
                   <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-5">
                     <div className="relative mx-auto h-[200px] w-[180px] shrink-0">
@@ -1322,72 +1447,29 @@ export function AdaVideoWorkspace({
                     </div>
                   </div>
                 ) : (
-                  <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 pb-4">
+                  <div className="mx-auto flex w-full max-w-[720px] flex-col gap-10 pb-4">
+                    {transcriptJobs.map((job) => (
+                      <Fragment key={job.id}>
+                        <UserPromptBubble text={job.script} />
+                        <AdaVideoClipResponseCard
+                          job={job}
+                          onRegenerate={(script) => {
+                            setInputMode("text");
+                            setTextValue(script);
+                            void handleGenerate(script);
+                          }}
+                        />
+                      </Fragment>
+                    ))}
+
                     {activeJob && activeJobData ? (
-                      <div className="overflow-hidden rounded-2xl border border-[#D31CD7]/30 bg-[linear-gradient(135deg,rgba(211,28,215,0.08)_0%,rgba(136,0,220,0.06)_100%)] p-5">
-                        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <div className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-[#D31CD7]" />
-                            <span className="text-[14px] font-medium leading-[24px] text-white">
-                              {statusInfo.label}
-                            </span>
-                            <ElapsedTimer startedAt={activeJobData.created_at} />
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => void handleCancel()}
-                            className="rounded-[32px] border border-white/20 px-3 py-1 text-[12px] text-white/50 transition-colors hover:border-red-500/40 hover:text-red-400"
-                            aria-label="Cancel video generation"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-
-                        <div className="mb-4 grid grid-cols-4 gap-2">
-                          {STEP_HINTS.map((hint, i) => {
-                            const hintIdx = stepOrderIndex(hint.status);
-                            const done = statusIdx >= 0 && hintIdx >= 0 && hintIdx < statusIdx;
-                            const active = hint.status === statusKey;
-                            return (
-                              <Fragment key={hint.status}>
-                                <div className="flex flex-col items-center gap-1.5 text-center">
-                                  <div
-                                    className={cn(
-                                      "flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-medium transition-all",
-                                      done
-                                        ? "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] text-white"
-                                        : active
-                                          ? "animate-pulse border-2 border-[#D31CD7] text-[#D31CD7]"
-                                          : "border border-white/20 text-white/30",
-                                    )}
-                                  >
-                                    {done ? <Check className="h-3.5 w-3.5" aria-hidden /> : i + 1}
-                                  </div>
-                                  <span
-                                    className={cn(
-                                      "text-center text-[10px] font-medium leading-[16px] tracking-[0.1px]",
-                                      done ? "text-[#D31CD7]" : active ? "text-white/80" : "text-white/25",
-                                    )}
-                                  >
-                                    {hint.label}
-                                  </span>
-                                </div>
-                              </Fragment>
-                            );
-                          })}
-                        </div>
-
-                        <div className="h-1 w-full overflow-hidden rounded-full bg-white/10">
-                          <div
-                            className="h-full rounded-full bg-[linear-gradient(90deg,#D31CD7_0%,#8800DC_100%)] transition-all duration-700 ease-out"
-                            style={{ width: `${progressPct}%` }}
-                          />
-                        </div>
-
-                        {progressHint ? (
-                          <p className="mt-2 text-[11px] italic text-white/40">{progressHint}</p>
-                        ) : null}
-                      </div>
+                      <>
+                        <UserPromptBubble text={activeJobData.script} />
+                        <GeneratingStatusPill
+                          startedAt={activeJobData.created_at}
+                          onCancel={handleCancel}
+                        />
+                      </>
                     ) : null}
 
                     {activeTerminalNote && !activeJob ? (
@@ -1401,14 +1483,6 @@ export function AdaVideoWorkspace({
                         ) : null}
                       </div>
                     ) : null}
-
-                    <p className="text-[12px] font-semibold uppercase tracking-[0.12em] text-white/40">Your clips</p>
-
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                      {jobHistory.map((job) => (
-                        <VideoClipCard key={job.id} job={job} />
-                      ))}
-                    </div>
                   </div>
                 )}
               </div>
