@@ -873,7 +873,7 @@ export function HomeWorkspace({
   const recentDropdown = (
     <DropdownMenu>
       <DropdownMenuTrigger
-        className="inline-flex items-center gap-2 rounded-[32px] border border-white/48 px-3 py-2 text-sm font-medium tracking-[0.14px] text-white transition-colors hover:bg-white/10 font-[family-name:var(--font-instrument-sans)]"
+        className="inline-flex items-center gap-2 rounded-[32px] border border-white/48 py-2 pl-3 pr-4 text-sm font-medium tracking-[0.14px] text-white transition-colors hover:bg-white/10 font-[family-name:var(--font-instrument-sans)]"
       >
         <Clock className="size-4 shrink-0 text-white" aria-hidden />
         Recent
@@ -931,7 +931,7 @@ export function HomeWorkspace({
 
   const hubTitle =
     workspaceTab === "video"
-      ? "Make a Video"
+      ? "Clip a Video"
       : showClipHub
         ? "New Search"
         : "Clip package";
