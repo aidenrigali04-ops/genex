@@ -16,7 +16,6 @@ import {
   Link2,
   Loader2,
   Menu,
-  MessageSquare,
   Mic,
   Paperclip,
   Pause,
@@ -305,7 +304,7 @@ function AdaVideoHeader({
   onMenuClick,
 }: AdaVideoHeaderProps): JSX.Element {
   return (
-    <header className="flex h-[80px] shrink-0 items-center justify-between border-b border-white px-6 py-4">
+    <header className="flex h-[72px] shrink-0 items-center justify-between border-b border-white/[0.06] px-5 py-3">
       <div className="flex min-w-0 items-center gap-3">
         {onMenuClick ? (
           <button
@@ -350,6 +349,10 @@ type AdaVideoInputBarProps = {
   userId: string | null;
   onSurpriseMe: () => void;
   onUpgrade?: () => void;
+  /** Composer placeholder (ChatGPT-style follow-up copy). */
+  composerPlaceholder?: string;
+  /** After preflight staging, allow short follow-up (e.g. "skip"). */
+  allowShortComposer?: boolean;
 };
 
 function AdaVideoInputBar({
@@ -367,13 +370,21 @@ function AdaVideoInputBar({
   userId,
   onSurpriseMe,
   onUpgrade,
+  composerPlaceholder = "Message Ada…",
+  allowShortComposer = false,
 }: AdaVideoInputBarProps): JSX.Element {
+  const textOk =
+    inputMode === "url"
+      ? true
+      : allowShortComposer
+        ? textValue.trim().length >= 2
+        : textValue.trim().length >= SCRIPT_MIN_LEN;
   const disabled =
     !userId ||
     isSubmitting ||
     activeJob !== null ||
     !creditsOk ||
-    (inputMode === "url" ? !urlValue.trim() : textValue.trim().length < SCRIPT_MIN_LEN);
+    (inputMode === "url" ? !urlValue.trim() : !textOk);
 
   return (
     <div className="w-full">
@@ -395,7 +406,7 @@ function AdaVideoInputBar({
                 ? onUrlChange(e.target.value)
                 : onTextChange(e.target.value)
             }
-            placeholder="Message Ada..."
+            placeholder={composerPlaceholder}
             className="min-w-0 flex-1 bg-transparent text-[14px] font-normal leading-[20px] tracking-[0.14px] text-white outline-none placeholder:text-white/64"
           />
           <div className="flex shrink-0 items-center gap-2">
@@ -470,6 +481,8 @@ type AdaVideoControlDockProps = {
   inputMode: "url" | "text";
   onInputModeChange: (m: "url" | "text") => void;
   inputBarProps: AdaVideoInputBarProps;
+  /** Hide voice row until user has started the chat (preflight or any job). */
+  showVoiceRow?: boolean;
 };
 
 function AdaVideoControlDock({
@@ -478,36 +491,39 @@ function AdaVideoControlDock({
   inputMode,
   onInputModeChange,
   inputBarProps,
+  showVoiceRow = true,
 }: AdaVideoControlDockProps): JSX.Element {
   return (
-    <div className="shrink-0 border-t border-white/10 bg-[#0A050F]/95 px-5 pb-5 pt-4 backdrop-blur-md sm:px-[100px]">
-      <p className="mb-2 text-[12px] font-normal uppercase leading-[24px] tracking-[0.12px] text-white/50">
-        Voice
-      </p>
-      <div className="-mx-1 mb-4 flex gap-2 overflow-x-auto px-1 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        {VOICE_OPTIONS.map((v) => {
-          const sel = selectedVoice === v.id;
-          return (
-            <button
-              key={v.id}
-              type="button"
-              onClick={() => onVoiceChange(v.id)}
-              className={cn(
-                "shrink-0 rounded-[32px] border px-3 py-2 text-left transition-all",
-                sel
-                  ? "border-[#D31CD7]/60 bg-[linear-gradient(5deg,rgba(211,28,215,0.15)_0%,rgba(136,0,220,0.12)_100%)] shadow-[0_0_16px_rgba(203,45,206,0.15)]"
-                  : "border-white/12 hover:border-white/24 hover:bg-white/6",
-              )}
-            >
-              <p className={cn("text-[13px] font-medium", sel ? "text-white" : "text-white/70")}>{v.label}</p>
-              <p className={cn("max-w-[140px] truncate text-[11px]", sel ? "text-white/60" : "text-white/30")}>
-                {v.desc}
-              </p>
-            </button>
-          );
-        })}
-      </div>
-      <div className="mb-3 flex flex-wrap justify-center gap-2">
+    <div className="shrink-0 border-t border-white/[0.06] bg-[#0a0a0c]/90 px-4 pb-4 pt-3 backdrop-blur-md sm:px-8 md:px-12">
+      {showVoiceRow ? (
+        <>
+          <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wider text-white/40">
+            Voice
+          </p>
+          <div className="-mx-1 mb-3 flex gap-1.5 overflow-x-auto px-1 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {VOICE_OPTIONS.map((v) => {
+              const sel = selectedVoice === v.id;
+              return (
+                <button
+                  key={v.id}
+                  type="button"
+                  onClick={() => onVoiceChange(v.id)}
+                  className={cn(
+                    "shrink-0 rounded-2xl border px-3 py-1.5 text-left transition-all",
+                    sel
+                      ? "border-white/20 bg-white/[0.08] text-white shadow-sm"
+                      : "border-transparent bg-white/[0.03] text-white/55 hover:bg-white/[0.06] hover:text-white/80",
+                  )}
+                >
+                  <p className="text-[12px] font-medium">{v.label}</p>
+                  <p className="max-w-[132px] truncate text-[10px] text-white/40">{v.desc}</p>
+                </button>
+              );
+            })}
+          </div>
+        </>
+      ) : null}
+      <div className="mb-2 flex flex-wrap justify-center gap-2">
         {(["url", "text"] as const).map((mode) => (
           <button
             key={mode}
@@ -532,20 +548,36 @@ function AdaVideoControlDock({
 function UserPromptBubble({ text }: { text: string }): JSX.Element {
   return (
     <div className="flex w-full flex-col items-end">
-      <div className="flex max-w-full items-end gap-3">
-        <div className="max-w-[min(100%,560px)] rounded-tl-[20px] rounded-tr-[4px] rounded-br-[20px] rounded-bl-[20px] border border-white/24 bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] p-4 shadow-[0_16px_24px_rgba(136,1,220,0.16)]">
-          <div className="mb-3 flex items-center gap-2">
-            <MessageSquare className="size-4 shrink-0 text-white" aria-hidden />
-            <span className="text-[14px] font-normal leading-5 tracking-[0.14px] text-white">Message</span>
-          </div>
-          <p className="text-[14px] font-normal leading-5 tracking-[0.14px] text-white">{text}</p>
+      <div className="flex max-w-full items-end gap-2">
+        <div className="max-w-[min(100%,560px)] rounded-2xl rounded-tr-md border border-white/[0.08] bg-white/[0.07] px-3.5 py-2.5">
+          <p className="text-[13px] font-normal leading-relaxed text-white/95">{text}</p>
         </div>
         <div
-          className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[#CCC1F0] text-[#4A3D6D]"
+          className="flex size-8 shrink-0 items-center justify-center rounded-full bg-white/10 text-white/70"
           aria-hidden
         >
-          <User className="size-5" aria-hidden />
+          <User className="size-4" aria-hidden />
         </div>
+      </div>
+    </div>
+  );
+}
+
+function AdaAssistantRefineBubble(): JSX.Element {
+  return (
+    <div className="flex w-full max-w-[min(100%,640px)] items-start gap-2">
+      <div
+        className="flex size-8 shrink-0 items-center justify-center rounded-full bg-white/[0.08] text-white/80"
+        aria-hidden
+      >
+        <Bird className="size-4 rotate-[12deg]" aria-hidden />
+      </div>
+      <div className="min-w-0 rounded-2xl rounded-tl-md border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5">
+        <p className="text-[13px] font-medium leading-snug text-white/90">Quick refine</p>
+        <p className="mt-1 text-[12px] leading-relaxed text-white/55">
+          What vibe or platform should we lean into? (e.g. TikTok fast cuts, calm explainer, ad read.) Reply
+          below — or type <span className="font-medium text-white/70">skip</span> to use only your first message.
+        </p>
       </div>
     </div>
   );
@@ -625,27 +657,27 @@ function AdaVideoClipResponseCard({ job, onRegenerate }: AdaVideoClipResponseCar
   };
 
   return (
-    <div className="flex w-full max-w-[600px] items-end gap-3">
+    <div className="flex w-full max-w-[600px] items-end gap-2">
       <div
-        className="flex size-10 shrink-0 items-center justify-center rounded-[32px] bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] shadow-[0_0_20px_rgba(203,45,206,0.24)]"
+        className="flex size-8 shrink-0 items-center justify-center rounded-full bg-white/[0.08] text-white/85"
         aria-hidden
       >
-        <Bird className="size-[22px] rotate-[15deg] text-white" aria-hidden />
+        <Bird className="size-[18px] rotate-[12deg]" aria-hidden />
       </div>
       <div
-        className="min-w-0 flex-1 rounded-tl-[20px] rounded-tr-[20px] rounded-br-[20px] rounded-bl-[4px] border border-white/24 bg-white/8 p-4 shadow-[0_12px_24px_rgba(11,6,16,0.24)]"
+        className="min-w-0 flex-1 rounded-2xl rounded-bl-md border border-white/[0.08] bg-white/[0.05] p-3.5"
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
       >
-        <div className="mb-3 flex items-center gap-2">
-          <Video className="size-4 shrink-0 text-[#C717D8]" aria-hidden />
-          <span className="text-[14px] font-medium leading-[18px] tracking-[0.28px] text-[#C717D8]">Video</span>
+        <div className="mb-2 flex items-center gap-1.5">
+          <Video className="size-3.5 shrink-0 text-white/50" aria-hidden />
+          <span className="text-[12px] font-medium uppercase tracking-wide text-white/45">Video</span>
         </div>
-        <p className="mb-3 text-[14px] font-normal leading-5 tracking-[0.14px] text-white">
+        <p className="mb-3 text-[13px] font-normal leading-relaxed text-white/85">
           {adaClipResponseBody(job)}
         </p>
 
-        <div className="relative mx-auto mb-4 w-full max-w-[504px] overflow-hidden rounded-lg bg-[#180532]">
+        <div className="relative mx-auto mb-3 w-full max-w-[504px] overflow-hidden rounded-xl bg-black/30 ring-1 ring-white/[0.06]">
           <div className="relative aspect-[9/16] w-full">
             {complete ? (
               <>
@@ -698,7 +730,7 @@ function AdaVideoClipResponseCard({ job, onRegenerate }: AdaVideoClipResponseCar
                 ) : null}
               </div>
             ) : (
-              <div className="flex min-h-[220px] flex-col items-center justify-center gap-3 bg-linear-to-b from-[#180532] to-[#0A050F] py-8">
+              <div className="flex min-h-[200px] flex-col items-center justify-center gap-3 bg-black/20 py-8">
                 <div className="relative">
                   <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/10 border-t-[#D31CD7]" />
                   <div className="absolute inset-0 flex items-center justify-center">
@@ -729,7 +761,7 @@ function AdaVideoClipResponseCard({ job, onRegenerate }: AdaVideoClipResponseCar
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-4 border-t border-white/10 pt-3">
+        <div className="flex flex-wrap items-center gap-3 border-t border-white/[0.06] pt-2.5">
           <button
             type="button"
             onClick={() => setThumb((t) => (t === "up" ? null : "up"))}
@@ -835,6 +867,8 @@ export function AdaVideoWorkspace({
   );
   const [shellMenuOpen, setShellMenuOpen] = useState(false);
   const [recentOpen, setRecentOpen] = useState(false);
+  /** First “My idea” send stages script; second send merges follow-up (ChatGPT-style) then POSTs. */
+  const [preflightStagedScript, setPreflightStagedScript] = useState<string | null>(null);
 
   const activeJobDataRef = useRef<VideoJob | null>(null);
   activeJobDataRef.current = activeJobData;
@@ -877,6 +911,10 @@ export function AdaVideoWorkspace({
   useEffect(() => {
     void loadHistory();
   }, [loadHistory]);
+
+  useEffect(() => {
+    if (inputMode === "url") setPreflightStagedScript(null);
+  }, [inputMode]);
 
   const pollRef = useRef<number | null>(null);
 
@@ -978,20 +1016,57 @@ export function AdaVideoWorkspace({
 
   const handleGenerate = async (scriptOverride?: string): Promise<void> => {
     const trimmedOverride = scriptOverride?.trim() ?? "";
-    const input =
+    if (trimmedOverride) {
+      setPreflightStagedScript(null);
+    }
+
+    let payloadScript =
       trimmedOverride.length > 0
         ? trimmedOverride
         : inputMode === "url"
           ? urlValue.trim()
           : textValue.trim();
+
     setSubmitError(null);
     setActiveTerminalNote(null);
     if (!userId) {
       setSubmitError("Sign in to generate a video.");
       return;
     }
-    if (!input || isSubmitting) return;
-    if (input.length < SCRIPT_MIN_LEN) {
+    if (!payloadScript || isSubmitting) return;
+
+    const noJobsYet = jobHistory.length === 0 && !activeJob;
+    const wantPreflight =
+      kit &&
+      inputMode === "text" &&
+      trimmedOverride.length === 0 &&
+      noJobsYet;
+
+    if (wantPreflight && !preflightStagedScript) {
+      if (payloadScript.length < SCRIPT_MIN_LEN) {
+        setSubmitError(`Enter at least ${SCRIPT_MIN_LEN} characters.`);
+        return;
+      }
+      setPreflightStagedScript(payloadScript);
+      setTextValue("");
+      return;
+    }
+
+    if (wantPreflight && preflightStagedScript) {
+      const follow = payloadScript.trim();
+      if (follow.length < 2 && follow.toLowerCase() !== "skip") {
+        setSubmitError("Add a short note or type skip.");
+        return;
+      }
+      payloadScript =
+        follow.toLowerCase() === "skip"
+          ? preflightStagedScript
+          : `${preflightStagedScript}\n\n— ${follow}`;
+      setPreflightStagedScript(null);
+      setTextValue("");
+    }
+
+    if (payloadScript.length < SCRIPT_MIN_LEN) {
       setSubmitError(`Enter at least ${SCRIPT_MIN_LEN} characters.`);
       return;
     }
@@ -1003,7 +1078,7 @@ export function AdaVideoWorkspace({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
-        body: JSON.stringify({ script: input, voiceId: selectedVoice }),
+        body: JSON.stringify({ script: payloadScript, voiceId: selectedVoice }),
       });
       const json = (await res.json()) as {
         id?: string;
@@ -1037,7 +1112,7 @@ export function AdaVideoWorkspace({
       setActiveJob(id);
       const row: VideoJob = {
         id,
-        script: input,
+        script: payloadScript,
         status: json.status ?? "queued",
         output_url: null,
         error_message: null,
@@ -1057,6 +1132,7 @@ export function AdaVideoWorkspace({
   const handleSurpriseMe = useCallback((): void => {
     const pick = EXAMPLE_PROMPTS[Math.floor(Math.random() * EXAMPLE_PROMPTS.length)];
     if (!pick) return;
+    setPreflightStagedScript(null);
     setInputMode("text");
     setTextValue(pick.prompt);
   }, []);
@@ -1091,6 +1167,8 @@ export function AdaVideoWorkspace({
     jobHistory.length === 0 &&
     !loadingHistory;
 
+  const showEmptyHero = emptyStateA && !preflightStagedScript;
+
   const resultsStateB =
     activeJob !== null || jobHistory.length > 0;
 
@@ -1121,6 +1199,11 @@ export function AdaVideoWorkspace({
     userId,
     onSurpriseMe: handleSurpriseMe,
     onUpgrade,
+    composerPlaceholder:
+      preflightStagedScript && inputMode === "text"
+        ? "Add a detail or type skip…"
+        : "Message Ada…",
+    allowShortComposer: Boolean(preflightStagedScript && inputMode === "text"),
   };
 
   if (!kit) {
@@ -1262,44 +1345,10 @@ export function AdaVideoWorkspace({
   }
 
   return (
-    <div className="relative flex h-screen w-screen overflow-hidden bg-[#0A050F] font-[family-name:var(--font-instrument-sans)] text-white">
+    <div className="relative flex h-screen w-screen overflow-hidden bg-[#0c0c0e] font-[family-name:var(--font-instrument-sans)] text-white">
       <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
-        <div
-          className="absolute"
-          style={{
-            width: "1322px",
-            height: "797px",
-            left: "453px",
-            top: "-127px",
-            transform: "rotate(-13deg)",
-            background: "#180532",
-            filter: "blur(300px)",
-          }}
-        />
-        <div
-          className="absolute"
-          style={{
-            width: "2048px",
-            height: "1481px",
-            left: "2479px",
-            top: "950px",
-            transform: "rotate(148deg)",
-            background: "#300537",
-            filter: "blur(300px)",
-          }}
-        />
-        <div
-          className="absolute"
-          style={{
-            width: "3212px",
-            height: "1160px",
-            left: "-1159px",
-            top: "1236px",
-            transform: "rotate(-57deg)",
-            background: "#230639",
-            filter: "blur(300px)",
-          }}
-        />
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_85%_55%_at_50%_-15%,rgba(124,58,237,0.12),transparent_55%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_60%_40%_at_100%_80%,rgba(136,0,220,0.06),transparent_50%)]" />
       </div>
 
       {shellMenuOpen ? (
@@ -1356,9 +1405,9 @@ export function AdaVideoWorkspace({
             </div>
           ) : (
             <>
-              <div className="flex min-h-0 flex-1 flex-col gap-10 overflow-y-auto px-6 py-5 sm:px-[140px]">
-                {emptyStateA ? (
-                  <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-5">
+              <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-4 py-4 sm:px-8 md:px-12">
+                {showEmptyHero ? (
+                  <div className="flex min-h-0 flex-1 flex-col items-center justify-start gap-4 pt-8 sm:pt-12">
                     <div className="relative mx-auto h-[200px] w-[180px] shrink-0">
                       <div
                         className="pointer-events-none absolute left-0 top-0 h-[200px] w-[180px] scale-110 opacity-90 blur-[25px]"
@@ -1373,8 +1422,8 @@ export function AdaVideoWorkspace({
                       </div>
                     </div>
 
-                    <h2 className="max-w-3xl self-stretch text-center font-[family-name:var(--font-instrument-serif)] text-[36px] font-normal tracking-[0.36px] text-white">
-                      Hi, How can I help you today?
+                    <h2 className="max-w-2xl self-stretch text-center font-[family-name:var(--font-instrument-serif)] text-[28px] font-normal tracking-tight text-white/95 sm:text-[32px]">
+                      What should we clip or generate?
                     </h2>
 
                     <div className="relative w-full max-w-full overflow-hidden">
@@ -1446,8 +1495,13 @@ export function AdaVideoWorkspace({
                       </button>
                     </div>
                   </div>
+                ) : emptyStateA && preflightStagedScript ? (
+                  <div className="mx-auto flex w-full max-w-[640px] flex-col gap-4 pb-6 pt-4">
+                    <UserPromptBubble text={preflightStagedScript} />
+                    <AdaAssistantRefineBubble />
+                  </div>
                 ) : (
-                  <div className="mx-auto flex w-full max-w-[720px] flex-col gap-10 pb-4">
+                  <div className="mx-auto flex w-full max-w-[640px] flex-col gap-6 pb-4">
                     {transcriptJobs.map((job) => (
                       <Fragment key={job.id}>
                         <UserPromptBubble text={job.script} />
@@ -1493,6 +1547,7 @@ export function AdaVideoWorkspace({
                 inputMode={inputMode}
                 onInputModeChange={setInputMode}
                 inputBarProps={inputBarProps}
+                showVoiceRow={!showEmptyHero}
               />
             </>
           )}
