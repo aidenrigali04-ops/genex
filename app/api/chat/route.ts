@@ -148,6 +148,19 @@ TOP CLIP MOMENTS
   if (ctxBlock.trim()) {
     parts.push("", ctxBlock);
   }
+  const detectedPurpose = generationContext?.inferredClipPurpose?.trim();
+  const purposeRationale = generationContext?.inferredPurposeRationale?.trim();
+  if (detectedPurpose) {
+    parts.push(
+      "",
+      `Detected clip purpose: ${detectedPurpose}`,
+      ...(purposeRationale ? [`Rationale: ${purposeRationale}`] : []),
+      "Prioritize hooks, script angle, and CTA style that match this purpose.",
+      "If purpose is EDUCATE: lead with clarity. INSPIRE: lead with transformation.",
+      "ENTERTAIN: lead with personality. PROMOTE: lead with the offer hook.",
+      "GROW: lead with the follow/subscribe CTA. CONVERT: lead with the pain point.",
+    );
+  }
   if (creatorLines) {
     parts.push("", "Creator profile:", creatorLines);
     parts.push("Tailor ALL output to match this creator's voice and audience.");

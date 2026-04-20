@@ -70,6 +70,7 @@ export type AdaClipWorkspaceProps = {
     inferredClipPurpose?: string;
     inferredPurposeRationale?: string;
   };
+  onRefinementOpenTypedAnswer?: (fieldKey: string) => void;
   onExamplePrompt?: (prompt: string, mode: "text" | "url") => void;
   /** Refill composer from a completed turn (e.g. Remix). */
   onRemix?: (prompt: string) => void;
@@ -128,6 +129,7 @@ export function AdaClipWorkspace({
   refinementRemote,
   refinementPlanKey = "",
   refinementPrefillInference,
+  onRefinementOpenTypedAnswer,
   onExamplePrompt,
   onRemix,
   authUserId,
@@ -308,6 +310,7 @@ export function AdaClipWorkspace({
                 remoteRefinement={refinementRemote}
                 refinementPlanKey={refinementPlanKey}
                 prefillInference={refinementPrefillInference}
+                onOpenTypedAnswer={onRefinementOpenTypedAnswer}
                 onConfirm={onRefinementConfirm}
                 onCancel={onRefinementCancel}
               />

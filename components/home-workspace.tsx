@@ -39,7 +39,6 @@ import {
 } from "@/lib/clip-turn";
 import type { RemoteRefinementState } from "@/components/refinement-chat-panel";
 import { MAX_CLIP_SOURCE_CHARS } from "@/lib/clip-model-input";
-import type { RefinementInputMeta } from "@/lib/refinement-plan-schema";
 import type { RefinementStepDef } from "@/lib/refinement-steps";
 import {
   GUEST_LIFETIME_FREE_CREDITS,
@@ -348,22 +347,10 @@ export function HomeWorkspace({
   const runClipRefinementFetch = useCallback(
     async (signal: AbortSignal): Promise<{
       steps: RefinementStepDef[];
-      planSource: "llm" | "fallback";
+      planSource: "llm";
       detectedPurpose?: string;
       purposeRationale?: string;
     }> => {
-      const inputMeta: RefinementInputMeta = {
-        inputMode,
-        ...(inputMode === "url" ? { url: url.trim() } : {}),
-        ...(inputMode === "file" && uploadFile
-          ? {
-              fileName: uploadFile.name,
-              mimeType: uploadFile.type || undefined,
-              sizeBytes: uploadFile.size,
-            }
-          : {}),
-      };
-
       let excerpt = "";
       if (inputMode === "text") {
         excerpt = text.trim().slice(0, MAX_CLIP_SOURCE_CHARS);
@@ -408,15 +395,41 @@ export function HomeWorkspace({
         }
       }
 
-      const planRes = await fetch("/api/refinement-plan", {
+      let inputContent = "";
+      let refineInputMode: "url" | "text" = "text";
+      if (inputMode === "text") {
+        inputContent = text.trim().slice(0, 4000);
+        refineInputMode = "text";
+      } else if (inputMode === "url") {
+        refineInputMode = "url";
+        const u = url.trim();
+        inputContent = (excerpt.trim() || u).slice(0, 4000);
+      } else if (uploadFile) {
+        refineInputMode = "text";
+        inputContent = (
+          excerpt.trim() ||
+          `File: ${uploadFile.name} (${uploadFile.type || "unknown type"}), ${uploadFile.size} bytes`
+        ).slice(0, 4000);
+      }
+
+      const voicePayload =
+        user && voiceProfile
+          ? {
+              niche: voiceProfile.niche,
+              tone_preference: voiceProfile.tone_preference,
+              hook_style: voiceProfile.hook_style,
+            }
+          : null;
+
+      const planRes = await fetch("/api/refine-plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal,
         body: JSON.stringify({
-          kind: "text_generation",
+          inputContent,
+          inputMode: refineInputMode,
           platformIds: CLIP_PLATFORMS,
-          sourceExcerpt: excerpt,
-          inputMeta,
+          voiceProfile: voicePayload,
         }),
       });
 
@@ -426,30 +439,42 @@ export function HomeWorkspace({
       } catch {
         rawJson = null;
       }
-      const obj = rawJson as {
-        steps?: RefinementStepDef[];
-        planSource?: string;
-        detectedPurpose?: string;
-        purposeRationale?: string;
-        error?: string;
+      const payload = rawJson as {
+        data: {
+          steps: RefinementStepDef[];
+          detectedPurpose?: string;
+          purposeRationale?: string;
+        } | null;
+        error?: string | null;
       } | null;
 
-      if (!planRes.ok || !obj?.steps?.length) {
-        throw new Error(obj?.error ?? planRes.statusText ?? "Refinement plan failed");
+      const err =
+        typeof payload?.error === "string" && payload.error.trim()
+          ? payload.error.trim()
+          : !planRes.ok
+            ? planRes.statusText
+            : null;
+      if (err) {
+        throw new Error(err);
+      }
+      if (!payload?.data?.steps?.length) {
+        throw new Error("No refinement steps returned");
       }
 
       return {
-        steps: obj.steps,
-        planSource: obj.planSource === "llm" ? "llm" : "fallback",
+        steps: payload.data.steps,
+        planSource: "llm",
         detectedPurpose:
-          typeof obj.detectedPurpose === "string" ? obj.detectedPurpose : undefined,
+          typeof payload.data.detectedPurpose === "string"
+            ? payload.data.detectedPurpose
+            : undefined,
         purposeRationale:
-          typeof obj.purposeRationale === "string"
-            ? obj.purposeRationale
+          typeof payload.data.purposeRationale === "string"
+            ? payload.data.purposeRationale
             : undefined,
       };
     },
-    [inputMode, text, url, uploadFile],
+    [inputMode, text, url, uploadFile, user, voiceProfile],
   );
 
   const beginClipRefinement = useCallback(() => {
@@ -458,6 +483,16 @@ export function HomeWorkspace({
     setRefinementPlanInference(null);
     setRefinementOpen(true);
   }, []);
+
+  const handleRefinementOpenTypedAnswer = useCallback(
+    (fieldKey: string) => {
+      if (!user?.id) return;
+      void trackAha(supabase, user.id, "refine_open_answer_submitted", {
+        fieldKey,
+      });
+    },
+    [supabase, user?.id],
+  );
 
   /* Personalized refinement: sync remote step state + fetch plan (async in IIFE). */
   useEffect(() => {
@@ -481,11 +516,17 @@ export function HomeWorkspace({
         const out = await runClipRefinementFetch(ac.signal);
         if (ac.signal.aborted) return;
         setClipRefinementRemote({ phase: "ready", steps: out.steps });
-        if (
-          out.planSource === "llm" &&
-          typeof out.detectedPurpose === "string" &&
-          out.detectedPurpose.trim()
-        ) {
+        if (user?.id) {
+          void trackAha(supabase, user.id, "refine_plan_loaded", {
+            questionCount: out.steps.length,
+          });
+          if (out.detectedPurpose?.trim()) {
+            void trackAha(supabase, user.id, "refine_plan_purpose_detected", {
+              detectedPurpose: out.detectedPurpose.trim(),
+            });
+          }
+        }
+        if (typeof out.detectedPurpose === "string" && out.detectedPurpose.trim()) {
           setRefinementPlanInference({
             inferredClipPurpose: out.detectedPurpose.trim(),
             ...(out.purposeRationale?.trim()
@@ -510,7 +551,14 @@ export function HomeWorkspace({
     return () => {
       ac.abort();
     };
-  }, [refinementOpen, refinementPlanKey, refinementRetry, runClipRefinementFetch]);
+  }, [
+    refinementOpen,
+    refinementPlanKey,
+    refinementRetry,
+    runClipRefinementFetch,
+    supabase,
+    user?.id,
+  ]);
 
   const runGeneration = useCallback(async () => {
     setError(null);
@@ -1570,6 +1618,7 @@ export function HomeWorkspace({
                   refinementPrefillInference={
                     refinementPlanInference ?? undefined
                   }
+                  onRefinementOpenTypedAnswer={handleRefinementOpenTypedAnswer}
                   refinementPlatformIds={CLIP_PLATFORMS}
                   refinementInputSummary={
                     inputMode === "text"

@@ -20,7 +20,10 @@ export type AhaEvent =
   | "streak_7_days"
   | "first_gen_celebration"
   | "project_restored"
-  | "new_project_started";
+  | "new_project_started"
+  | "refine_plan_loaded"
+  | "refine_plan_purpose_detected"
+  | "refine_open_answer_submitted";
 
 export async function trackAha(
   supabase: SupabaseClient,

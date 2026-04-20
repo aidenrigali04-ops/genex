@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -49,6 +49,8 @@ export type RefinementChatPanelProps = {
     inferredClipPurpose?: string;
     inferredPurposeRationale?: string;
   };
+  /** Fires when the user submits a typed refinement answer (not a pill). */
+  onOpenTypedAnswer?: (fieldKey: string) => void;
 };
 
 function platformLabels(ids: PlatformId[]): string {
@@ -71,6 +73,7 @@ export function RefinementChatPanel({
   remoteRefinement,
   refinementPlanKey = "",
   prefillInference,
+  onOpenTypedAnswer,
 }: RefinementChatPanelProps) {
   const kit = variant === "adaKit";
   const staticSteps = useMemo(
@@ -93,6 +96,7 @@ export function RefinementChatPanel({
   const [customMode, setCustomMode] = useState(false);
   const [customDraft, setCustomDraft] = useState("");
   const [summaryNiche, setSummaryNiche] = useState("");
+  const openAnswerTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (!active) return;
@@ -107,6 +111,15 @@ export function RefinementChatPanel({
 
   const isSummary = step >= effectiveSteps.length;
   const currentDef = !isSummary ? effectiveSteps[step] : null;
+  const primaryOpenAnswer =
+    !!currentDef &&
+    currentDef.pills.length === 0 &&
+    currentDef.allowCustom;
+
+  useEffect(() => {
+    if (!active || !primaryOpenAnswer) return;
+    queueMicrotask(() => openAnswerTextareaRef.current?.focus());
+  }, [active, step, primaryOpenAnswer, currentDef?.id]);
 
   const applyAnswer = useCallback(
     (fieldKey: string, value: string) => {
@@ -127,12 +140,13 @@ export function RefinementChatPanel({
     applyAnswer(fieldKey, value);
   };
 
-  const handleCustomSubmit = () => {
+  const handleCustomSubmit = useCallback(() => {
     if (!currentDef) return;
     const t = customDraft.trim();
     if (!t) return;
+    onOpenTypedAnswer?.(currentDef.fieldKey);
     applyAnswer(currentDef.fieldKey, t);
-  };
+  }, [applyAnswer, currentDef, customDraft, onOpenTypedAnswer]);
 
   const draftContext = useMemo((): GenerationContextV1 => {
     const merged = { ...answers };
@@ -363,7 +377,51 @@ export function RefinementChatPanel({
               </div>
             </div>
 
-            {customMode && currentDef.allowCustom ? (
+            {primaryOpenAnswer ? (
+              <div className="space-y-2 pl-1">
+                <Label
+                  htmlFor="refine-custom-inline"
+                  className={kit ? "text-white/70" : undefined}
+                >
+                  Your answer
+                </Label>
+                <textarea
+                  ref={openAnswerTextareaRef}
+                  id="refine-custom-inline"
+                  autoFocus
+                  className={cn(
+                    "min-h-[88px] w-full resize-y rounded-lg border px-3 py-2 text-sm outline-none focus-visible:ring-[3px]",
+                    kit
+                      ? "border-white/14 bg-black/25 text-white ring-violet-500/30 placeholder:text-white/35"
+                      : "border-[#E8E4F8] bg-white text-[#0F0A1E] ring-[#6C47FF]/25 dark:border-white/10 dark:bg-zinc-950",
+                  )}
+                  value={customDraft}
+                  onChange={(e) => setCustomDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      handleCustomSubmit();
+                    }
+                  }}
+                  placeholder="Type your answer…"
+                />
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={handleCustomSubmit}
+                    disabled={!customDraft.trim()}
+                    className={
+                      kit
+                        ? "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] text-white hover:opacity-90"
+                        : undefined
+                    }
+                  >
+                    Continue
+                  </Button>
+                </div>
+              </div>
+            ) : customMode && currentDef.allowCustom ? (
               <div className="space-y-2 pl-1">
                 <Label
                   htmlFor="refine-custom-inline"
