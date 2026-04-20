@@ -1,6 +1,10 @@
 # Pins the start process so Railway does not rely on a custom dashboard command
 # like `npm run start:api` (which breaks if an older commit is deployed).
 #
+# Railpack runs `npm ci` at the service Root Directory. Leave Root Directory empty (repo
+# root) so `package-lock.json` next to `package.json` is used — a subfolder without the
+# lockfile will fail with "package.json and package-lock.json … not in sync".
+#
 # Railpack build: if you see `failed to stat .../secrets/VAR_NAME`, Railway expects that
 # variable as a build-time secret. Fix: Service → Variables → add VAR_NAME (e.g.
 # NEXT_PUBLIC_GENEX_UNLIMITED_CREDITS=0), or remove VAR_NAME from shared / referenced vars.
