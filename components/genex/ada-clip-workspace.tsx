@@ -8,7 +8,10 @@ import { AdaEmptyState } from "@/components/genex/ada-empty-state";
 import { FirstGenCelebration } from "@/components/genex/first-gen-celebration";
 import { AdaLiveTurn } from "@/components/genex/ada-live-turn";
 import { AdaTurn } from "@/components/genex/ada-turn";
-import { RefinementChatPanel } from "@/components/refinement-chat-panel";
+import {
+  RefinementChatPanel,
+  type RemoteRefinementState,
+} from "@/components/refinement-chat-panel";
 import type { GenerationContextV1 } from "@/lib/generation-context";
 import type { GenerationPresetId } from "@/lib/generation-presets";
 import type { ClipTurn, LiveClipTurnSnapshot } from "@/lib/clip-turn";
@@ -60,6 +63,13 @@ export type AdaClipWorkspaceProps = {
   refinementInputSummary?: string;
   onRefinementConfirm?: (ctx: GenerationContextV1) => void;
   onRefinementCancel?: () => void;
+  /** When set, panel uses async personalized steps instead of static templates. */
+  refinementRemote?: RemoteRefinementState;
+  refinementPlanKey?: string;
+  refinementPrefillInference?: {
+    inferredClipPurpose?: string;
+    inferredPurposeRationale?: string;
+  };
   onExamplePrompt?: (prompt: string, mode: "text" | "url") => void;
   /** Refill composer from a completed turn (e.g. Remix). */
   onRemix?: (prompt: string) => void;
@@ -115,6 +125,9 @@ export function AdaClipWorkspace({
   refinementInputSummary = "",
   onRefinementConfirm,
   onRefinementCancel,
+  refinementRemote,
+  refinementPlanKey = "",
+  refinementPrefillInference,
   onExamplePrompt,
   onRemix,
   authUserId,
@@ -292,6 +305,9 @@ export function AdaClipWorkspace({
                 variant={variant}
                 embedInChat
                 className="max-h-none min-h-0"
+                remoteRefinement={refinementRemote}
+                refinementPlanKey={refinementPlanKey}
+                prefillInference={refinementPrefillInference}
                 onConfirm={onRefinementConfirm}
                 onCancel={onRefinementCancel}
               />

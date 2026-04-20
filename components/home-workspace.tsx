@@ -37,7 +37,10 @@ import {
   type ClipTurn,
   type LiveClipTurnSnapshot,
 } from "@/lib/clip-turn";
+import type { RemoteRefinementState } from "@/components/refinement-chat-panel";
 import { MAX_CLIP_SOURCE_CHARS } from "@/lib/clip-model-input";
+import type { RefinementInputMeta } from "@/lib/refinement-plan-schema";
+import type { RefinementStepDef } from "@/lib/refinement-steps";
 import {
   GUEST_LIFETIME_FREE_CREDITS,
   isUnlimitedCreditsModeClient,
@@ -196,8 +199,21 @@ export function HomeWorkspace({
   const abortRef = useRef<AbortController | null>(null);
   const pendingGenerationContextRef = useRef<GenerationContextV1 | null>(null);
   const startTsRef = useRef<number | null>(null);
+  const youtubeTranscriptCacheRef = useRef<{
+    url: string;
+    transcript: string;
+  } | null>(null);
+  const refinementFetchAbortRef = useRef<AbortController | null>(null);
 
   const [refinementOpen, setRefinementOpen] = useState(false);
+  const [clipRefinementRemote, setClipRefinementRemote] = useState<
+    RemoteRefinementState | undefined
+  >(undefined);
+  const [refinementPlanInference, setRefinementPlanInference] = useState<{
+    inferredClipPurpose?: string;
+    inferredPurposeRationale?: string;
+  } | null>(null);
+  const [refinementRetry, setRefinementRetry] = useState(0);
   const [lastClipGenerationContext, setLastClipGenerationContext] =
     useState<GenerationContextV1 | null>(null);
   const [currentStreak, setCurrentStreak] = useState(initialCurrentStreak);
@@ -318,6 +334,184 @@ export function HomeWorkspace({
     return `+${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
   };
 
+  const refinementPlanKey = useMemo(() => {
+    const head = text.slice(0, 160);
+    const tail = text.length > 320 ? text.slice(-160) : "";
+    return `${inputMode}:${text.length}:${head}:${tail}:${url.trim()}:${uploadFile?.name ?? ""}:${uploadFile?.size ?? 0}:${uploadFile?.lastModified ?? 0}`;
+  }, [inputMode, text, url, uploadFile]);
+
+  function looksTextualUpload(file: File): boolean {
+    if (file.type.startsWith("text/")) return true;
+    return /\.(txt|md|csv|json|log|tsx?|jsx?)$/i.test(file.name);
+  }
+
+  const runClipRefinementFetch = useCallback(
+    async (signal: AbortSignal): Promise<{
+      steps: RefinementStepDef[];
+      planSource: "llm" | "fallback";
+      detectedPurpose?: string;
+      purposeRationale?: string;
+    }> => {
+      const inputMeta: RefinementInputMeta = {
+        inputMode,
+        ...(inputMode === "url" ? { url: url.trim() } : {}),
+        ...(inputMode === "file" && uploadFile
+          ? {
+              fileName: uploadFile.name,
+              mimeType: uploadFile.type || undefined,
+              sizeBytes: uploadFile.size,
+            }
+          : {}),
+      };
+
+      let excerpt = "";
+      if (inputMode === "text") {
+        excerpt = text.trim().slice(0, MAX_CLIP_SOURCE_CHARS);
+      } else if (inputMode === "url") {
+        const u = url.trim();
+        if (isYoutubeVideoUrlForTranscript(u)) {
+          const trRes = await fetch("/api/youtube-transcript", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal,
+            body: JSON.stringify({ url: u }),
+          });
+          if (trRes.ok) {
+            const data = (await trRes.json()) as { transcript?: string };
+            const raw =
+              typeof data.transcript === "string" ? data.transcript.trim() : "";
+            if (raw) {
+              youtubeTranscriptCacheRef.current = { url: u, transcript: raw };
+              excerpt = raw.slice(0, MAX_CLIP_SOURCE_CHARS);
+            }
+          }
+        } else {
+          const pvRes = await fetch("/api/refinement-source-preview", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal,
+            body: JSON.stringify({ url: u }),
+          });
+          if (pvRes.ok) {
+            const pv = (await pvRes.json()) as { excerpt?: string };
+            excerpt = (pv.excerpt ?? "").trim().slice(0, MAX_CLIP_SOURCE_CHARS);
+          }
+        }
+      } else if (inputMode === "file" && uploadFile) {
+        if (looksTextualUpload(uploadFile)) {
+          try {
+            const blob = uploadFile.slice(0, MAX_CLIP_SOURCE_CHARS);
+            excerpt = (await blob.text()).trim().slice(0, MAX_CLIP_SOURCE_CHARS);
+          } catch {
+            excerpt = "";
+          }
+        }
+      }
+
+      const planRes = await fetch("/api/refinement-plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal,
+        body: JSON.stringify({
+          kind: "text_generation",
+          platformIds: CLIP_PLATFORMS,
+          sourceExcerpt: excerpt,
+          inputMeta,
+        }),
+      });
+
+      let rawJson: unknown = null;
+      try {
+        rawJson = await planRes.json();
+      } catch {
+        rawJson = null;
+      }
+      const obj = rawJson as {
+        steps?: RefinementStepDef[];
+        planSource?: string;
+        detectedPurpose?: string;
+        purposeRationale?: string;
+        error?: string;
+      } | null;
+
+      if (!planRes.ok || !obj?.steps?.length) {
+        throw new Error(obj?.error ?? planRes.statusText ?? "Refinement plan failed");
+      }
+
+      return {
+        steps: obj.steps,
+        planSource: obj.planSource === "llm" ? "llm" : "fallback",
+        detectedPurpose:
+          typeof obj.detectedPurpose === "string" ? obj.detectedPurpose : undefined,
+        purposeRationale:
+          typeof obj.purposeRationale === "string"
+            ? obj.purposeRationale
+            : undefined,
+      };
+    },
+    [inputMode, text, url, uploadFile],
+  );
+
+  const beginClipRefinement = useCallback(() => {
+    setRefinementRetry(0);
+    setClipRefinementRemote({ phase: "loading" });
+    setRefinementPlanInference(null);
+    setRefinementOpen(true);
+  }, []);
+
+  /* Personalized refinement: sync remote step state + fetch plan (async in IIFE). */
+  useEffect(() => {
+    if (!refinementOpen) {
+      refinementFetchAbortRef.current?.abort();
+      refinementFetchAbortRef.current = null;
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset when closing refinement panel
+      setClipRefinementRemote(undefined);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setRefinementPlanInference(null);
+      return;
+    }
+
+    const ac = new AbortController();
+    refinementFetchAbortRef.current = ac;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- show loading before async plan fetch
+    setClipRefinementRemote({ phase: "loading" });
+
+    void (async () => {
+      try {
+        const out = await runClipRefinementFetch(ac.signal);
+        if (ac.signal.aborted) return;
+        setClipRefinementRemote({ phase: "ready", steps: out.steps });
+        if (
+          out.planSource === "llm" &&
+          typeof out.detectedPurpose === "string" &&
+          out.detectedPurpose.trim()
+        ) {
+          setRefinementPlanInference({
+            inferredClipPurpose: out.detectedPurpose.trim(),
+            ...(out.purposeRationale?.trim()
+              ? { inferredPurposeRationale: out.purposeRationale.trim() }
+              : {}),
+          });
+        } else {
+          setRefinementPlanInference(null);
+        }
+      } catch (e) {
+        if ((e as Error).name === "AbortError" || ac.signal.aborted) return;
+        const message =
+          e instanceof Error ? e.message : "Could not load refinement questions.";
+        setClipRefinementRemote({
+          phase: "error",
+          message,
+          onRetry: () => setRefinementRetry((n) => n + 1),
+        });
+      }
+    })();
+
+    return () => {
+      ac.abort();
+    };
+  }, [refinementOpen, refinementPlanKey, refinementRetry, runClipRefinementFetch]);
+
   const runGeneration = useCallback(async () => {
     setError(null);
     setCopiedId(null);
@@ -396,27 +590,44 @@ export function HomeWorkspace({
         isYoutubeVideoUrlForTranscript(url.trim())
       ) {
         let transcriptFromPrefetch = "";
-        setFetchingYoutubeTranscript(true);
-        setProgress(10);
-        try {
-          const trRes = await fetch("/api/youtube-transcript", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            signal,
-            body: JSON.stringify({ url: url.trim() }),
-          });
-          if (trRes.ok) {
-            const data = (await trRes.json()) as { transcript?: string };
-            transcriptFromPrefetch =
-              typeof data.transcript === "string" ? data.transcript.trim() : "";
+        const urlTrim = url.trim();
+        const cached = youtubeTranscriptCacheRef.current;
+        if (
+          cached &&
+          cached.url === urlTrim &&
+          cached.transcript.trim()
+        ) {
+          transcriptFromPrefetch = cached.transcript.trim();
+          setProgress(16);
+        } else {
+          setFetchingYoutubeTranscript(true);
+          setProgress(10);
+          try {
+            const trRes = await fetch("/api/youtube-transcript", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              signal,
+              body: JSON.stringify({ url: urlTrim }),
+            });
+            if (trRes.ok) {
+              const data = (await trRes.json()) as { transcript?: string };
+              transcriptFromPrefetch =
+                typeof data.transcript === "string" ? data.transcript.trim() : "";
+              if (transcriptFromPrefetch) {
+                youtubeTranscriptCacheRef.current = {
+                  url: urlTrim,
+                  transcript: transcriptFromPrefetch,
+                };
+              }
+            }
+          } catch (e) {
+            if ((e as Error).name === "AbortError") throw e;
+          } finally {
+            setFetchingYoutubeTranscript(false);
           }
-        } catch (e) {
-          if ((e as Error).name === "AbortError") throw e;
-        } finally {
-          setFetchingYoutubeTranscript(false);
-        }
 
-        setProgress(16);
+          setProgress(16);
+        }
         if (transcriptFromPrefetch) {
           const maxChars = MAX_CLIP_SOURCE_CHARS;
           const capped =
@@ -1300,7 +1511,7 @@ export function HomeWorkspace({
                   setInputMode("text");
                 }}
                 canSubmit={canSubmit}
-                onSubmit={() => setRefinementOpen(true)}
+                onSubmit={beginClipRefinement}
                 onPickSuggestion={(prompt) => {
                   setText(prompt);
                   setInputMode("text");
@@ -1337,7 +1548,7 @@ export function HomeWorkspace({
                   onPresetChange={setPreset}
                   loading={loading}
                   canSubmit={canSubmit}
-                  onSubmit={() => setRefinementOpen(true)}
+                  onSubmit={beginClipRefinement}
                   onStop={handleStopGeneration}
                   maxUploadMb={Math.round(MAX_MEDIA_UPLOAD_BYTES / (1024 * 1024))}
                   generationSteps={generationSteps}
@@ -1348,12 +1559,17 @@ export function HomeWorkspace({
                   streamedText={streamedText}
                   copiedId={copiedId}
                   onCopy={copyText}
-                  onRegenerate={() => setRefinementOpen(true)}
+                  onRegenerate={beginClipRefinement}
                   variant="adaKit"
                   onTextVideoCreditsRemainingChange={(n) => {
                     if (!creditsUnlimited) setCreditsRemaining(n);
                   }}
                   refinementOpen={refinementOpen}
+                  refinementRemote={clipRefinementRemote}
+                  refinementPlanKey={refinementPlanKey}
+                  refinementPrefillInference={
+                    refinementPlanInference ?? undefined
+                  }
                   refinementPlatformIds={CLIP_PLATFORMS}
                   refinementInputSummary={
                     inputMode === "text"
@@ -1404,7 +1620,7 @@ export function HomeWorkspace({
                       setUrl("");
                     }
                     setUploadFile(null);
-                    window.setTimeout(() => setRefinementOpen(true), 400);
+                    window.setTimeout(() => beginClipRefinement(), 400);
                   }}
                   onPreferIdeaFirst={() => {
                     setInputMode("text");

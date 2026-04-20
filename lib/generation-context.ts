@@ -12,6 +12,9 @@ export type GenerationContextV1 = {
   answers: Record<string, string>;
   /** ISO timestamp when user confirmed refinement */
   confirmedAt: string;
+  /** Inferred from source excerpt during personalized refinement (optional). */
+  inferredClipPurpose?: string;
+  inferredPurposeRationale?: string;
   /** Source clipping: how many distinct edits to produce (1–12). */
   variationCount?: number;
   clipLengthMode?: ClipLengthMode;
@@ -46,6 +49,16 @@ export function formatGenerationContextForPrompt(raw: unknown): string {
   lines.push("=== USER REQUIREMENTS — HONOR ALL OF THESE EXACTLY ===");
   if (raw.platforms.length > 0) {
     lines.push(`• Target platforms: ${raw.platforms.join(", ")}`);
+  }
+  const purpose = raw.inferredClipPurpose?.trim();
+  if (purpose) {
+    lines.push(
+      `• Inferred clipping purpose (from pre-generation analysis): ${purpose}`,
+    );
+  }
+  const rationale = raw.inferredPurposeRationale?.trim();
+  if (rationale) {
+    lines.push(`• Purpose rationale: ${rationale}`);
   }
   for (const [k, v] of Object.entries(raw.answers)) {
     const val = String(v).trim();
@@ -84,6 +97,9 @@ export function buildSummaryFromContext(ctx: GenerationContextV1): string {
   const parts: string[] = [];
   if (ctx.platforms.length) {
     parts.push(ctx.platforms.join(" · "));
+  }
+  if (ctx.inferredClipPurpose?.trim()) {
+    parts.push(`Purpose: ${ctx.inferredClipPurpose.trim()}`);
   }
   for (const [k, v] of Object.entries(ctx.answers)) {
     if (String(v).trim()) parts.push(`${humanizeKey(k)}: ${String(v).trim()}`);

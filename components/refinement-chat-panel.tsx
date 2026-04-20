@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import {
   buildRefinementSteps,
   type RefinementKind,
+  type RefinementStepDef,
 } from "@/lib/refinement-steps";
 import {
   buildSummaryFromContext,
@@ -16,6 +17,11 @@ import {
 import type { PlatformId } from "@/lib/platforms";
 import { PLATFORM_BY_ID } from "@/lib/platforms";
 import { cn } from "@/lib/utils";
+
+export type RemoteRefinementState =
+  | { phase: "loading" }
+  | { phase: "error"; message: string; onRetry: () => void }
+  | { phase: "ready"; steps: RefinementStepDef[] };
 
 export type RefinementChatPanelProps = {
   /** When true, the panel is shown and internal step state resets on activation. */
@@ -34,6 +40,15 @@ export type RefinementChatPanelProps = {
   hideChrome?: boolean;
   /** Softer shell + omit duplicate input chip (shown as user bubble above in chat). */
   embedInChat?: boolean;
+  /** Async personalized steps from parent; when omitted, uses static `buildRefinementSteps`. */
+  remoteRefinement?: RemoteRefinementState;
+  /** Bumps when the underlying input changes so step state resets. */
+  refinementPlanKey?: string;
+  /** Merged into confirmed `GenerationContextV1` (e.g. LLM-detected clip purpose). */
+  prefillInference?: {
+    inferredClipPurpose?: string;
+    inferredPurposeRationale?: string;
+  };
 };
 
 function platformLabels(ids: PlatformId[]): string {
@@ -53,14 +68,26 @@ export function RefinementChatPanel({
   className,
   hideChrome = false,
   embedInChat = false,
+  remoteRefinement,
+  refinementPlanKey = "",
+  prefillInference,
 }: RefinementChatPanelProps) {
   const kit = variant === "adaKit";
-  const steps = useMemo(
+  const staticSteps = useMemo(
     () => buildRefinementSteps(kind, platformIds),
     [kind, platformIds],
   );
 
-  const totalSteps = steps.length + 1;
+  const effectiveSteps =
+    remoteRefinement?.phase === "ready"
+      ? remoteRefinement.steps
+      : staticSteps;
+
+  const remoteLoading = remoteRefinement?.phase === "loading";
+  const remoteError =
+    remoteRefinement?.phase === "error" ? remoteRefinement : null;
+
+  const totalSteps = effectiveSteps.length + 1;
   const [step, setStep] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [customMode, setCustomMode] = useState(false);
@@ -76,10 +103,10 @@ export function RefinementChatPanel({
       setCustomDraft("");
       setSummaryNiche("");
     });
-  }, [active, kind, platformIds]);
+  }, [active, kind, platformIds, refinementPlanKey]);
 
-  const isSummary = step >= steps.length;
-  const currentDef = !isSummary ? steps[step] : null;
+  const isSummary = step >= effectiveSteps.length;
+  const currentDef = !isSummary ? effectiveSteps[step] : null;
 
   const applyAnswer = useCallback(
     (fieldKey: string, value: string) => {
@@ -110,14 +137,18 @@ export function RefinementChatPanel({
   const draftContext = useMemo((): GenerationContextV1 => {
     const merged = { ...answers };
     if (summaryNiche.trim()) merged.nicheTheme = summaryNiche.trim();
+    const purpose = prefillInference?.inferredClipPurpose?.trim();
+    const rationale = prefillInference?.inferredPurposeRationale?.trim();
     return {
       version: GENERATION_CONTEXT_VERSION,
       kind: kind === "video_variations" ? "video_variations" : "text_generation",
       platforms: platformIds,
       answers: merged,
       confirmedAt: new Date().toISOString(),
+      ...(purpose ? { inferredClipPurpose: purpose } : {}),
+      ...(rationale ? { inferredPurposeRationale: rationale } : {}),
     };
-  }, [answers, summaryNiche, kind, platformIds]);
+  }, [answers, summaryNiche, kind, platformIds, prefillInference]);
 
   const summaryText = useMemo(
     () => buildSummaryFromContext(draftContext),
@@ -226,7 +257,9 @@ export function RefinementChatPanel({
               kit ? "bg-white/10 text-white/80" : "bg-ada-elevated text-ada-secondary",
             )}
           >
-            Step {Math.min(step + 1, totalSteps)} of {totalSteps}
+            {remoteLoading
+              ? "Preparing questions…"
+              : `Step ${Math.min(step + 1, totalSteps)} of ${totalSteps}`}
           </span>
         </div>
       ) : (
@@ -236,7 +269,9 @@ export function RefinementChatPanel({
             kit ? "border-white/10 text-white/50" : "border-[#E8E4F8] dark:border-white/10",
           )}
         >
-          Step {Math.min(step + 1, totalSteps)} of {totalSteps}
+          {remoteLoading
+            ? "Preparing questions…"
+            : `Step ${Math.min(step + 1, totalSteps)} of ${totalSteps}`}
         </div>
       )}
 
@@ -255,7 +290,63 @@ export function RefinementChatPanel({
           </div>
         ) : null}
 
-        {!isSummary && currentDef ? (
+        {remoteLoading ? (
+          <div className="space-y-3">
+            <div className="flex justify-start">
+              <div className={bubbleAssistant}>
+                Reading your source and tailoring a few questions so the clip plan matches what
+                you are actually trying to do.
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2 pl-0.5 opacity-50">
+              {[1, 2, 3, 4].map((i) => (
+                <div
+                  key={i}
+                  className={cn(
+                    "h-8 w-[88px] animate-pulse rounded-full",
+                    kit ? "bg-white/10" : "bg-muted",
+                  )}
+                />
+              ))}
+            </div>
+          </div>
+        ) : remoteError ? (
+          <div className="space-y-3">
+            <div className="flex justify-start">
+              <div className={bubbleAssistant}>
+                Could not personalize questions ({remoteError.message}). You can retry, or
+                cancel and try again.
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                onClick={remoteError.onRetry}
+                className={
+                  kit
+                    ? "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] text-white hover:opacity-90"
+                    : undefined
+                }
+              >
+                Retry
+              </Button>
+              {onCancel ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={onCancel}
+                  className={
+                    kit ? "border-white/20 bg-transparent text-white hover:bg-white/10" : undefined
+                  }
+                >
+                  Cancel
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        ) : !isSummary && currentDef ? (
           <>
             <div className="flex justify-start">
               <div className={bubbleAssistant}>
@@ -341,7 +432,7 @@ export function RefinementChatPanel({
               </div>
             )}
           </>
-        ) : (
+        ) : !remoteLoading && !remoteError ? (
           <>
             <div className="flex justify-start">
               <div className={bubbleAssistant}>
@@ -402,7 +493,7 @@ export function RefinementChatPanel({
               </Button>
             </div>
           </>
-        )}
+        ) : null}
       </div>
     </div>
   );
