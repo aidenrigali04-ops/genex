@@ -19,6 +19,10 @@ import {
   isGenerationContextV1,
   type GenerationContextV1,
 } from "@/lib/generation-context";
+import {
+  buildCreatorMemoryBlock,
+  extractLastUserTextFromUiMessages,
+} from "@/lib/chat-memory-block";
 import { createClient } from "@/lib/supabase/server";
 
 export const maxDuration = 120;
@@ -349,7 +353,25 @@ export async function POST(req: Request): Promise<Response> {
     }
   }
 
-  const systemPrompt = buildSystemPrompt(inputMode, generationContext);
+  let memoryBlock = "";
+  if (userIdForBilling) {
+    const inputContent = extractLastUserTextFromUiMessages(uiMessages);
+    try {
+      memoryBlock = await buildCreatorMemoryBlock(
+        supabase,
+        userIdForBilling,
+        inputContent,
+      );
+    } catch {
+      memoryBlock = "";
+    }
+  }
+
+  const baseSystemPrompt = buildSystemPrompt(inputMode, generationContext);
+  const systemPrompt =
+    memoryBlock.length > 0
+      ? `${baseSystemPrompt}\n\n${memoryBlock}`
+      : baseSystemPrompt;
 
   let modelMessages: Awaited<ReturnType<typeof convertToModelMessages>>;
   try {

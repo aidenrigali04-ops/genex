@@ -12,6 +12,8 @@ export type ClipTurn = {
   rawText: string;
   generationId: string | null;
   generationContext: GenerationContextV1 | null;
+  /** Loaded from saved generation (sidebar recents), not a fresh stream. */
+  isRestored?: boolean;
 };
 
 export type LiveClipTurnSnapshot = {

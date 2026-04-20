@@ -300,11 +300,10 @@ export function AdaClipWorkspace({
           {refinementOpen && !loading && onRefinementConfirm ? (
             <div className="w-full">
               {/*
-                Refinement UX: `/api/refinement-plan` supplies personalized `remoteRefinement.steps`
-                when loading completes. `RefinementChatPanel` shows those (or static fallbacks) as a
-                scrollable thread with editable user bubbles, optional notes per step, and optional
-                "Ask Ada" via `/api/refinement-thread`. Confirm still yields `GenerationContextV1` for
-                the same downstream generate path as before.
+                Refinement: `/api/refinement-plan` supplies `remoteRefinement.steps` for text flows.
+                `RefinementChatPanel` uses a step thread + pills here; Clip My Video (video_variations +
+                embedInChat) uses full conversational `/api/refinement-conversation` instead. Confirm
+                always yields `GenerationContextV1` for the generate pipeline.
               */}
               <RefinementChatPanel
                 active={refinementOpen}

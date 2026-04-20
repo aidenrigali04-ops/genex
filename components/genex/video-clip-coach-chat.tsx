@@ -94,9 +94,10 @@ export function VideoClipCoachChat({
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-2 text-sm">
         {messages.length === 0 ? (
           <p className="text-white/45">
-            Ask for clip angles, hook rewrites, or pacing. While the quick
-            questions are open, the coach sees your answers as you go; after you
-            start a job, it keeps using the confirmed settings from that run.
+            Ask for clip angles, hook rewrites, or pacing — same thread as your
+            clip run below. While the quick questions are open, the coach sees
+            your answers as you go; after you start a job, it uses those
+            confirmed settings.
           </p>
         ) : (
           messages.map((m) => {

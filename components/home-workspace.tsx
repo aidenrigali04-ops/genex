@@ -59,6 +59,7 @@ import type { AdaSidebarVoiceProfile } from "@/components/genex/ada-sidebar";
 import {
   AdaSidebar,
   recentDateGroup,
+  type AdaSidebarRecentItem,
 } from "@/components/genex/ada-sidebar";
 import { AdaClipWorkspace } from "@/components/genex/ada-clip-workspace";
 import type { VoiceProfileData } from "@/components/genex/ada-voice-profile-modal";
@@ -224,6 +225,9 @@ export function HomeWorkspace({
   );
   const [recentProjectSessions, setRecentProjectSessions] = useState<
     ProjectSession[]
+  >([]);
+  const [generationSidebarRecents, setGenerationSidebarRecents] = useState<
+    AdaSidebarRecentItem[]
   >([]);
   const supabase = useMemo(() => createClient(), []);
 
@@ -559,6 +563,137 @@ export function HomeWorkspace({
     supabase,
     user?.id,
   ]);
+
+  const loadGeneration = useCallback(
+    async (id: string) => {
+      if (!user) return;
+      const { data, error } = await supabase
+        .from("generations")
+        .select(
+          "id, input_text, input_url, output, generation_context, updated_at",
+        )
+        .eq("id", id)
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (error || !data) {
+        setError("Could not load that generation.");
+        return;
+      }
+      void trackAha(supabase, user.id, "session_restored", {
+        generation_id: id,
+      });
+      const output = String(data.output ?? "");
+      const extracted = extractPlatformSection(
+        output,
+        "clip_package",
+        CLIP_PLATFORMS,
+      ).trim();
+      const rawBody =
+        extracted ||
+        (/TOP CLIP MOMENTS/i.test(output) ? output.trim() : "");
+      const pkg = parseClipPackageSections(
+        rawBody.length > 0 ? rawBody : output,
+      );
+      const gc = isGenerationContextV1(data.generation_context)
+        ? data.generation_context
+        : null;
+
+      const inputUrl = data.input_url?.trim() ?? "";
+      const inputText = data.input_text ?? "";
+      let mode: "text" | "url" | "file" = "text";
+      let userMessage = "Saved clip";
+      if (inputUrl.startsWith("file:")) {
+        mode = "text";
+        userMessage = buildUserMessageSummary(
+          inputText,
+          "",
+          null,
+          "text",
+        );
+      } else if (inputUrl) {
+        mode = "url";
+        userMessage = buildUserMessageSummary("", inputUrl, null, "url");
+      } else {
+        userMessage = buildUserMessageSummary(
+          inputText,
+          "",
+          null,
+          "text",
+        );
+      }
+
+      setTurns([
+        {
+          id: crypto.randomUUID(),
+          userMessage,
+          inputMode: mode,
+          preset: null,
+          timestamp: new Date(data.updated_at),
+          parsedClipPackage: pkg,
+          rawText: output,
+          generationId: data.id,
+          generationContext: gc,
+          isRestored: true,
+        },
+      ]);
+      setStreamedText("");
+      setGenerationSteps([]);
+      setLiveTurnSnapshot(null);
+      setLastClipGenerationContext(gc);
+      setUploadFile(null);
+      if (inputUrl.startsWith("file:")) {
+        setInputMode("text");
+        setText(inputText);
+        setUrl("");
+      } else if (inputUrl) {
+        setInputMode("url");
+        setUrl(inputUrl);
+        setText("");
+      } else {
+        setInputMode("text");
+        setText(inputText);
+        setUrl("");
+      }
+      setError(null);
+      setWorkspaceTab("clip");
+      setMobileNavOpen(false);
+    },
+    [user, supabase],
+  );
+
+  const fetchGenerationRecents = useCallback(async () => {
+    if (!user) {
+      setGenerationSidebarRecents([]);
+      return;
+    }
+    const { data, error } = await supabase
+      .from("generations")
+      .select("id, title, input_text, input_url, updated_at")
+      .eq("user_id", user.id)
+      .order("updated_at", { ascending: false })
+      .limit(20);
+    if (error || !data) return;
+    setGenerationSidebarRecents(
+      data.map((row) => {
+        const id = String(row.id);
+        const label =
+          row.title?.trim() ||
+          row.input_text?.trim()?.slice(0, 40) ||
+          row.input_url?.trim()?.slice(0, 40) ||
+          "Untitled";
+        return {
+          id,
+          label,
+          updatedAt: row.updated_at,
+          onSelect: () => void loadGeneration(id),
+        };
+      }),
+    );
+  }, [user, supabase, loadGeneration]);
+
+  useEffect(() => {
+    void fetchGenerationRecents();
+  }, [fetchGenerationRecents]);
 
   const runGeneration = useCallback(async () => {
     setError(null);
@@ -935,6 +1070,28 @@ export function HomeWorkspace({
               title: autoTitle(titleSourceForProject),
             }),
           });
+          void (async () => {
+            try {
+              const purpose =
+                lastClipGenerationContext?.inferredClipPurpose?.trim();
+              await fetch("/api/memory/save", {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  generationId: generationIdHeader,
+                  outputText: accumulated,
+                  inputContent: titleSourceForProject,
+                  platforms: CLIP_PLATFORMS,
+                  ...(purpose ? { detectedPurpose: purpose } : {}),
+                }),
+              });
+            } catch {
+              /* memory save is best-effort */
+            } finally {
+              void fetchGenerationRecents();
+            }
+          })();
           const nowIso = new Date().toISOString();
           setRecentProjectSessions((prev) => {
             const optimisticSession: ProjectSession = {
@@ -987,6 +1144,7 @@ export function HomeWorkspace({
     }
   }, [
     creditsUnlimited,
+    fetchGenerationRecents,
     inputMode,
     lastClipGenerationContext,
     preset,
@@ -1161,14 +1319,7 @@ export function HomeWorkspace({
   }, [user, supabase]);
 
   const sidebarRecentItems = useMemo(() => {
-    const fromSessions = recentProjectSessions.map((s) => ({
-      id: s.id,
-      label: s.title,
-      updatedAt: s.updatedAt,
-      onSelect: () => {
-        void restoreProjectById(s.id);
-      },
-    }));
+    const fromGenerations = generationSidebarRecents;
 
     if (!user) {
       return myClipCards.map((clip) => ({
@@ -1183,7 +1334,22 @@ export function HomeWorkspace({
       }));
     }
 
-    const apiIds = new Set(fromSessions.map((x) => x.id));
+    const genIds = new Set(fromGenerations.map((x) => x.id));
+    const fromSessions = recentProjectSessions
+      .filter((s) => !genIds.has(s.id))
+      .map((s) => ({
+        id: s.id,
+        label: s.title,
+        updatedAt: s.updatedAt,
+        onSelect: () => {
+          void restoreProjectById(s.id);
+        },
+      }));
+
+    const apiIds = new Set([
+      ...fromGenerations.map((x) => x.id),
+      ...fromSessions.map((x) => x.id),
+    ]);
     const extras = myClipCards
       .filter((c) => !apiIds.has(c.id))
       .map((clip) => ({
@@ -1197,8 +1363,15 @@ export function HomeWorkspace({
         },
       }));
 
-    return [...fromSessions, ...extras];
-  }, [user, recentProjectSessions, myClipCards, restoreProjectById, openClip]);
+    return [...fromGenerations, ...fromSessions, ...extras];
+  }, [
+    user,
+    generationSidebarRecents,
+    recentProjectSessions,
+    myClipCards,
+    restoreProjectById,
+    openClip,
+  ]);
 
   const initials =
     user?.email?.trim().charAt(0).toUpperCase() ??

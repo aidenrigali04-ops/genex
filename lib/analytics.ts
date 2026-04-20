@@ -23,7 +23,10 @@ export type AhaEvent =
   | "new_project_started"
   | "refine_plan_loaded"
   | "refine_plan_purpose_detected"
-  | "refine_open_answer_submitted";
+  | "refine_open_answer_submitted"
+  | "memory_recall_hit"
+  | "session_restored"
+  | "generation_titled";
 
 export async function trackAha(
   supabase: SupabaseClient,

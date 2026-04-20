@@ -1,0 +1,288 @@
+import { openai } from "@ai-sdk/openai";
+import { generateObject } from "ai";
+import { z } from "zod";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+import { isUnlimitedCreditsModeServer } from "@/lib/credits-config";
+import {
+  remainingCreditsForDisplay,
+  type ProfileCreditsRow,
+} from "@/lib/profile-credits-display";
+import {
+  buildRefinementConversationSystemPrompt,
+  refinementAnswersComplete,
+} from "@/lib/refinement-conversation-prompt";
+import { isPlatformId, type PlatformId } from "@/lib/platforms";
+import {
+  buildRefinementSteps,
+  type RefinementKind,
+} from "@/lib/refinement-steps";
+import { createClient } from "@/lib/supabase/server";
+
+export const maxDuration = 60;
+
+const messageSchema = z.object({
+  role: z.enum(["user", "assistant"]),
+  content: z.string().min(1).max(12_000),
+});
+
+const bodySchema = z.object({
+  kind: z.enum(["video_variations", "text_generation"]),
+  platformIds: z.array(z.string()).min(1).max(12),
+  inputSummary: z.string().max(4000),
+  messages: z.array(messageSchema).min(1).max(48),
+  answersPartial: z.record(z.string(), z.string()).default({}),
+  guestCreditsRemaining: z.number().int().optional(),
+});
+
+const resultSchema = z.object({
+  assistantMessage: z.string().min(1).max(3200),
+  answerPatches: z.record(z.string(), z.string()).optional(),
+});
+
+type ProfileCreditsRowRefine = ProfileCreditsRow & {
+  generation_count: number | null;
+};
+
+async function refundOneClipCredit(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<void> {
+  await supabase.rpc("refund_one_credit", { p_user_id: userId });
+}
+
+function normalizePlatforms(raw: string[]): PlatformId[] {
+  const out: PlatformId[] = [];
+  const seen = new Set<PlatformId>();
+  for (const r of raw) {
+    if (!isPlatformId(r) || seen.has(r)) continue;
+    seen.add(r);
+    out.push(r);
+  }
+  return out;
+}
+
+function platformLine(ids: PlatformId[]): string {
+  return ids.join(", ");
+}
+
+export async function POST(req: Request): Promise<Response> {
+  if (!process.env.OPENAI_API_KEY) {
+    return Response.json(
+      {
+        error:
+          "Missing OPENAI_API_KEY in environment. No credits were charged.",
+      },
+      { status: 500 },
+    );
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  let rawBody: unknown;
+  try {
+    rawBody = await req.json();
+  } catch {
+    return Response.json(
+      { error: "Invalid JSON body. No credits were charged." },
+      { status: 400 },
+    );
+  }
+
+  const parsed = bodySchema.safeParse(rawBody);
+  if (!parsed.success) {
+    const msg = parsed.error.issues.map((i) => i.message).join(" ");
+    return Response.json(
+      { error: `${msg} No credits were charged.` },
+      { status: 400 },
+    );
+  }
+
+  const {
+    kind,
+    platformIds: rawPlatforms,
+    inputSummary,
+    messages,
+    answersPartial,
+    guestCreditsRemaining,
+  } = parsed.data;
+
+  const platformIds = normalizePlatforms(rawPlatforms);
+  if (platformIds.length === 0) {
+    return Response.json(
+      { error: "At least one valid platform id is required." },
+      { status: 400 },
+    );
+  }
+
+  const unlimitedServer = isUnlimitedCreditsModeServer();
+  if (!user) {
+    if (!unlimitedServer) {
+      const guestOk =
+        typeof guestCreditsRemaining === "number" &&
+        guestCreditsRemaining >= 1;
+      if (!guestOk) {
+        return Response.json({ error: "Unauthorized" }, { status: 401 });
+      }
+    }
+  }
+
+  const steps = buildRefinementSteps(kind as RefinementKind, platformIds);
+  const allowedFieldKeys = new Set(steps.map((s) => s.fieldKey));
+
+  const userIdForBilling: string | null = user?.id ?? null;
+  let chargedCredit = false;
+
+  if (userIdForBilling) {
+    const uid = userIdForBilling;
+    const { data: prof, error: profErr } = await supabase
+      .from("profiles")
+      .select(
+        "credits, unlimited_credits, generation_count, subscription_status, plan_credits_remaining, bonus_credits",
+      )
+      .eq("id", uid)
+      .maybeSingle();
+
+    if (profErr) {
+      console.error(
+        "[refinement-conversation] profile read failed",
+        profErr.message,
+      );
+      return Response.json(
+        { error: "Failed to load your profile. No credits were charged." },
+        { status: 500 },
+      );
+    }
+
+    const row = prof as ProfileCreditsRowRefine | null;
+    const hadUnlimitedProfile = Boolean(row?.unlimited_credits);
+
+    if (!unlimitedServer && !hadUnlimitedProfile) {
+      const remaining = remainingCreditsForDisplay(row);
+      if (remaining <= 0) {
+        return Response.json(
+          { error: "No credits remaining." },
+          { status: 402 },
+        );
+      }
+
+      const { data: rpcData, error: rpcErr } = await supabase.rpc(
+        "consume_one_credit",
+        { p_user_id: uid },
+      );
+
+      if (rpcErr) {
+        console.error(
+          "[refinement-conversation] consume_one_credit failed",
+          rpcErr.message,
+        );
+        return Response.json(
+          { error: "Failed to reserve credit. No credits were charged." },
+          { status: 500 },
+        );
+      }
+
+      const rpcRow = (
+        Array.isArray(rpcData) ? rpcData[0] : rpcData
+      ) as { success?: boolean; reason?: string | null } | undefined;
+
+      if (!rpcRow || rpcRow.success !== true) {
+        const reason = rpcRow?.reason ?? "unknown";
+        if (reason === "no_credits" || /no_credit/i.test(String(reason))) {
+          return Response.json(
+            { error: "No credits remaining." },
+            { status: 402 },
+          );
+        }
+        return Response.json(
+          { error: "Failed to reserve credit. No credits were charged." },
+          { status: 500 },
+        );
+      }
+
+      chargedCredit = true;
+    }
+  }
+
+  const modelId =
+    process.env.OPENAI_REFINEMENT_CONVERSATION_MODEL?.trim() ||
+    process.env.OPENAI_REFINEMENT_THREAD_MODEL?.trim() ||
+    "gpt-4o-mini";
+
+  const system = buildRefinementConversationSystemPrompt(
+    steps,
+    platformLine(platformIds),
+  );
+
+  const transcript = messages
+    .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
+    .join("\n\n");
+
+  const prompt = `Source / input summary:\n${inputSummary.slice(0, 4000)}\n\nCurrent captured answers (JSON, may be empty):\n${JSON.stringify(answersPartial)}\n\nConversation:\n${transcript}`;
+
+  try {
+    const { object } = await generateObject({
+      model: openai(modelId),
+      schema: resultSchema,
+      temperature: 0.45,
+      maxOutputTokens: 1600,
+      system,
+      prompt,
+    });
+
+    const coerced = resultSchema.safeParse(object);
+    if (!coerced.success) {
+      if (chargedCredit && userIdForBilling) {
+        try {
+          await refundOneClipCredit(supabase, userIdForBilling);
+        } catch (e) {
+          console.error("[refinement-conversation] refund after schema fail", e);
+        }
+      }
+      return Response.json(
+        { error: "Invalid model output. No credits were charged." },
+        { status: 500 },
+      );
+    }
+
+    const filteredPatches: Record<string, string> = {};
+    if (coerced.data.answerPatches) {
+      for (const [k, v] of Object.entries(coerced.data.answerPatches)) {
+        if (!allowedFieldKeys.has(k)) continue;
+        if (typeof v !== "string" || !v.trim()) continue;
+        filteredPatches[k] = v.trim().slice(0, 2000);
+      }
+    }
+
+    const merged: Record<string, string> = {
+      ...answersPartial,
+      ...filteredPatches,
+    };
+    const readyForConfirm = refinementAnswersComplete(steps, merged);
+
+    return Response.json({
+      assistantMessage: coerced.data.assistantMessage.trim(),
+      answerPatches:
+        Object.keys(filteredPatches).length > 0 ? filteredPatches : undefined,
+      readyForConfirm,
+    });
+  } catch (e) {
+    console.error("[refinement-conversation] generateObject failed", e);
+    if (chargedCredit && userIdForBilling) {
+      try {
+        await refundOneClipCredit(supabase, userIdForBilling);
+      } catch (refundErr) {
+        console.error("[refinement-conversation] refund failed", refundErr);
+      }
+    }
+    return Response.json(
+      {
+        error: "Generation failed. No credits were charged.",
+      },
+      { status: 500 },
+    );
+  }
+}

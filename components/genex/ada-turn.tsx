@@ -148,15 +148,27 @@ export function AdaTurn({
             </div>
           ) : null}
 
-          <p
+          <div
             className={cn(
-              "mt-1.5 text-right text-[10px]",
+              "mt-1.5 flex flex-wrap items-center justify-end gap-2 text-right text-[10px]",
               kit ? "text-white/45" : "text-[var(--ada-text-disabled)]",
             )}
             suppressHydrationWarning
           >
-            {formatRelativeTime(turn.timestamp)}
-          </p>
+            {turn.isRestored ? (
+              <span
+                className={cn(
+                  "rounded-full px-1.5 py-0.5 font-medium tracking-wide uppercase",
+                  kit
+                    ? "bg-white/15 text-white/90"
+                    : "bg-[var(--ada-accent)]/15 text-[var(--ada-accent-hover)]",
+                )}
+              >
+                Restored
+              </span>
+            ) : null}
+            <span>{formatRelativeTime(turn.timestamp)}</span>
+          </div>
         </div>
       </div>
 
