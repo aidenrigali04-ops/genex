@@ -12,6 +12,27 @@ import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import OpenAI from "openai";
 
+import {
+  buildSnapCandidates,
+  detectSceneCutsFfmpeg,
+  detectSceneCutsFfmpegScaled,
+  detectSilenceMidpointsFfmpeg,
+  detectSilenceMidpointsFromWav,
+  extractMonoWav16kForSilence,
+  mergePlannerDurationBounds,
+  normalizeWhisperWords,
+  postRefineVariationSegments,
+  sampleWordBoundaryTimes,
+  tightenClipIntentWithOpenAI,
+} from "./video-clip-pipeline.js";
+import {
+  buildTimelineBlocks,
+  filterSegmentsForPlanner,
+  getSourceProcessingPlan,
+  selectPlanningWindowsOpenAI,
+  transcribeChunkedMedia,
+} from "./video-clip-long.js";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, ".env") });
 // Monorepo: Next app keys often live in repo root `.env.local` (same as text-video-worker).
@@ -394,13 +415,23 @@ async function prepareWhisperInput(mediaPath, tmpDir) {
 
 async function transcribeVerboseJson(jobId, filePath) {
   log(jobId, "Calling Whisper…");
-  const transcription = await openai.audio.transcriptions.create({
-    file: fs.createReadStream(filePath),
-    model: "whisper-1",
-    response_format: "verbose_json",
-    timestamp_granularities: ["segment"],
-  });
-  return transcription;
+  try {
+    return await openai.audio.transcriptions.create({
+      file: fs.createReadStream(filePath),
+      model: "whisper-1",
+      response_format: "verbose_json",
+      timestamp_granularities: ["segment", "word"],
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log(jobId, `Whisper word timestamps unavailable (${msg.slice(0, 200)}); segments-only retry…`);
+    return openai.audio.transcriptions.create({
+      file: fs.createReadStream(filePath),
+      model: "whisper-1",
+      response_format: "verbose_json",
+      timestamp_granularities: ["segment"],
+    });
+  }
 }
 
 function normalizeWhisperSegments(transcription) {
@@ -421,11 +452,16 @@ Critical rules about variation design:
 - READ the job_prompt carefully. If the user specified a goal (e.g. "Grow followers", "Promote a product"), EVERY variation label and segment selection must serve that goal.
 - If the user specified a niche (e.g. "Fitness", "Faith-forward"), the style_note for each variation must reflect that niche's native content style.
 - If the user specified a delivery (e.g. "captions on screen", "voiceover"), the caption_overlay and style_note must reflect that.
+- Honor tightened_intent when present: tone, target_platform, must_include_keywords, scoring_weights_hint, and intent_expansion must bias which transcript moments you pick and how you write style_note / caption_overlay.
+- When planner_context.source_is_windowed is true, transcript_segments are a SUBSET of the full video for token limits, but timestamps are ABSOLUTE wall-clock seconds — every segment {start,end} MUST stay within 0..video_duration_sec and you must still diversify picks across the whole runtime (do not only edit the first few minutes unless the prompt demands it).
+- editor_signals.scene_cut_times_sec and editor_signals.silence_boundary_times_sec plus word_boundaries_sec are measured from the real media — place each segment start/end within ~0.45s of at least one of those times when possible so cuts land on natural boundaries (avoid mid-breath / mid-cut unless transcript forces it).
+- First 3 seconds of each variation (first segment start) should overlap a high-energy or high-information moment when the transcript allows (hook-first discipline).
 - Make each of the 5 variations genuinely different in angle, not just different segments of the same narrative. Name them descriptively: "Hook-first cut", "Story arc", "Contrarian angle", "CTA-led", "Transformation edit".
 - Never use generic labels like "Variation 1" or "Short clip".
 
 Rules for total runtime of each variation (sum of segment lengths after clipping to 0…video_duration_sec):
-- If video_duration_sec >= 15: each variation should total about 15–100 seconds (prefer 20–60s when the source allows; use up to ~100s for longer sources when it serves the edit).
+- Respect planner_constraints.total_segment_seconds_min and total_segment_seconds_max exactly (post-processing may snap trims slightly; stay inside the window).
+- If video_duration_sec >= 15: prefer 21–34s totals when the narrative supports it; otherwise use the full allowed min/max.
 - If video_duration_sec < 15: use as much strong footage as fits—each variation should total roughly 70–100% of the source length (still use multiple segments when it helps).
 Return ONLY a valid JSON object (no markdown fences) with key "variations": an array of exactly 5 objects. Each object: variation_number (1-5), label (string), segments (non-empty array of {start, end} in seconds, within the video), caption_overlay (string or null), style_note (string).`;
 
@@ -486,12 +522,25 @@ async function planVariationsWithGptOnce(
   durationSec,
   attemptIndex,
   priorHint,
+  pipelineOpts,
 ) {
-  const { minTotal, maxTotal } = variationTotalDurationBounds(durationSec);
+  const { minTotal, maxTotal } = pipelineOpts.mergedBounds;
   const userPayload = {
     job_prompt: prompt,
     video_duration_sec: durationSec,
     transcript_segments: transcriptSegments.slice(0, 400),
+    tightened_intent: pipelineOpts.tightened ?? null,
+    editor_signals: {
+      scene_cut_times_sec: (pipelineOpts.sceneCuts ?? []).slice(0, 120),
+      silence_boundary_times_sec: (pipelineOpts.silenceMids ?? []).slice(0, 100),
+    },
+    word_boundaries_sec: (pipelineOpts.wordBoundarySample ?? []).slice(0, 500),
+    planner_context: {
+      source_is_windowed: Boolean(pipelineOpts.planningWindows?.length),
+      planning_focus_windows: pipelineOpts.planningWindows ?? null,
+      transcript_segment_count: transcriptSegments.length,
+      full_source_segment_count: pipelineOpts.fullTranscriptSegmentCount ?? transcriptSegments.length,
+    },
     planner_constraints: {
       variation_count: 5,
       total_segment_seconds_min: minTotal,
@@ -617,8 +666,8 @@ function formatGenerationContextWorker(gc) {
   }
 }
 
-async function planVariationsWithGpt(jobId, prompt, transcriptSegments, durationSec) {
-  const { minTotal, maxTotal } = variationTotalDurationBounds(durationSec);
+async function planVariationsWithGpt(jobId, prompt, transcriptSegments, durationSec, pipelineOpts) {
+  const { minTotal, maxTotal } = pipelineOpts.mergedBounds;
   let lastErr = new Error("Variations plan failed after retries.");
   for (let attempt = 0; attempt < 3; attempt++) {
     log(jobId, attempt === 0 ? "Planning variations with GPT-4o…" : `Planning variations retry ${attempt + 1}/3…`);
@@ -627,13 +676,24 @@ async function planVariationsWithGpt(jobId, prompt, transcriptSegments, duration
       priorHint = `Previous reply was invalid (${String(lastErr.message)}). Reply with a single JSON object only. "variations" must be an array of length exactly 5. Each item needs a non-empty "segments" array of {start,end} in seconds within 0..${Number(durationSec).toFixed(2)}. Each variation's summed segment length (after clipping to the video) must be between ${minTotal.toFixed(2)} and ${maxTotal.toFixed(2)} seconds.`;
     }
     try {
-      return await planVariationsWithGptOnce(
+      const raw = await planVariationsWithGptOnce(
         prompt,
         transcriptSegments,
         durationSec,
         attempt,
         priorHint,
+        pipelineOpts,
       );
+      return raw.map((v) => ({
+        ...v,
+        segments: postRefineVariationSegments(
+          v.segments,
+          pipelineOpts.snapCandidates,
+          pipelineOpts.words,
+          durationSec,
+          { minTotal, maxTotal },
+        ),
+      }));
     } catch (e) {
       lastErr = e instanceof Error ? e : new Error(String(e));
       log(jobId, `Variations plan attempt ${attempt + 1} failed: ${lastErr.message}`);
@@ -760,11 +820,13 @@ async function renderVariationWithFfmpeg(jobId, inputMp4, outPath, plan, duratio
     ];
     if (audioLabel) {
       args.push("-map", `[${audioLabel}]`);
-      args.push("-c:a", "aac", "-b:a", "128k");
+      args.push("-c:a", "aac", "-b:a", process.env.GENEX_AAC_BITRATE?.trim() || "192k");
     } else {
       args.push("-an");
     }
-    args.push("-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-movflags", "+faststart", outPath);
+    const crf = process.env.GENEX_X264_CRF?.trim() || "20";
+    const preset = process.env.GENEX_X264_PRESET?.trim() || "veryfast";
+    args.push("-c:v", "libx264", "-preset", preset, "-crf", crf, "-movflags", "+faststart", outPath);
 
     log(jobId, `ffmpeg encoding variation ${plan.variation_number}…`);
     const child = spawn("ffmpeg", args, { stdio: "inherit", env: process.env });
@@ -899,9 +961,98 @@ async function processJob(job) {
     if (st1) throw new Error(st1.message);
 
     const durationSec = await ffprobeDurationSeconds(inputMp4);
-    const whisperIn = await prepareWhisperInput(inputMp4, tmpDir);
-    const transcription = await transcribeVerboseJson(jobId, whisperIn);
+    const inputStat = fs.statSync(inputMp4);
+    const sourcePlan = getSourceProcessingPlan(durationSec, inputStat.size);
+    log(
+      jobId,
+      `Source tier: ${sourcePlan.isLong ? "long" : "short"} (chunked_asr=${sourcePlan.chunkedAsr}, chunk_s=${sourcePlan.chunkSec}, two_stage=${sourcePlan.twoStagePlan}, proxy_scene=${sourcePlan.useProxyScene}, wav_silence=${sourcePlan.useWavSilence})`,
+    );
+
+    const gcBlock = formatGenerationContextWorker(job.generation_context);
+    const planningPrompt = gcBlock
+      ? `${gcBlock}\n\n---\nEditor brief (required):\n${job.prompt}`
+      : job.prompt;
+
+    let transcription;
+    if (sourcePlan.chunkedAsr) {
+      transcription = await transcribeChunkedMedia(
+        jobId,
+        inputMp4,
+        tmpDir,
+        durationSec,
+        sourcePlan.chunkSec,
+        transcribeVerboseJson,
+      );
+    } else {
+      const whisperIn = await prepareWhisperInput(inputMp4, tmpDir);
+      transcription = await transcribeVerboseJson(jobId, whisperIn);
+    }
+
     const transcriptSegments = normalizeWhisperSegments(transcription);
+    const words = normalizeWhisperWords({
+      words: Array.isArray(transcription.words) ? transcription.words : [],
+    });
+
+    const sceneP = sourcePlan.useProxyScene
+      ? detectSceneCutsFfmpegScaled(jobId, inputMp4, durationSec)
+      : detectSceneCutsFfmpeg(jobId, inputMp4, durationSec);
+
+    const silenceP = sourcePlan.useWavSilence
+      ? (async () => {
+          const wav = path.join(tmpDir, "silence-probe.wav");
+          await extractMonoWav16kForSilence(jobId, inputMp4, wav);
+          try {
+            return await detectSilenceMidpointsFromWav(jobId, wav);
+          } finally {
+            try {
+              fs.unlinkSync(wav);
+            } catch {
+              /* ignore */
+            }
+          }
+        })()
+      : detectSilenceMidpointsFfmpeg(jobId, inputMp4);
+
+    const [sceneCuts, silenceMids, tightened] = await Promise.all([
+      sceneP,
+      silenceP,
+      tightenClipIntentWithOpenAI(openai, jobId, planningPrompt, durationSec),
+    ]);
+
+    let plannerSegments = transcriptSegments;
+    let planningWindows = null;
+    if (sourcePlan.twoStagePlan && transcriptSegments.length > 28) {
+      const blocks = buildTimelineBlocks(transcriptSegments, durationSec, 160, 38);
+      planningWindows = await selectPlanningWindowsOpenAI(
+        openai,
+        jobId,
+        blocks,
+        durationSec,
+        planningPrompt,
+      );
+      const pad = Number(process.env.GENEX_PLANNER_WINDOW_PAD_SEC) || 55;
+      plannerSegments = filterSegmentsForPlanner(
+        transcriptSegments,
+        planningWindows,
+        durationSec,
+        pad,
+        400,
+      );
+      log(
+        jobId,
+        `Two-stage planner: ${plannerSegments.length} / ${transcriptSegments.length} transcript segments (${planningWindows?.length ?? 0} windows)`,
+      );
+      if (plannerSegments.length < 10) {
+        log(jobId, "Window filter tight — using full transcript for planner");
+        plannerSegments = transcriptSegments;
+        planningWindows = null;
+      }
+    }
+
+    const wordBoundarySample = sampleWordBoundaryTimes(words, durationSec);
+    const baseBounds = variationTotalDurationBounds(durationSec);
+    const mergedBounds = mergePlannerDurationBounds(baseBounds, tightened, durationSec);
+    const snapCandidates = buildSnapCandidates(sceneCuts, silenceMids, words, durationSec);
 
     log(jobId, "Planning…");
     const { error: st2 } = await supabaseAdmin
@@ -910,17 +1061,17 @@ async function processJob(job) {
       .eq("id", jobId);
     if (st2) throw new Error(st2.message);
 
-    const gcBlock = formatGenerationContextWorker(job.generation_context);
-    const planningPrompt = gcBlock
-      ? `${gcBlock}\n\n---\nEditor brief (required):\n${job.prompt}`
-      : job.prompt;
-
-    let planned = await planVariationsWithGpt(
-      jobId,
-      planningPrompt,
-      transcriptSegments,
-      durationSec,
-    );
+    let planned = await planVariationsWithGpt(jobId, planningPrompt, plannerSegments, durationSec, {
+      tightened,
+      sceneCuts,
+      silenceMids,
+      wordBoundarySample,
+      mergedBounds,
+      words,
+      snapCandidates,
+      planningWindows,
+      fullTranscriptSegmentCount: transcriptSegments.length,
+    });
     planned = [...planned].sort((a, b) => a.variation_number - b.variation_number);
 
     log(jobId, "Generating…");

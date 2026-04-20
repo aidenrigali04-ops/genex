@@ -23,7 +23,7 @@ export async function GET(
   const { data: job, error } = await supabase
     .from("text_video_jobs")
     .select(
-      "id, status, script, output_url, error_message, shot_plan, credit_cost, created_at, updated_at",
+      "id, status, script, output_url, error_message, shot_plan, clip_engine, credit_cost, created_at, updated_at",
     )
     .eq("id", id)
     .eq("user_id", session.user.id)

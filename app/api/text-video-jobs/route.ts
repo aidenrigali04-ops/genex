@@ -1,6 +1,15 @@
 import { z } from "zod";
 
 import { isUnlimitedCreditsModeServer } from "@/lib/credits-config";
+import {
+  formatToolContextForPlanner,
+  runClipToolsForScript,
+} from "@/lib/clip-tool-registry";
+import { insertClipMemory, searchClipMemory } from "@/lib/clip-vector-memory";
+import {
+  setClipSessionLastJob,
+  withClipExclusive,
+} from "@/lib/clip-session-store";
 import { createClient } from "@/lib/supabase/server";
 import { runTextVideoClipEngine } from "@/lib/text-video-clip-engine";
 
@@ -96,133 +105,153 @@ export async function POST(req: Request) {
   }
 
   const userId = session.user.id;
-  const defaultVoice =
-    process.env.ELEVENLABS_VOICE_ID ?? "21m00Tcm4TlvDq8ikWAM";
-  const voiceId = parsed.data.voiceId ?? defaultVoice;
 
-  const shotPlanForInsert = parsed.data.shotPlan?.length
-    ? parsed.data.shotPlan.map((s) => ({
-        keyword: s.keyword,
-        duration: s.duration,
-        caption: s.caption,
-      }))
-    : null;
+  return await withClipExclusive(userId, async () => {
+    const defaultVoice =
+      process.env.ELEVENLABS_VOICE_ID ?? "21m00Tcm4TlvDq8ikWAM";
+    const voiceId = parsed.data.voiceId ?? defaultVoice;
 
-  const { data: recentScripts, error: recentErr } = await supabase
-    .from("text_video_jobs")
-    .select("script")
-    .eq("user_id", userId)
-    .eq("status", "complete")
-    .order("created_at", { ascending: false })
-    .limit(5);
+    const shotPlanForInsert = parsed.data.shotPlan?.length
+      ? parsed.data.shotPlan.map((s) => ({
+          keyword: s.keyword,
+          duration: s.duration,
+          caption: s.caption,
+        }))
+      : null;
 
-  if (recentErr) {
-    console.warn("[text-video-jobs] recent_scripts:", recentErr.message);
-  }
+    const { data: recentScripts, error: recentErr } = await supabase
+      .from("text_video_jobs")
+      .select("script")
+      .eq("user_id", userId)
+      .eq("status", "complete")
+      .order("created_at", { ascending: false })
+      .limit(5);
 
-  const clipBundle = await runTextVideoClipEngine({
-    script: parsed.data.script,
-    recentScriptExcerpts: (recentScripts ?? []).map((r) => String(r.script ?? "")),
-  });
-
-  if (!clipBundle.evaluated.pass) {
-    return Response.json(
-      {
-        error: "clip_engine_rejected",
-        message: clipBundle.evaluated.notes.join(" "),
-        details: clipBundle.evaluated.notes,
-      },
-      { status: 422 },
-    );
-  }
-
-  if (clipBundle.evaluated.notes.length > 0) {
-    console.info("[text-video-jobs] clip_engine_notes", clipBundle.evaluated.notes);
-  }
-
-  let creditsRemaining: number | undefined;
-
-  if (!isUnlimitedCreditsModeServer()) {
-    const { error: profileBootstrapErr } = await supabase
-      .from("profiles")
-      .insert({ id: userId });
-    if (
-      profileBootstrapErr &&
-      profileBootstrapErr.code !== "23505" &&
-      !profileBootstrapErr.message.toLowerCase().includes("duplicate")
-    ) {
-      console.warn("[text-video-jobs] profiles bootstrap:", profileBootstrapErr.message);
+    if (recentErr) {
+      console.warn("[text-video-jobs] recent_scripts:", recentErr.message);
     }
 
-    const { data: creditData, error: creditError } = await supabase.rpc(
-      "consume_credits",
-      { p_cost: TEXT_VIDEO_CREDIT_COST, p_user_id: userId },
-    );
+    const [retrievedMemories, toolLines] = await Promise.all([
+      searchClipMemory(supabase, userId, parsed.data.script),
+      runClipToolsForScript(parsed.data.script),
+    ]);
+    const toolContextBlock = formatToolContextForPlanner(toolLines);
 
-    if (creditError) {
-      console.error("[text-video-jobs] consume_credits failed", creditError.message);
+    const clipBundle = await runTextVideoClipEngine({
+      script: parsed.data.script,
+      recentScriptExcerpts: (recentScripts ?? []).map((r) =>
+        String(r.script ?? ""),
+      ),
+      retrievedMemories,
+      toolContextBlock,
+    });
+
+    if (!clipBundle.evaluated.pass) {
       return Response.json(
-        { error: "credit_check_failed", message: "Could not verify credits." },
-        { status: 503 },
+        {
+          error: "clip_engine_rejected",
+          message: clipBundle.evaluated.notes.join(" "),
+          details: clipBundle.evaluated.notes,
+        },
+        { status: 422 },
       );
     }
 
-    const creditRow = (
-      Array.isArray(creditData) ? creditData[0] : creditData
-    ) as CreditRow | undefined;
+    if (clipBundle.evaluated.notes.length > 0) {
+      console.info("[text-video-jobs] clip_engine_notes", clipBundle.evaluated.notes);
+    }
 
-    if (
-      !creditRow ||
-      typeof creditRow.success !== "boolean" ||
-      creditRow.success !== true
-    ) {
-      if (creditRow?.reason === "no_credits") {
+    let creditsRemaining: number | undefined;
+
+    if (!isUnlimitedCreditsModeServer()) {
+      const { error: profileBootstrapErr } = await supabase
+        .from("profiles")
+        .insert({ id: userId });
+      if (
+        profileBootstrapErr &&
+        profileBootstrapErr.code !== "23505" &&
+        !profileBootstrapErr.message.toLowerCase().includes("duplicate")
+      ) {
+        console.warn("[text-video-jobs] profiles bootstrap:", profileBootstrapErr.message);
+      }
+
+      const { data: creditData, error: creditError } = await supabase.rpc(
+        "consume_credits",
+        { p_cost: TEXT_VIDEO_CREDIT_COST, p_user_id: userId },
+      );
+
+      if (creditError) {
+        console.error("[text-video-jobs] consume_credits failed", creditError.message);
         return Response.json(
-          { error: "no_credits", message: "Not enough credits." },
+          { error: "credit_check_failed", message: "Could not verify credits." },
+          { status: 503 },
+        );
+      }
+
+      const creditRow = (
+        Array.isArray(creditData) ? creditData[0] : creditData
+      ) as CreditRow | undefined;
+
+      if (
+        !creditRow ||
+        typeof creditRow.success !== "boolean" ||
+        creditRow.success !== true
+      ) {
+        if (creditRow?.reason === "no_credits") {
+          return Response.json(
+            { error: "no_credits", message: "Not enough credits." },
+            { status: 402 },
+          );
+        }
+        return Response.json(
+          {
+            error: "credit_denied",
+            message: creditRow?.reason ?? "Could not use credits.",
+          },
           { status: 402 },
         );
       }
-      return Response.json(
-        {
-          error: "credit_denied",
-          message: creditRow?.reason ?? "Could not use credits.",
-        },
-        { status: 402 },
-      );
+
+      creditsRemaining = creditRow.remaining;
     }
 
-    creditsRemaining = creditRow.remaining;
-  }
+    const resolvedHook =
+      parsed.data.hookStyle?.trim() ||
+      clipBundle.hook_style_resolved ||
+      undefined;
 
-  const resolvedHook =
-    parsed.data.hookStyle?.trim() ||
-    clipBundle.hook_style_resolved ||
-    undefined;
+    const { data: job, error } = await supabase
+      .from("text_video_jobs")
+      .insert({
+        user_id: userId,
+        generation_id: parsed.data.generationId ?? null,
+        script: parsed.data.script,
+        voice_id: voiceId,
+        credit_cost: TEXT_VIDEO_CREDIT_COST,
+        clip_engine: clipBundle,
+        ...(resolvedHook ? { hook_style: resolvedHook } : {}),
+        ...(shotPlanForInsert ? { shot_plan: shotPlanForInsert } : {}),
+      })
+      .select("id, status, created_at, credit_cost")
+      .single();
 
-  const { data: job, error } = await supabase
-    .from("text_video_jobs")
-    .insert({
-      user_id: userId,
-      generation_id: parsed.data.generationId ?? null,
-      script: parsed.data.script,
-      voice_id: voiceId,
-      credit_cost: TEXT_VIDEO_CREDIT_COST,
-      clip_engine: clipBundle,
-      ...(resolvedHook ? { hook_style: resolvedHook } : {}),
-      ...(shotPlanForInsert ? { shot_plan: shotPlanForInsert } : {}),
-    })
-    .select("id, status, created_at, credit_cost")
-    .single();
+    if (error || !job) {
+      console.error("[text-video-jobs] insert_failed", error?.message);
+      return Response.json({ error: "insert_failed" }, { status: 500 });
+    }
 
-  if (error || !job) {
-    console.error("[text-video-jobs] insert_failed", error?.message);
-    return Response.json({ error: "insert_failed" }, { status: 500 });
-  }
+    void insertClipMemory(supabase, {
+      userId,
+      jobId: job.id,
+      content: parsed.data.script,
+    });
+    setClipSessionLastJob(userId, job.id);
 
-  return Response.json({
-    ...job,
-    ...(typeof creditsRemaining === "number"
-      ? { credits_remaining: creditsRemaining }
-      : {}),
+    return Response.json({
+      ...job,
+      ...(typeof creditsRemaining === "number"
+        ? { credits_remaining: creditsRemaining }
+        : {}),
+    });
   });
 }

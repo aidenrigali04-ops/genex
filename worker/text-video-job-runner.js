@@ -103,6 +103,21 @@ export async function processTextVideoJob(supabase, job) {
       (await planShots(job.script, {
         hookStyle: job.hook_style ?? undefined,
         clipEngineContext: clipCtx,
+        supabase,
+        jobId: job.id,
+        onCheckpoint: async (phase) => {
+          const hint =
+            phase === "planning_draft_start"
+              ? "Planning shots…"
+              : phase === "critique_stream_start"
+                ? "Reviewing shot plan…"
+                : null;
+          if (!hint) return;
+          await supabase
+            .from("text_video_jobs")
+            .update({ error_message: hint })
+            .eq("id", job.id);
+        },
       }));
     await supabase
       .from("text_video_jobs")
@@ -217,6 +232,23 @@ export async function processTextVideoJob(supabase, job) {
       storage_path: storagePath,
       error_message: null,
     });
+
+    const vaultBody = [
+      "## Clip vault",
+      `job_id=${job.id}`,
+      `output=${signedData?.signedUrl ?? "n/a"}`,
+      "",
+      "### Script",
+      job.script.slice(0, 4000),
+    ].join("\n");
+    const { error: vaultErr } = await supabase.from("clip_vault_entries").insert({
+      user_id: job.user_id,
+      job_id: job.id,
+      body: vaultBody,
+    });
+    if (vaultErr) {
+      console.warn("[text-video] vault_write_failed", vaultErr.message);
+    }
   } catch (err) {
     console.error(`[text-video] Job ${job.id} failed:`, err);
     await setStatus(supabase, job.id, {

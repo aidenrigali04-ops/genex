@@ -24,6 +24,10 @@ export type ClipEngineBundle = {
   hook_style_resolved: string | null;
   evaluated: { pass: boolean; notes: string[] };
   intent_source: "heuristic" | "heuristic+openai" | "fallback";
+  /** Vector top-k snippets (same user) merged into planner context. */
+  retrieved_memories?: string[];
+  /** Tool registry outputs (e.g. YouTube oEmbed) merged into planner context. */
+  tool_context_block?: string;
 };
 
 function detectYoutube(script: string): boolean {
@@ -149,6 +153,8 @@ function assemblePlannerContextBlock(
   script: string,
   intent: ClipIntent,
   rollingSummary: string,
+  retrievedMemories: string[],
+  toolContextBlock: string,
 ): string {
   const lines = [
     "--- Clip session context (honor; do not contradict) ---",
@@ -160,12 +166,20 @@ function assemblePlannerContextBlock(
     `Sub-goals:\n${intent.sub_goals.map((g, i) => `${i + 1}. ${g}`).join("\n")}`,
     `Constraints:\n${intent.constraints.map((c, i) => `${i + 1}. ${c}`).join("\n")}`,
   ];
+  if (toolContextBlock.trim()) {
+    lines.push(toolContextBlock.trim());
+  }
+  if (retrievedMemories.length > 0) {
+    lines.push(
+      `Retrieved prior prompts (semantic):\n${retrievedMemories.map((m, i) => `${i + 1}. ${m}`).join("\n")}`,
+    );
+  }
   if (rollingSummary.trim()) {
     lines.push(`Rolling thread memory:\n${rollingSummary}`);
   }
   lines.push("--- End context ---");
   const block = lines.join("\n");
-  return block.length > 2400 ? `${block.slice(0, 2397)}...` : block;
+  return block.length > 2800 ? `${block.slice(0, 2797)}...` : block;
 }
 
 export function evaluateClipTurn(
@@ -189,12 +203,21 @@ export type RunClipEngineInput = {
   script: string;
   /** Short excerpts from recent completed jobs (most recent first). */
   recentScriptExcerpts: string[];
+  /** Vector memory top-k (same user). */
+  retrievedMemories?: string[];
+  /** Pre-rendered tool block (YouTube oEmbed, etc.). */
+  toolContextBlock?: string;
 };
 
 export async function runTextVideoClipEngine(
   input: RunClipEngineInput,
 ): Promise<ClipEngineBundle> {
   const excerpts = input.recentScriptExcerpts.map((s) => s.trim().slice(0, 200)).filter(Boolean);
+  const retrieved = (input.retrievedMemories ?? [])
+    .map((s) => s.trim().slice(0, 400))
+    .filter(Boolean)
+    .slice(0, 8);
+  const toolBlock = (input.toolContextBlock ?? "").trim();
   let heuristic = buildHeuristicIntent(input.script, excerpts);
   let intentSource: ClipEngineBundle["intent_source"] = "heuristic";
 
@@ -209,7 +232,13 @@ export async function runTextVideoClipEngine(
       ? `Recent user prompts (newest first): ${excerpts.slice(0, 5).join(" · ").slice(0, 500)}`
       : "";
 
-  const plannerBlock = assemblePlannerContextBlock(input.script, heuristic, rolling);
+  const plannerBlock = assemblePlannerContextBlock(
+    input.script,
+    heuristic,
+    rolling,
+    retrieved,
+    toolBlock,
+  );
   const hook = hookStyleFromIntent(heuristic, input.script);
   const evaluated = evaluateClipTurn(input.script, heuristic);
 
@@ -225,5 +254,7 @@ export async function runTextVideoClipEngine(
     hook_style_resolved: hook,
     evaluated,
     intent_source: intentSource,
+    ...(retrieved.length > 0 ? { retrieved_memories: retrieved } : {}),
+    ...(toolBlock.length > 0 ? { tool_context_block: toolBlock } : {}),
   };
 }
