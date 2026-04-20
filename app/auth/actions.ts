@@ -64,8 +64,13 @@ export async function signInWithEmail(formData: FormData) {
   });
 
   if (error) {
+    const encoded = encodeURIComponent(error.message);
+    const errorReturn = formData.get("errorReturn");
+    if (errorReturn === "home") {
+      redirect(`/?authError=${encoded}&next=${encodeURIComponent(next)}`);
+    }
     redirect(
-      `/auth/login?authError=${encodeURIComponent(error.message)}&next=${encodeURIComponent(next)}`,
+      `/auth/login?authError=${encoded}&next=${encodeURIComponent(next)}`,
     );
   }
 

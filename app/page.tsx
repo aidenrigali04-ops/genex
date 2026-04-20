@@ -13,6 +13,7 @@ import {
   type ProfileCreditsRow,
 } from "@/lib/profile-credits-display";
 import { isPlatformId, type PlatformId } from "@/lib/platforms";
+import { normalizeInternalReturnPath } from "@/lib/normalize-internal-return-path";
 import type { AdaSidebarVoiceProfile } from "@/components/genex/ada-sidebar";
 import type { ClipPackageHistoryItem } from "@/components/home-workspace";
 import { createClient } from "@/lib/supabase/server";
@@ -20,6 +21,7 @@ import { createClient } from "@/lib/supabase/server";
 type SearchParams = {
   authError?: string;
   authSuccess?: string;
+  next?: string;
 };
 
 type PageProps = {
@@ -28,6 +30,10 @@ type PageProps = {
 
 export default async function Home({ searchParams }: PageProps) {
   const params = await searchParams;
+  const rawNext = typeof params.next === "string" ? params.next : "/";
+  const signInNext = normalizeInternalReturnPath(
+    rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/",
+  );
   const unlimitedCredits = isUnlimitedCreditsModeServer();
   const supabase = await createClient();
   const {
@@ -180,6 +186,7 @@ export default async function Home({ searchParams }: PageProps) {
       unlimitedCredits={unlimitedCredits || profileUnlimited}
       authError={params.authError ?? null}
       authSuccess={params.authSuccess ?? null}
+      signInNext={signInNext}
     />
   );
 }

@@ -6,8 +6,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Clock, User } from "lucide-react";
 
-import { signInWithGoogle, signOut } from "@/app/auth/actions";
+import { signOut } from "@/app/auth/actions";
 import { GuestSignupGateOverlay } from "@/components/auth/guest-signup-gate-overlay";
+import { AdaLoginPanel } from "@/components/auth/ada-login-panel";
+import { AdaMarketingPanel } from "@/components/auth/ada-sign-up-view";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -133,6 +135,8 @@ type HomeWorkspaceProps = {
   unlimitedCredits?: boolean;
   authError?: string | null;
   authSuccess?: string | null;
+  /** Post-login redirect for forms opened from the home sign-in overlay. */
+  signInNext?: string;
 };
 
 export function HomeWorkspace({
@@ -146,6 +150,7 @@ export function HomeWorkspace({
   unlimitedCredits = false,
   authError,
   authSuccess,
+  signInNext = "/",
 }: HomeWorkspaceProps) {
   const router = useRouter();
   const creditsUnlimited =
@@ -181,7 +186,7 @@ export function HomeWorkspace({
   const [generationSteps, setGenerationSteps] = useState<GenerationUiStep[]>(
     [],
   );
-  const [error, setError] = useState<string | null>(authError ?? null);
+  const [error, setError] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [clips, setClips] = useState(initialClipPackages);
   const [turns, setTurns] = useState<ClipTurn[]>([]);
@@ -235,6 +240,10 @@ export function HomeWorkspace({
   useEffect(() => {
     if (user) setSignInOpen(false);
   }, [user]);
+
+  useEffect(() => {
+    if (authError && !user) setSignInOpen(true);
+  }, [authError, user]);
 
   useEffect(() => {
     if (user) setGuestSignupGateOpen(false);
@@ -1467,23 +1476,40 @@ export function HomeWorkspace({
 
       <GuestSignupGateOverlay open={guestSignupGateOpen} nextPath="/" />
 
-      <Dialog open={signInOpen} onOpenChange={setSignInOpen}>
-        <DialogContent className="border border-ada-border bg-ada-card text-ada-primary sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Sign in</DialogTitle>
-            <DialogDescription>
-              Sign in to save your clips and buy more credits.
-            </DialogDescription>
-          </DialogHeader>
-          <form action={signInWithGoogle} className="space-y-3">
-            <input type="hidden" name="next" value="/" />
-            <Button
-              type="submit"
-              className="w-full rounded-ada-input bg-linear-to-r from-[#7B5CFA] to-[#9B6FFF] font-semibold text-white transition-opacity hover:opacity-90"
-            >
-              Continue with Google
-            </Button>
-          </form>
+      <Dialog
+        open={signInOpen}
+        onOpenChange={(open) => {
+          setSignInOpen(open);
+          if (!open && (authError ?? authSuccess)) {
+            router.replace("/");
+          }
+        }}
+      >
+        <DialogContent
+          showCloseButton
+          overlayClassName="bg-black/55 supports-backdrop-filter:backdrop-blur-sm"
+          className="max-h-[min(90dvh,920px)] w-[calc(100%-1.5rem)] max-w-[min(1024px,calc(100%-1.5rem))] gap-0 overflow-hidden border-0 bg-transparent p-0 text-white ring-white/15 sm:max-w-[min(1024px,calc(100%-2rem))]"
+        >
+          <DialogTitle className="sr-only">Log in</DialogTitle>
+          <div className="relative flex max-h-[min(90dvh,920px)] flex-col overflow-hidden rounded-xl border border-white/12 bg-[#0A050F] shadow-[0_24px_80px_rgba(0,0,0,0.45)] lg:flex-row">
+            <AdaFigmaAmbientBackground />
+            <div className="relative z-[1] flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-6 py-8 sm:px-10 lg:max-w-[min(420px,100%)] lg:justify-center lg:py-10">
+              <AdaLoginPanel
+                next={signInNext}
+                authError={authError ?? null}
+                onDismiss={() => {
+                  setSignInOpen(false);
+                  if (authError ?? authSuccess) router.replace("/");
+                }}
+              />
+            </div>
+            <div className="relative z-[1] border-t border-white/10 lg:hidden">
+              <AdaMarketingPanel className="min-h-0 pt-10 pb-8 sm:px-10 sm:pt-12 lg:min-h-0 lg:max-w-none" />
+            </div>
+            <div className="relative z-[1] hidden min-h-0 min-w-0 flex-1 overflow-y-auto border-t border-white/10 lg:block lg:border-l lg:border-t-0">
+              <AdaMarketingPanel className="lg:min-h-0 lg:max-w-none lg:flex-1 lg:pt-14 lg:pb-8" />
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 

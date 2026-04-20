@@ -52,12 +52,13 @@ function AuthField({
   );
 }
 
-export function AdaMarketingPanel() {
+export function AdaMarketingPanel({ className }: { className?: string }) {
   return (
     <div
       className={cn(
         "flex w-full flex-col justify-center gap-10 px-6 pb-5 pt-16 sm:px-10 sm:pt-[100px] lg:min-h-dvh lg:max-w-[756px] lg:flex-1",
         "bg-[rgba(198,108,255,0.08)]",
+        className,
       )}
     >
       <div className="relative flex flex-col gap-1">
