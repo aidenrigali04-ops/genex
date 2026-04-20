@@ -1,6 +1,9 @@
 "use client";
 
+import { useChat } from "@ai-sdk/react";
+import { DefaultChatTransport, type UIMessage } from "ai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -9,6 +12,7 @@ import {
   type RefinementKind,
   type RefinementStepDef,
 } from "@/lib/refinement-steps";
+import { refinementAnswersComplete } from "@/lib/refinement-conversation-prompt";
 import {
   buildSummaryFromContext,
   GENERATION_CONTEXT_VERSION,
@@ -18,6 +22,15 @@ import { readGuestCreditsRemaining } from "@/lib/guest-credits";
 import type { PlatformId } from "@/lib/platforms";
 import { PLATFORM_BY_ID } from "@/lib/platforms";
 import { cn } from "@/lib/utils";
+
+function coachTextFromParts(message: UIMessage) {
+  return message.parts
+    .filter(
+      (part): part is { type: "text"; text: string } => part.type === "text",
+    )
+    .map((part) => part.text)
+    .join("");
+}
 
 export type RemoteRefinementState =
   | { phase: "loading" }
@@ -33,6 +46,23 @@ export type ThreadEntry =
       displayLabel: string;
       storedValue: string;
     };
+
+/** Free-form user line in ChatGPT-style clip refinement (video_variations + embed). */
+export type ConversationalRefinementMsg = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+};
+
+const CLIP_CONVERSATION_WELCOME = `I'm Ada. Let's lock in how we should cut your five shorts — just chat naturally, no forms.
+
+Tell me in your own words:
+• About how long each cut should feel (or say you have no preference)
+• What you're optimizing for (followers, a promo, entertainment, traffic…)
+• Voiceover, bold on-screen captions, or a mix
+• The hook vibe you like (curiosity, bold claim, story beat, etc.)
+
+I'll reflect back what I understood and we can tweak until you're ready to generate.`;
 
 export type RefinementChatPanelProps = {
   /** When true, the panel is shown and internal step state resets on activation. */
@@ -72,6 +102,20 @@ export type RefinementChatPanelProps = {
    * for clarifications. Uses one chat-style credit per request when signed in.
    */
   llmAssist?: boolean;
+  /**
+   * Clip My Video: merge clip_first coach (`/api/chat`) with conversational refinement in one panel.
+   * Requires `clipCoachGenerationContext`, `clipCoachBriefPrefix`, `onApplyCoachToPrompt`.
+   */
+  unifiedClipCoach?: boolean;
+  /** When false, only clip coach shows; when true, refinement thread + job setup appear below coach. */
+  refinementActive?: boolean;
+  clipCoachGenerationContext?: GenerationContextV1 | null;
+  clipCoachBriefPrefix?: string;
+  onApplyCoachToPrompt?: (text: string) => void;
+  /** Bump to clear streaming coach history (e.g. New run). */
+  clipCoachResetNonce?: number;
+  /** Shown in unified clip coach chrome for guest-credit copy. */
+  user?: { id: string; email: string } | null;
 };
 
 function platformLabels(ids: PlatformId[]): string {
@@ -123,6 +167,13 @@ export function RefinementChatPanel({
   onOpenTypedAnswer,
   onDraftContextChange,
   llmAssist: llmAssistProp,
+  unifiedClipCoach = false,
+  refinementActive = true,
+  clipCoachGenerationContext = null,
+  clipCoachBriefPrefix = "",
+  onApplyCoachToPrompt,
+  clipCoachResetNonce = 0,
+  user = null,
 }: RefinementChatPanelProps) {
   const llmAssist = llmAssistProp ?? embedInChat;
   const kit = variant === "adaKit";
@@ -140,6 +191,50 @@ export function RefinementChatPanel({
   const remoteError =
     remoteRefinement?.phase === "error" ? remoteRefinement : null;
 
+  /** Clip My Video (embed): ChatGPT-style refinement only; wizard kept for other modes. */
+  const conversationalClip =
+    embedInChat &&
+    kind === "video_variations" &&
+    !remoteLoading &&
+    !remoteError;
+
+  const unifiedMode = conversationalClip && unifiedClipCoach;
+
+  const coachGenRef = useRef<GenerationContextV1 | null>(null);
+  const coachBriefRef = useRef("");
+  useEffect(() => {
+    coachGenRef.current = clipCoachGenerationContext;
+  }, [clipCoachGenerationContext]);
+  useEffect(() => {
+    coachBriefRef.current = clipCoachBriefPrefix.trim();
+  }, [clipCoachBriefPrefix]);
+
+  const coachTransport = useMemo(
+    () =>
+      new DefaultChatTransport({
+        api: "/api/chat",
+        credentials: "same-origin",
+        body: () => ({
+          inputMode: "clip_first" as const,
+          generationContext: coachGenRef.current,
+          guestCreditsRemaining: readGuestCreditsRemaining(),
+        }),
+      }),
+    [],
+  );
+
+  const {
+    messages: coachMsgs,
+    sendMessage: sendCoachMessage,
+    status: coachStatus,
+    stop: stopCoach,
+  } = useChat({
+    id: `clip-coach-${clipCoachResetNonce}`,
+    transport: coachTransport,
+  });
+  const coachBusy =
+    coachStatus === "submitted" || coachStatus === "streaming";
+
   const totalSteps = effectiveSteps.length + 1;
   const [step, setStep] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
@@ -154,6 +249,11 @@ export function RefinementChatPanel({
     string,
     string
   > | null>(null);
+  const [convMsgs, setConvMsgs] = useState<ConversationalRefinementMsg[]>([]);
+  const [convInput, setConvInput] = useState("");
+  const [convBusy, setConvBusy] = useState(false);
+  const [convErr, setConvErr] = useState<string | null>(null);
+  const convEndRef = useRef<HTMLDivElement>(null);
   const openAnswerTextareaRef = useRef<HTMLTextAreaElement>(null);
   const threadEndRef = useRef<HTMLDivElement>(null);
   const answersRef = useRef(answers);
@@ -171,8 +271,54 @@ export function RefinementChatPanel({
       setOptionalDetailDraft("");
       setLlmError(null);
       setPendingLlmPatches(null);
+      setConvMsgs([]);
+      setConvInput("");
+      setConvErr(null);
+      setConvBusy(false);
+      if (conversationalClip && unifiedMode && refinementActive) {
+        setConvMsgs([
+          {
+            id: newId(),
+            role: "assistant",
+            text: CLIP_CONVERSATION_WELCOME,
+          },
+        ]);
+      }
     });
-  }, [active, kind, platformIds, refinementPlanKey]);
+  }, [
+    active,
+    kind,
+    platformIds,
+    refinementPlanKey,
+    conversationalClip,
+    unifiedMode,
+    refinementActive,
+  ]);
+
+  const prevRefinementActive = useRef(false);
+  useEffect(() => {
+    if (!unifiedMode || !conversationalClip) {
+      prevRefinementActive.current = refinementActive;
+      return;
+    }
+    if (refinementActive && !prevRefinementActive.current) {
+      queueMicrotask(() => {
+        setConvMsgs([
+          {
+            id: newId(),
+            role: "assistant",
+            text: CLIP_CONVERSATION_WELCOME,
+          },
+        ]);
+        setAnswers({});
+        setSummaryNiche("");
+        setConvInput("");
+        setConvErr(null);
+        setConvBusy(false);
+      });
+    }
+    prevRefinementActive.current = refinementActive;
+  }, [refinementActive, unifiedMode, conversationalClip]);
 
   const isSummary = step >= effectiveSteps.length;
   const currentDef = !isSummary ? effectiveSteps[step] : null;
@@ -183,6 +329,7 @@ export function RefinementChatPanel({
 
   const threadLen = threadEntries.length;
   useEffect(() => {
+    if (conversationalClip) return;
     if (!active || remoteLoading || remoteError || effectiveSteps.length === 0)
       return;
     if (threadLen > 0) return;
@@ -193,16 +340,50 @@ export function RefinementChatPanel({
         : "To get the strongest clip package from your prompt, I need a bit of context first.";
     const text = `${intro}\n\n${first.message}`;
     setThreadEntries([{ id: newId(), role: "assistant", text, source: "scripted" }]);
-  }, [active, remoteLoading, remoteError, effectiveSteps, kind, threadLen]);
+  }, [
+    active,
+    conversationalClip,
+    remoteLoading,
+    remoteError,
+    effectiveSteps,
+    kind,
+    threadLen,
+  ]);
+
+  const convLen = convMsgs.length;
+  useEffect(() => {
+    if (!active || !conversationalClip) return;
+    if (unifiedMode) return;
+    if (convLen > 0) return;
+    setConvMsgs([
+      {
+        id: newId(),
+        role: "assistant",
+        text: CLIP_CONVERSATION_WELCOME,
+      },
+    ]);
+  }, [active, conversationalClip, convLen, unifiedMode]);
 
   useEffect(() => {
-    if (!active || !primaryOpenAnswer) return;
+    if (!active || !primaryOpenAnswer || conversationalClip) return;
     queueMicrotask(() => openAnswerTextareaRef.current?.focus());
-  }, [active, step, primaryOpenAnswer, currentDef?.id]);
+  }, [active, step, primaryOpenAnswer, currentDef?.id, conversationalClip]);
 
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [threadEntries, step, isSummary, llmBusy]);
+
+  useEffect(() => {
+    convEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [
+    convMsgs,
+    convBusy,
+    conversationalClip,
+    coachMsgs,
+    coachBusy,
+    unifiedMode,
+    refinementActive,
+  ]);
 
   const draftContext = useMemo((): GenerationContextV1 => {
     const merged = { ...answers };
@@ -351,7 +532,106 @@ export function RefinementChatPanel({
     setOptionalDetailDraft("");
     setPendingLlmPatches(null);
     setLlmError(null);
+    setConvMsgs([]);
+    setConvInput("");
+    setConvErr(null);
+    setConvBusy(false);
   };
+
+  const sendConversationalLine = useCallback(
+    async (line: string) => {
+      const t = line.trim();
+      if (!t || convBusy || !conversationalClip) return;
+      const userLine: ConversationalRefinementMsg = {
+        id: newId(),
+        role: "user",
+        text: t,
+      };
+      const history: { role: "user" | "assistant"; content: string }[] = [
+        ...convMsgs.map((m) => ({ role: m.role, content: m.text })),
+        { role: "user", content: t },
+      ];
+      setConvMsgs((prev) => [...prev, userLine]);
+      setConvBusy(true);
+      setConvErr(null);
+      try {
+        const res = await fetch("/api/refinement-conversation", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({
+            kind,
+            platformIds,
+            inputSummary,
+            messages: history,
+            answersPartial: answersRef.current,
+            guestCreditsRemaining: readGuestCreditsRemaining(),
+          }),
+        });
+        const data = (await res.json()) as {
+          error?: string;
+          assistantMessage?: string;
+          answerPatches?: Record<string, string>;
+          readyForConfirm?: boolean;
+        };
+        if (!res.ok) throw new Error(data.error || "Request failed");
+        const msg = data.assistantMessage?.trim();
+        if (!msg) throw new Error("Empty response");
+        setConvMsgs((prev) => [
+          ...prev,
+          { id: newId(), role: "assistant", text: msg },
+        ]);
+        if (data.answerPatches && Object.keys(data.answerPatches).length > 0) {
+          setAnswers((prev) => ({ ...prev, ...data.answerPatches }));
+        }
+      } catch (e) {
+        setConvErr(e instanceof Error ? e.message : "Something went wrong");
+      } finally {
+        setConvBusy(false);
+      }
+    },
+    [convBusy, conversationalClip, convMsgs, kind, platformIds, inputSummary],
+  );
+
+  const handleConversationalSend = useCallback(async () => {
+    const t = convInput.trim();
+    if (!t) return;
+    setConvInput("");
+    await sendConversationalLine(t);
+  }, [convInput, sendConversationalLine]);
+
+  const clipAnswersReady = useMemo(
+    () => refinementAnswersComplete(effectiveSteps, answers),
+    [effectiveSteps, answers],
+  );
+
+  const refinementComposerTurn =
+    unifiedMode && refinementActive && !clipAnswersReady;
+  const panelComposerBusy = refinementComposerTurn ? convBusy : coachBusy;
+
+  const handleUnifiedComposerSend = useCallback(async () => {
+    const t = convInput.trim();
+    if (!t || panelComposerBusy || !unifiedMode) return;
+    if (refinementComposerTurn) {
+      setConvInput("");
+      await sendConversationalLine(t);
+      return;
+    }
+    setConvInput("");
+    const b = coachBriefRef.current;
+    const wrapped =
+      b.length > 0
+        ? `[Clip workspace — not a transcript]\n${b}\n\n---\n\n${t}`
+        : t;
+    void sendCoachMessage({ text: wrapped });
+  }, [
+    convInput,
+    panelComposerBusy,
+    unifiedMode,
+    refinementComposerTurn,
+    sendConversationalLine,
+    sendCoachMessage,
+  ]);
 
   const handleAskAda = useCallback(async () => {
     if (!currentDef || !llmAssist) return;
@@ -484,11 +764,25 @@ export function RefinementChatPanel({
               kit ? "text-white/70" : "text-muted-foreground",
             )}
           >
-            {kind === "video_variations"
-              ? "Quick questions so your five cuts match your goal."
-              : "Quick questions so your clip package matches your voice."}
+            {unifiedMode
+              ? "Clip coach and job setup share this thread — chat credits apply per coach reply; setup uses the refinement conversation endpoint."
+              : conversationalClip
+                ? "Chat with Ada to tune this clip job — same credits as other Ada chats per reply."
+                : kind === "video_variations"
+                  ? "Quick questions so your five cuts match your goal."
+                  : "Quick questions so your clip package matches your voice."}
           </p>
-          {onCancel ? (
+          {unifiedMode && !user ? (
+            <p
+              className={cn(
+                "mt-1 text-[10px]",
+                kit ? "text-amber-200/85" : "text-amber-700 dark:text-amber-300",
+              )}
+            >
+              Signed out: coach replies use guest trial credits in this browser.
+            </p>
+          ) : null}
+          {onCancel && (!unifiedMode || refinementActive) ? (
             <button
               type="button"
               onClick={onCancel}
@@ -518,7 +812,11 @@ export function RefinementChatPanel({
           >
             {remoteLoading
               ? "Preparing questions…"
-              : `Step ${Math.min(step + 1, totalSteps)} of ${totalSteps}`}
+              : conversationalClip
+                ? unifiedMode
+                  ? "Ada · clips & setup"
+                  : "Ada · clip setup chat"
+                : `Step ${Math.min(step + 1, totalSteps)} of ${totalSteps}`}
           </span>
         </div>
       ) : (
@@ -530,7 +828,11 @@ export function RefinementChatPanel({
         >
           {remoteLoading
             ? "Preparing questions…"
-            : `Step ${Math.min(step + 1, totalSteps)} of ${totalSteps}`}
+            : conversationalClip
+              ? unifiedMode
+                ? "Ada · clips & setup"
+                : "Ada · clip setup chat"
+              : `Step ${Math.min(step + 1, totalSteps)} of ${totalSteps}`}
         </div>
       )}
 
@@ -605,6 +907,337 @@ export function RefinementChatPanel({
               ) : null}
             </div>
           </div>
+        ) : conversationalClip ? (
+          unifiedMode ? (
+            <div className="flex min-h-[min(28vh,220px)] max-h-[min(50vh,560px)] flex-col gap-2 sm:max-h-[min(48vh,520px)]">
+              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+                {coachMsgs.length === 0 ? (
+                  <p className="text-sm text-white/45">
+                    Ask for clip angles, hook rewrites, or pacing. When you send from the
+                    composer below with a valid source, guided setup appears in this same
+                    thread.
+                  </p>
+                ) : (
+                  coachMsgs.map((m) => {
+                    const body = coachTextFromParts(m);
+                    return (
+                      <div
+                        key={m.id}
+                        className={
+                          m.role === "user" ? "flex justify-end" : "flex justify-start"
+                        }
+                      >
+                        <div
+                          className={cn(
+                            "max-w-[95%] rounded-2xl px-4 py-3 text-sm leading-relaxed",
+                            m.role === "user"
+                              ? kit
+                                ? "rounded-br-md border border-[#8800DC]/35 bg-[linear-gradient(95deg,#D31CD7_22%,#8800DC_100%)] text-white shadow-[0_8px_24px_rgba(136,1,220,0.18)]"
+                                : "rounded-br-md border border-violet-300/60 bg-violet-50 text-[#0F0A1E] dark:border-violet-500/40 dark:bg-violet-950/50 dark:text-zinc-100"
+                              : bubbleAssistant,
+                          )}
+                        >
+                          <p className="whitespace-pre-wrap text-[13px] leading-snug">{body}</p>
+                          {m.role === "assistant" && body.trim() && onApplyCoachToPrompt ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="mt-2 h-7 px-2 text-[11px] text-[#e8b4ff] hover:bg-white/10 hover:text-white"
+                              onClick={() => onApplyCoachToPrompt(body)}
+                            >
+                              Add to clip prompt
+                            </Button>
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+                {refinementActive ? (
+                  <>
+                    <div
+                      className={cn(
+                        "mt-3 border-t pt-3",
+                        kit ? "border-white/10" : "border-border dark:border-white/10",
+                      )}
+                    >
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-white/50">
+                        Clip job setup
+                      </p>
+                    </div>
+                    {convMsgs.map((m) =>
+                      m.role === "assistant" ? (
+                        <div key={m.id} className="flex justify-start">
+                          <div className={bubbleAssistant}>
+                            <p className="whitespace-pre-wrap">{m.text}</p>
+                          </div>
+                        </div>
+                      ) : (
+                        <div key={m.id} className="flex justify-end">
+                          <div
+                            className={cn(
+                              "max-w-[95%] rounded-2xl rounded-br-md border px-4 py-3 text-left text-sm leading-relaxed",
+                              kit
+                                ? "border-[#8800DC]/35 bg-[linear-gradient(95deg,#D31CD7_22%,#8800DC_100%)] text-white shadow-[0_8px_24px_rgba(136,1,220,0.18)]"
+                                : "border border-violet-300/60 bg-violet-50 text-[#0F0A1E] dark:border-violet-500/40 dark:bg-violet-950/50 dark:text-zinc-100",
+                            )}
+                          >
+                            <p className="whitespace-pre-wrap text-left">{m.text}</p>
+                          </div>
+                        </div>
+                      ),
+                    )}
+                    {convBusy ? (
+                      <div className="flex justify-start text-xs text-white/50">Ada is typing…</div>
+                    ) : null}
+                    {convErr ? (
+                      <p className="text-xs text-red-300" role="alert">
+                        {convErr}
+                      </p>
+                    ) : null}
+                    {clipAnswersReady ? (
+                      <div className="space-y-3 border-t border-white/10 pt-3 dark:border-white/10">
+                        <p className="text-xs text-white/60">
+                          All clip settings are filled. Optionally add a niche, then start
+                          the job — or keep chatting to adjust.
+                        </p>
+                        <div className="space-y-2">
+                          <Label
+                            htmlFor="refine-niche-conv-unified"
+                            className={kit ? "text-white/70" : undefined}
+                          >
+                            Niche or account theme (optional)
+                          </Label>
+                          <input
+                            id="refine-niche-conv-unified"
+                            className={cn(
+                              "h-10 w-full rounded-lg border px-3 text-sm outline-none focus-visible:ring-[3px]",
+                              kit
+                                ? "border-white/14 bg-black/25 text-white ring-violet-500/30 placeholder:text-white/35"
+                                : "border-[#E8E4F8] bg-white ring-[#6C47FF]/25 dark:border-white/10 dark:bg-zinc-950",
+                            )}
+                            value={summaryNiche}
+                            onChange={(e) => setSummaryNiche(e.target.value)}
+                            placeholder="e.g. Islamic content, B2B SaaS, comedy…"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-2 sm:flex-row">
+                          <Button
+                            type="button"
+                            className={cn(
+                              "flex-1",
+                              kit &&
+                                "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] text-white hover:opacity-90",
+                            )}
+                            onClick={handleConfirmGenerate}
+                          >
+                            Looks good — start job
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className={cn(
+                              "flex-1",
+                              kit &&
+                                "border-white/20 bg-transparent text-white hover:bg-white/10",
+                            )}
+                            onClick={goBackToQuestions}
+                          >
+                            Start over
+                          </Button>
+                        </div>
+                      </div>
+                    ) : null}
+                  </>
+                ) : null}
+                {coachBusy && !refinementComposerTurn ? (
+                  <div className="flex items-center gap-2 text-xs text-white/50">
+                    <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                    Thinking…
+                  </div>
+                ) : null}
+                <div ref={convEndRef} className="h-1 shrink-0" aria-hidden />
+              </div>
+              <div className="shrink-0 space-y-2 border-t border-white/10 pt-2 dark:border-white/10">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
+                  <textarea
+                    rows={2}
+                    className={cn(
+                      "min-h-[44px] flex-1 resize-none rounded-lg border px-3 py-2 text-sm outline-none focus-visible:ring-[3px]",
+                      kit
+                        ? "border-white/14 bg-black/25 text-white ring-violet-500/30 placeholder:text-white/35"
+                        : "border-[#E8E4F8] bg-white ring-[#6C47FF]/25 dark:border-white/10 dark:bg-zinc-950",
+                    )}
+                    value={convInput}
+                    onChange={(e) => setConvInput(e.target.value)}
+                    placeholder={
+                      refinementComposerTurn
+                        ? "Message Ada about clip settings…"
+                        : "Ask for hooks, timestamps, scripts…"
+                    }
+                    disabled={panelComposerBusy}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        void handleUnifiedComposerSend();
+                      }
+                    }}
+                  />
+                  {coachBusy && !refinementComposerTurn ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className={cn(
+                        "shrink-0 self-end",
+                        kit ? "border-white/20 bg-white/10 text-white hover:bg-white/15" : undefined,
+                      )}
+                      onClick={() => void stopCoach()}
+                    >
+                      Stop
+                    </Button>
+                  ) : (
+                    <Button
+                      type="button"
+                      className={cn(
+                        "shrink-0 self-end",
+                        kit &&
+                          "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] text-white hover:opacity-90",
+                      )}
+                      disabled={!convInput.trim() || panelComposerBusy}
+                      onClick={() => void handleUnifiedComposerSend()}
+                    >
+                      {panelComposerBusy ? "Sending…" : "Send"}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : (
+          <div className="flex min-h-[min(36vh,300px)] max-h-[min(62vh,580px)] flex-col gap-2">
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+              {convMsgs.map((m) =>
+                m.role === "assistant" ? (
+                  <div key={m.id} className="flex justify-start">
+                    <div className={bubbleAssistant}>
+                      <p className="whitespace-pre-wrap">{m.text}</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div key={m.id} className="flex justify-end">
+                    <div
+                      className={cn(
+                        "max-w-[95%] rounded-2xl rounded-br-md border px-4 py-3 text-left text-sm leading-relaxed",
+                        kit
+                          ? "border-[#8800DC]/35 bg-[linear-gradient(95deg,#D31CD7_22%,#8800DC_100%)] text-white shadow-[0_8px_24px_rgba(136,1,220,0.18)]"
+                          : "border border-violet-300/60 bg-violet-50 text-[#0F0A1E] dark:border-violet-500/40 dark:bg-violet-950/50 dark:text-zinc-100",
+                      )}
+                    >
+                      <p className="whitespace-pre-wrap text-left">{m.text}</p>
+                    </div>
+                  </div>
+                ),
+              )}
+              {convBusy ? (
+                <div className="flex justify-start text-xs text-white/50">
+                  Ada is typing…
+                </div>
+              ) : null}
+              {convErr ? (
+                <p className="text-xs text-red-300" role="alert">
+                  {convErr}
+                </p>
+              ) : null}
+              {clipAnswersReady ? (
+                <div className="space-y-3 border-t border-white/10 pt-3 dark:border-white/10">
+                  <p className="text-xs text-white/60">
+                    All clip settings are filled. Optionally add a niche, then start
+                    the job — or keep chatting to adjust.
+                  </p>
+                  <div className="space-y-2">
+                    <Label
+                      htmlFor="refine-niche-conv"
+                      className={kit ? "text-white/70" : undefined}
+                    >
+                      Niche or account theme (optional)
+                    </Label>
+                    <input
+                      id="refine-niche-conv"
+                      className={cn(
+                        "h-10 w-full rounded-lg border px-3 text-sm outline-none focus-visible:ring-[3px]",
+                        kit
+                          ? "border-white/14 bg-black/25 text-white ring-violet-500/30 placeholder:text-white/35"
+                          : "border-[#E8E4F8] bg-white ring-[#6C47FF]/25 dark:border-white/10 dark:bg-zinc-950",
+                      )}
+                      value={summaryNiche}
+                      onChange={(e) => setSummaryNiche(e.target.value)}
+                      placeholder="e.g. Islamic content, B2B SaaS, comedy…"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Button
+                      type="button"
+                      className={cn(
+                        "flex-1",
+                        kit &&
+                          "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] text-white hover:opacity-90",
+                      )}
+                      onClick={handleConfirmGenerate}
+                    >
+                      Looks good — start job
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className={cn(
+                        "flex-1",
+                        kit &&
+                          "border-white/20 bg-transparent text-white hover:bg-white/10",
+                      )}
+                      onClick={goBackToQuestions}
+                    >
+                      Start over
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+              <div ref={convEndRef} className="h-1 shrink-0" aria-hidden />
+            </div>
+            <div className="shrink-0 space-y-2 border-t border-white/10 pt-2 dark:border-white/10">
+              <textarea
+                rows={2}
+                className={cn(
+                  "w-full resize-none rounded-lg border px-3 py-2 text-sm outline-none focus-visible:ring-[3px]",
+                  kit
+                    ? "border-white/14 bg-black/25 text-white ring-violet-500/30 placeholder:text-white/35"
+                    : "border-[#E8E4F8] bg-white ring-[#6C47FF]/25 dark:border-white/10 dark:bg-zinc-950",
+                )}
+                value={convInput}
+                onChange={(e) => setConvInput(e.target.value)}
+                placeholder="Message Ada…"
+                disabled={convBusy}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void handleConversationalSend();
+                  }
+                }}
+              />
+              <Button
+                type="button"
+                className={cn(
+                  "w-full sm:w-auto",
+                  kit &&
+                    "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] text-white hover:opacity-90",
+                )}
+                disabled={!convInput.trim() || convBusy}
+                onClick={() => void handleConversationalSend()}
+              >
+                {convBusy ? "Sending…" : "Send"}
+              </Button>
+            </div>
+          </div>
+          )
         ) : (
           <div className="space-y-4">
             {threadEntries.map((entry) =>

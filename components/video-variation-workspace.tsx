@@ -18,7 +18,6 @@ import { GenerationFeedbackPanel } from "@/components/generation-feedback-panel"
 import { RatingWidget } from "@/components/rating-widget";
 import { LazyVideoPlayer } from "@/components/lazy-video-player";
 import { SettingsRail } from "@/components/genex/settings-rail";
-import { VideoClipCoachChat } from "@/components/genex/video-clip-coach-chat";
 import { RefinementChatPanel } from "@/components/refinement-chat-panel";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -615,6 +614,7 @@ export const VideoVariationWorkspace = forwardRef<
   /** Live refinement answers for clip coach before confirm (Ada kit only). */
   const [refinementDraftContext, setRefinementDraftContext] =
     useState<GenerationContextV1 | null>(null);
+  const [clipCoachResetNonce, setClipCoachResetNonce] = useState(0);
   const [lastSubmittedPrompt, setLastSubmittedPrompt] = useState("");
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -779,6 +779,7 @@ export const VideoVariationWorkspace = forwardRef<
     setJobAwaitingUploadLink(false);
     setUploadPct(0);
     failedToastJobIdRef.current = null;
+    setClipCoachResetNonce((n) => n + 1);
   };
 
   const handleSubmit = () => {
@@ -815,6 +816,20 @@ export const VideoVariationWorkspace = forwardRef<
     if (videoFile != null) return true;
     return isValidHttpUrl(normalizeYoutubeUrlForJob(youtubeUrl));
   }, [videoFile, youtubeUrl]);
+
+  const refinementPlanKey = useMemo(() => {
+    const p = prompt.trim().slice(0, 400);
+    if (videoFile) return `file:${videoFile.name}:${videoFile.size}:${p}`;
+    return `url:${normalizeYoutubeUrlForJob(youtubeUrl)}:${p}`;
+  }, [videoFile, youtubeUrl, prompt]);
+
+  const refinementInputSummary = useMemo(
+    () =>
+      videoFile
+        ? `Upload: ${videoFile.name}`
+        : `YouTube: ${normalizeYoutubeUrlForJob(youtubeUrl) || youtubeUrl.trim() || "…"}`,
+    [videoFile, youtubeUrl],
+  );
 
   const clipCoachBriefPrefix = useMemo(() => {
     const parts: string[] = [];
@@ -1023,12 +1038,7 @@ export const VideoVariationWorkspace = forwardRef<
         <div className="absolute -left-[20%] bottom-[-35%] h-[480px] w-[1400px] rotate-[-57deg] bg-[#230639] opacity-75 blur-[130px]" />
       </div>
 
-      <div
-        className={cn(
-          "relative z-[1] flex min-h-0 flex-1",
-          embedClipCoach ? "flex-col xl:flex-row" : "flex-row",
-        )}
-      >
+      <div className="relative z-[1] flex min-h-0 flex-1 flex-col">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col font-[family-name:var(--font-instrument-sans)]">
           {omitChromeHeader ? null : (
             <header className="flex h-20 shrink-0 items-center justify-between gap-4 border-b border-white px-4 backdrop-blur-[50px] sm:px-6">
@@ -1270,18 +1280,15 @@ export const VideoVariationWorkspace = forwardRef<
                   </div>
                 ) : null}
 
-                {refinementOpen && !submitting ? (
+                {!embedClipCoach && refinementOpen && !submitting ? (
                   <div className="mb-8 flex w-full justify-start">
                     <div className="w-full max-w-[min(100%,720px)] shadow-[0_12px_40px_rgba(0,0,0,0.35)]">
                       <RefinementChatPanel
                         active={refinementOpen}
                         kind="video_variations"
                         platformIds={VIDEO_REFINEMENT_PLATFORMS}
-                        inputSummary={
-                          videoFile
-                            ? `Upload: ${videoFile.name}`
-                            : `YouTube: ${normalizeYoutubeUrlForJob(youtubeUrl) || youtubeUrl.trim() || "…"}`
-                        }
+                        inputSummary={refinementInputSummary}
+                        refinementPlanKey={refinementPlanKey}
                         variant="adaKit"
                         embedInChat
                         className="max-h-[min(72vh,640px)]"
@@ -1289,11 +1296,6 @@ export const VideoVariationWorkspace = forwardRef<
                           void submitWithRefinementContext(ctx)
                         }
                         onCancel={() => setRefinementOpen(false)}
-                        onDraftContextChange={
-                          embedClipCoach
-                            ? handleRefinementDraftForCoach
-                            : undefined
-                        }
                       />
                     </div>
                   </div>
@@ -1624,7 +1626,40 @@ export const VideoVariationWorkspace = forwardRef<
             )}
           </div>
 
-          <div className="shrink-0 border-t border-white/10 px-4 pb-5 pt-3 sm:px-10 lg:px-[clamp(24px,6vw,100px)]">
+          {embedClipCoach ? (
+            <section
+              className="flex min-h-[min(28vh,240px)] max-h-[min(42vh,420px)] shrink-0 flex-col border-t border-white/10 sm:max-h-[min(48vh,520px)]"
+              aria-label="Ada clips and job setup"
+            >
+              <RefinementChatPanel
+                active
+                unifiedClipCoach
+                refinementActive={refinementOpen && !submitting}
+                refinementPlanKey={refinementPlanKey}
+                user={user}
+                kind="video_variations"
+                platformIds={VIDEO_REFINEMENT_PLATFORMS}
+                inputSummary={refinementInputSummary}
+                variant="adaKit"
+                embedInChat
+                className="min-h-0 flex-1"
+                onConfirm={(ctx) => void submitWithRefinementContext(ctx)}
+                onCancel={() => setRefinementOpen(false)}
+                onDraftContextChange={handleRefinementDraftForCoach}
+                clipCoachGenerationContext={clipCoachGenerationContext}
+                clipCoachBriefPrefix={clipCoachBriefPrefix}
+                onApplyCoachToPrompt={handleApplyCoachToPrompt}
+                clipCoachResetNonce={clipCoachResetNonce}
+              />
+            </section>
+          ) : null}
+
+          <div
+            className={cn(
+              "shrink-0 border-white/10 px-4 pb-5 pt-3 sm:px-10 lg:px-[clamp(24px,6vw,100px)]",
+              embedClipCoach ? "border-t-0" : "border-t",
+            )}
+          >
             <input
               ref={fileRef}
               type="file"
@@ -1934,21 +1969,6 @@ export const VideoVariationWorkspace = forwardRef<
             </div>
           </div>
         </div>
-
-        {embedClipCoach ? (
-          <aside
-            className="flex min-h-[min(36vh,280px)] max-h-[min(48vh,480px)] w-full shrink-0 flex-col border-t border-white/10 xl:max-h-none xl:h-auto xl:min-h-0 xl:w-[min(400px,40vw)] xl:border-l xl:border-t-0"
-            aria-label="Ada clip coach"
-          >
-            <VideoClipCoachChat
-              user={user}
-              generationContext={clipCoachGenerationContext}
-              clipBriefPrefix={clipCoachBriefPrefix}
-              onApplyToPrompt={handleApplyCoachToPrompt}
-              className="min-h-0 xl:min-h-[min(100%,520px)]"
-            />
-          </aside>
-        ) : null}
       </div>
 
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
