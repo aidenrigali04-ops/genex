@@ -14,6 +14,7 @@ import {
   GENERATION_CONTEXT_VERSION,
   type GenerationContextV1,
 } from "@/lib/generation-context";
+import { readGuestCreditsRemaining } from "@/lib/guest-credits";
 import type { PlatformId } from "@/lib/platforms";
 import { PLATFORM_BY_ID } from "@/lib/platforms";
 import { cn } from "@/lib/utils";
@@ -22,6 +23,16 @@ export type RemoteRefinementState =
   | { phase: "loading" }
   | { phase: "error"; message: string; onRetry: () => void }
   | { phase: "ready"; steps: RefinementStepDef[] };
+
+export type ThreadEntry =
+  | { id: string; role: "assistant"; text: string; source?: "scripted" | "llm" }
+  | {
+      id: string;
+      role: "user";
+      fieldKey: string;
+      displayLabel: string;
+      storedValue: string;
+    };
 
 export type RefinementChatPanelProps = {
   /** When true, the panel is shown and internal step state resets on activation. */
@@ -51,10 +62,46 @@ export type RefinementChatPanelProps = {
   };
   /** Fires when the user submits a typed refinement answer (not a pill). */
   onOpenTypedAnswer?: (fieldKey: string) => void;
+  /**
+   * Latest draft `GenerationContextV1` while `active` (answers + optional niche).
+   * Use for tooling (e.g. clip coach) before confirm; omit if not needed.
+   */
+  onDraftContextChange?: (ctx: GenerationContextV1) => void;
+  /**
+   * When true (default: same as `embedInChat`), show "Ask Ada" to call `/api/refinement-thread`
+   * for clarifications. Uses one chat-style credit per request when signed in.
+   */
+  llmAssist?: boolean;
 };
 
 function platformLabels(ids: PlatformId[]): string {
   return ids.map((id) => PLATFORM_BY_ID[id]?.label ?? id).join(", ");
+}
+
+function newId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `t_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+function buildInterimContext(
+  kind: RefinementKind,
+  platformIds: PlatformId[],
+  answers: Record<string, string>,
+  prefillInference: RefinementChatPanelProps["prefillInference"],
+): GenerationContextV1 {
+  const purpose = prefillInference?.inferredClipPurpose?.trim();
+  const rationale = prefillInference?.inferredPurposeRationale?.trim();
+  return {
+    version: GENERATION_CONTEXT_VERSION,
+    kind: kind === "video_variations" ? "video_variations" : "text_generation",
+    platforms: platformIds,
+    answers: { ...answers },
+    confirmedAt: new Date().toISOString(),
+    ...(purpose ? { inferredClipPurpose: purpose } : {}),
+    ...(rationale ? { inferredPurposeRationale: rationale } : {}),
+  };
 }
 
 export function RefinementChatPanel({
@@ -74,7 +121,10 @@ export function RefinementChatPanel({
   refinementPlanKey = "",
   prefillInference,
   onOpenTypedAnswer,
+  onDraftContextChange,
+  llmAssist: llmAssistProp,
 }: RefinementChatPanelProps) {
+  const llmAssist = llmAssistProp ?? embedInChat;
   const kit = variant === "adaKit";
   const staticSteps = useMemo(
     () => buildRefinementSteps(kind, platformIds),
@@ -96,7 +146,18 @@ export function RefinementChatPanel({
   const [customMode, setCustomMode] = useState(false);
   const [customDraft, setCustomDraft] = useState("");
   const [summaryNiche, setSummaryNiche] = useState("");
+  const [threadEntries, setThreadEntries] = useState<ThreadEntry[]>([]);
+  const [optionalDetailDraft, setOptionalDetailDraft] = useState("");
+  const [llmBusy, setLlmBusy] = useState(false);
+  const [llmError, setLlmError] = useState<string | null>(null);
+  const [pendingLlmPatches, setPendingLlmPatches] = useState<Record<
+    string,
+    string
+  > | null>(null);
   const openAnswerTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const threadEndRef = useRef<HTMLDivElement>(null);
+  const answersRef = useRef(answers);
+  answersRef.current = answers;
 
   useEffect(() => {
     if (!active) return;
@@ -106,6 +167,10 @@ export function RefinementChatPanel({
       setCustomMode(false);
       setCustomDraft("");
       setSummaryNiche("");
+      setThreadEntries([]);
+      setOptionalDetailDraft("");
+      setLlmError(null);
+      setPendingLlmPatches(null);
     });
   }, [active, kind, platformIds, refinementPlanKey]);
 
@@ -116,37 +181,28 @@ export function RefinementChatPanel({
     currentDef.pills.length === 0 &&
     currentDef.allowCustom;
 
+  const threadLen = threadEntries.length;
+  useEffect(() => {
+    if (!active || remoteLoading || remoteError || effectiveSteps.length === 0)
+      return;
+    if (threadLen > 0) return;
+    const first = effectiveSteps[0]!;
+    const intro =
+      kind === "video_variations"
+        ? "Before we queue your five cuts, a few choices help the editor match length, goal, and delivery."
+        : "To get the strongest clip package from your prompt, I need a bit of context first.";
+    const text = `${intro}\n\n${first.message}`;
+    setThreadEntries([{ id: newId(), role: "assistant", text, source: "scripted" }]);
+  }, [active, remoteLoading, remoteError, effectiveSteps, kind, threadLen]);
+
   useEffect(() => {
     if (!active || !primaryOpenAnswer) return;
     queueMicrotask(() => openAnswerTextareaRef.current?.focus());
   }, [active, step, primaryOpenAnswer, currentDef?.id]);
 
-  const applyAnswer = useCallback(
-    (fieldKey: string, value: string) => {
-      setAnswers((prev) => ({ ...prev, [fieldKey]: value }));
-      setCustomMode(false);
-      setCustomDraft("");
-      setStep((s) => s + 1);
-    },
-    [],
-  );
-
-  const handlePill = (fieldKey: string, value: string) => {
-    if (value === "__custom__") {
-      setCustomMode(true);
-      setCustomDraft("");
-      return;
-    }
-    applyAnswer(fieldKey, value);
-  };
-
-  const handleCustomSubmit = useCallback(() => {
-    if (!currentDef) return;
-    const t = customDraft.trim();
-    if (!t) return;
-    onOpenTypedAnswer?.(currentDef.fieldKey);
-    applyAnswer(currentDef.fieldKey, t);
-  }, [applyAnswer, currentDef, customDraft, onOpenTypedAnswer]);
+  useEffect(() => {
+    threadEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [threadEntries, step, isSummary, llmBusy]);
 
   const draftContext = useMemo((): GenerationContextV1 => {
     const merged = { ...answers };
@@ -164,10 +220,122 @@ export function RefinementChatPanel({
     };
   }, [answers, summaryNiche, kind, platformIds, prefillInference]);
 
+  useEffect(() => {
+    if (!active || !onDraftContextChange) return;
+    onDraftContextChange(draftContext);
+  }, [active, draftContext, onDraftContextChange]);
+
   const summaryText = useMemo(
     () => buildSummaryFromContext(draftContext),
     [draftContext],
   );
+
+  const appendSummaryAssistant = useCallback(
+    (nextAnswers: Record<string, string>) => {
+      const interim = buildInterimContext(
+        kind,
+        platformIds,
+        nextAnswers,
+        prefillInference,
+      );
+      const st = buildSummaryFromContext(interim);
+      const tail =
+        kind === "video_variations"
+          ? "Ready to start this job?"
+          : "Ready to generate?";
+      const body = `Generating for ${platformLabels(platformIds)}${st ? `\n\n${st}` : ""}\n\n${tail}`;
+      return {
+        id: newId(),
+        role: "assistant" as const,
+        text: body,
+        source: "scripted" as const,
+      };
+    },
+    [kind, platformIds, prefillInference],
+  );
+
+  const applyAnswer = useCallback(
+    (fieldKey: string, value: string, displayLabel: string) => {
+      const detail = optionalDetailDraft.trim();
+      const stored = detail ? `${value}\n\n${detail}` : value;
+      const next = { ...answersRef.current, [fieldKey]: stored };
+      setAnswers(next);
+      const fieldIndex = effectiveSteps.findIndex((s) => s.fieldKey === fieldKey);
+      const userEntry: ThreadEntry = {
+        id: newId(),
+        role: "user",
+        fieldKey,
+        displayLabel,
+        storedValue: stored,
+      };
+      setThreadEntries((prevThread) => {
+        const nextThread = [...prevThread, userEntry];
+        if (fieldIndex >= 0 && fieldIndex + 1 < effectiveSteps.length) {
+          const nextDef = effectiveSteps[fieldIndex + 1]!;
+          nextThread.push({
+            id: newId(),
+            role: "assistant",
+            text: nextDef.message,
+            source: "scripted",
+          });
+        } else {
+          nextThread.push(appendSummaryAssistant(next));
+        }
+        return nextThread;
+      });
+      setOptionalDetailDraft("");
+      setCustomMode(false);
+      setCustomDraft("");
+      setStep((s) => s + 1);
+    },
+    [effectiveSteps, optionalDetailDraft, appendSummaryAssistant],
+  );
+
+  const restartFromField = useCallback(
+    (fieldKey: string) => {
+      const fieldIndex = effectiveSteps.findIndex((s) => s.fieldKey === fieldKey);
+      if (fieldIndex < 0) return;
+      setThreadEntries((prev) => {
+        const idx = prev.findIndex(
+          (e) => e.role === "user" && e.fieldKey === fieldKey,
+        );
+        if (idx < 0) return prev;
+        return prev.slice(0, idx);
+      });
+      setAnswers((prev) => {
+        const next = { ...prev };
+        for (let i = fieldIndex; i < effectiveSteps.length; i++) {
+          const k = effectiveSteps[i]!.fieldKey;
+          delete next[k];
+        }
+        return next;
+      });
+      setStep(fieldIndex);
+      setCustomMode(false);
+      setCustomDraft("");
+      setOptionalDetailDraft("");
+      setPendingLlmPatches(null);
+      setLlmError(null);
+    },
+    [effectiveSteps],
+  );
+
+  const handlePill = (fieldKey: string, value: string, pillLabel: string) => {
+    if (value === "__custom__") {
+      setCustomMode(true);
+      setCustomDraft("");
+      return;
+    }
+    applyAnswer(fieldKey, value, pillLabel);
+  };
+
+  const handleCustomSubmit = useCallback(() => {
+    if (!currentDef) return;
+    const t = customDraft.trim();
+    if (!t) return;
+    onOpenTypedAnswer?.(currentDef.fieldKey);
+    applyAnswer(currentDef.fieldKey, t, "Custom answer");
+  }, [applyAnswer, currentDef, customDraft, onOpenTypedAnswer]);
 
   const handleConfirmGenerate = () => {
     onConfirm(draftContext);
@@ -179,11 +347,88 @@ export function RefinementChatPanel({
     setCustomMode(false);
     setCustomDraft("");
     setSummaryNiche("");
+    setThreadEntries([]);
+    setOptionalDetailDraft("");
+    setPendingLlmPatches(null);
+    setLlmError(null);
   };
+
+  const handleAskAda = useCallback(async () => {
+    if (!currentDef || !llmAssist) return;
+    const userMessage =
+      optionalDetailDraft.trim() ||
+      `I need help deciding on: ${currentDef.message}`;
+    setLlmBusy(true);
+    setLlmError(null);
+    setPendingLlmPatches(null);
+    try {
+      const allowedFieldKeys = effectiveSteps.map((s) => s.fieldKey);
+      const res = await fetch("/api/refinement-thread", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          kind,
+          platformIds,
+          inputSummary,
+          currentFieldKey: currentDef.fieldKey,
+          currentQuestion: currentDef.message,
+          answersPartial: answersRef.current,
+          userMessage,
+          guestCreditsRemaining: readGuestCreditsRemaining(),
+        }),
+      });
+      const data = (await res.json()) as {
+        error?: string;
+        assistantMessage?: string;
+        answerPatches?: Record<string, string>;
+      };
+      if (!res.ok) {
+        throw new Error(data.error || "Request failed");
+      }
+      const msg = data.assistantMessage?.trim();
+      if (!msg) throw new Error("Empty response");
+      setThreadEntries((prev) => [
+        ...prev,
+        { id: newId(), role: "assistant", text: msg, source: "llm" },
+      ]);
+      if (data.answerPatches && Object.keys(data.answerPatches).length > 0) {
+        const safe: Record<string, string> = {};
+        for (const [k, v] of Object.entries(data.answerPatches)) {
+          if (allowedFieldKeys.includes(k) && typeof v === "string" && v.trim()) {
+            safe[k] = v.trim();
+          }
+        }
+        if (Object.keys(safe).length > 0) setPendingLlmPatches(safe);
+      }
+    } catch (e) {
+      setLlmError(e instanceof Error ? e.message : "Something went wrong");
+    } finally {
+      setLlmBusy(false);
+    }
+  }, [
+    currentDef,
+    llmAssist,
+    kind,
+    platformIds,
+    inputSummary,
+    effectiveSteps,
+    optionalDetailDraft,
+  ]);
+
+  const applyPendingPatches = useCallback(() => {
+    if (!pendingLlmPatches) return;
+    setAnswers((prev) => ({ ...prev, ...pendingLlmPatches }));
+    setPendingLlmPatches(null);
+  }, [pendingLlmPatches]);
 
   const bubbleAssistant = kit
     ? "max-w-[95%] rounded-2xl rounded-bl-md border border-white/12 bg-white/[0.08] px-4 py-3 text-sm leading-relaxed text-white/95 backdrop-blur-sm"
     : "max-w-[95%] rounded-2xl rounded-bl-md bg-[#6C47FF]/10 px-4 py-3 text-sm leading-relaxed text-[#0F0A1E] dark:bg-violet-950/40 dark:text-zinc-100";
+
+  const bubbleUser = kit
+    ? "max-w-[95%] cursor-pointer rounded-2xl rounded-br-md border border-[#8800DC]/35 bg-[linear-gradient(95deg,#D31CD7_22%,#8800DC_100%)] px-4 py-3 text-left text-sm leading-relaxed text-white shadow-[0_8px_24px_rgba(136,1,220,0.18)] transition-opacity hover:opacity-95"
+    : "max-w-[95%] cursor-pointer rounded-2xl rounded-br-md border border-violet-300/60 bg-violet-50 px-4 py-3 text-left text-sm leading-relaxed text-[#0F0A1E] dark:border-violet-500/40 dark:bg-violet-950/50 dark:text-zinc-100";
 
   const shell = embedInChat
     ? kit
@@ -289,11 +534,11 @@ export function RefinementChatPanel({
         </div>
       )}
 
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-3">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
         {!embedInChat ? (
           <div
             className={cn(
-              "rounded-xl border px-3 py-2 text-xs",
+              "mb-4 rounded-xl border px-3 py-2 text-xs",
               kit
                 ? "border-white/12 bg-black/20 text-white/80"
                 : "border-[#E8E4F8] bg-[#F0EFFE]/60 dark:border-white/10 dark:bg-zinc-900/40",
@@ -360,198 +605,298 @@ export function RefinementChatPanel({
               ) : null}
             </div>
           </div>
-        ) : !isSummary && currentDef ? (
-          <>
-            <div className="flex justify-start">
-              <div className={bubbleAssistant}>
-                {step === 0 ? (
-                  <>
-                    {kind === "video_variations"
-                      ? "Before we queue your five cuts, a few choices help the editor match length, goal, and delivery."
-                      : "To get the strongest clip package from your prompt, I need a bit of context first."}
-                    <br />
-                    <br />
-                  </>
-                ) : null}
-                {currentDef.message}
-              </div>
-            </div>
-
-            {primaryOpenAnswer ? (
-              <div className="space-y-2 pl-1">
-                <Label
-                  htmlFor="refine-custom-inline"
-                  className={kit ? "text-white/70" : undefined}
-                >
-                  Your answer
-                </Label>
-                <textarea
-                  ref={openAnswerTextareaRef}
-                  id="refine-custom-inline"
-                  autoFocus
-                  className={cn(
-                    "min-h-[88px] w-full resize-y rounded-lg border px-3 py-2 text-sm outline-none focus-visible:ring-[3px]",
-                    kit
-                      ? "border-white/14 bg-black/25 text-white ring-violet-500/30 placeholder:text-white/35"
-                      : "border-[#E8E4F8] bg-white text-[#0F0A1E] ring-[#6C47FF]/25 dark:border-white/10 dark:bg-zinc-950",
-                  )}
-                  value={customDraft}
-                  onChange={(e) => setCustomDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      handleCustomSubmit();
-                    }
-                  }}
-                  placeholder="Type your answer…"
-                />
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={handleCustomSubmit}
-                    disabled={!customDraft.trim()}
-                    className={
-                      kit
-                        ? "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] text-white hover:opacity-90"
-                        : undefined
-                    }
-                  >
-                    Continue
-                  </Button>
-                </div>
-              </div>
-            ) : customMode && currentDef.allowCustom ? (
-              <div className="space-y-2 pl-1">
-                <Label
-                  htmlFor="refine-custom-inline"
-                  className={kit ? "text-white/70" : undefined}
-                >
-                  Your answer
-                </Label>
-                <textarea
-                  id="refine-custom-inline"
-                  className={cn(
-                    "min-h-[88px] w-full resize-y rounded-lg border px-3 py-2 text-sm outline-none focus-visible:ring-[3px]",
-                    kit
-                      ? "border-white/14 bg-black/25 text-white ring-violet-500/30 placeholder:text-white/35"
-                      : "border-[#E8E4F8] bg-white text-[#0F0A1E] ring-[#6C47FF]/25 dark:border-white/10 dark:bg-zinc-950",
-                  )}
-                  value={customDraft}
-                  onChange={(e) => setCustomDraft(e.target.value)}
-                  placeholder="Type your answer…"
-                />
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={() => {
-                      setCustomMode(false);
-                      setCustomDraft("");
-                    }}
-                    variant="outline"
-                    className={kit ? "border-white/20 bg-transparent text-white hover:bg-white/10" : undefined}
-                  >
-                    Back to choices
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={handleCustomSubmit}
-                    disabled={!customDraft.trim()}
-                    className={
-                      kit
-                        ? "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] text-white hover:opacity-90"
-                        : undefined
-                    }
-                  >
-                    Continue
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="flex flex-wrap gap-2 pl-0.5">
-                {currentDef.pills.map((p) => (
-                  <Button
-                    key={p.label}
-                    type="button"
-                    size="sm"
-                    variant="secondary"
+        ) : (
+          <div className="space-y-4">
+            {threadEntries.map((entry) =>
+              entry.role === "assistant" ? (
+                <div key={entry.id} className="flex justify-start">
+                  <div
                     className={cn(
-                      "rounded-full transition-colors duration-150 active:scale-[0.98]",
-                      kit &&
-                        "border border-white/18 bg-white/10 text-white hover:bg-white/16 hover:border-white/28",
+                      bubbleAssistant,
+                      entry.source === "llm" &&
+                        kit &&
+                        "border-violet-400/30 bg-violet-950/35",
                     )}
-                    onClick={() => handlePill(currentDef.fieldKey, p.value)}
                   >
-                    {p.label}
-                  </Button>
-                ))}
-              </div>
+                    {entry.source === "llm" ? (
+                      <p
+                        className={cn(
+                          "mb-2 text-[10px] font-semibold uppercase tracking-wide",
+                          kit ? "text-violet-200/90" : "text-violet-700 dark:text-violet-300",
+                        )}
+                      >
+                        Ada (clarify)
+                      </p>
+                    ) : null}
+                    <p className="whitespace-pre-wrap">{entry.text}</p>
+                  </div>
+                </div>
+              ) : (
+                <div key={entry.id} className="flex justify-end">
+                  <button
+                    type="button"
+                    className={bubbleUser}
+                    onClick={() => restartFromField(entry.fieldKey)}
+                    title="Tap to edit from this answer"
+                  >
+                    <p className="text-[10px] font-medium opacity-90">
+                      {entry.displayLabel}
+                    </p>
+                    <p className="mt-1 whitespace-pre-wrap text-left opacity-95">
+                      {entry.storedValue}
+                    </p>
+                    <p
+                      className={cn(
+                        "mt-2 text-[10px] underline-offset-2",
+                        kit ? "text-white/70" : "text-muted-foreground",
+                      )}
+                    >
+                      Tap to change this answer
+                    </p>
+                  </button>
+                </div>
+              ),
             )}
-          </>
-        ) : !remoteLoading && !remoteError ? (
-          <>
-            <div className="flex justify-start">
-              <div className={bubbleAssistant}>
-                Generating for <strong>{platformLabels(platformIds)}</strong>
-                {summaryText ? (
-                  <>
-                    <br />
-                    <br />
-                    {summaryText}
-                  </>
-                ) : null}
-                <br />
-                <br />
-                {kind === "video_variations" ? "Ready to start this job?" : "Ready to generate?"}
+
+            {!isSummary && currentDef ? (
+              <div className="space-y-3 border-t border-white/10 pt-3 dark:border-white/10">
+                <div className="space-y-2">
+                  <Label
+                    htmlFor="refine-optional-detail"
+                    className={kit ? "text-white/65" : undefined}
+                  >
+                    Optional detail (merged into your next choice)
+                  </Label>
+                  <textarea
+                    id="refine-optional-detail"
+                    rows={2}
+                    className={cn(
+                      "w-full resize-y rounded-lg border px-3 py-2 text-sm outline-none focus-visible:ring-[3px]",
+                      kit
+                        ? "border-white/14 bg-black/25 text-white ring-violet-500/30 placeholder:text-white/35"
+                        : "border-[#E8E4F8] bg-white ring-[#6C47FF]/25 dark:border-white/10 dark:bg-zinc-950",
+                    )}
+                    value={optionalDetailDraft}
+                    onChange={(e) => setOptionalDetailDraft(e.target.value)}
+                    placeholder="e.g. audience is beginners, brand is playful…"
+                  />
+                  {llmAssist ? (
+                    <>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={llmBusy}
+                        className={
+                          kit
+                            ? "border-white/25 bg-transparent text-white hover:bg-white/10"
+                            : undefined
+                        }
+                        onClick={() => void handleAskAda()}
+                      >
+                        {llmBusy ? "Asking Ada…" : "Ask Ada to clarify"}
+                      </Button>
+                      {llmError ? (
+                        <p className="text-xs text-red-300" role="alert">
+                          {llmError}
+                        </p>
+                      ) : null}
+                    </>
+                  ) : null}
+                </div>
+
+                {primaryOpenAnswer ? (
+                  <div className="space-y-2 pl-0.5">
+                    <Label
+                      htmlFor="refine-custom-inline"
+                      className={kit ? "text-white/70" : undefined}
+                    >
+                      Your answer
+                    </Label>
+                    <textarea
+                      ref={openAnswerTextareaRef}
+                      id="refine-custom-inline"
+                      autoFocus
+                      className={cn(
+                        "min-h-[88px] w-full resize-y rounded-lg border px-3 py-2 text-sm outline-none focus-visible:ring-[3px]",
+                        kit
+                          ? "border-white/14 bg-black/25 text-white ring-violet-500/30 placeholder:text-white/35"
+                          : "border-[#E8E4F8] bg-white text-[#0F0A1E] ring-[#6C47FF]/25 dark:border-white/10 dark:bg-zinc-950",
+                      )}
+                      value={customDraft}
+                      onChange={(e) => setCustomDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          handleCustomSubmit();
+                        }
+                      }}
+                      placeholder="Type your answer…"
+                    />
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={handleCustomSubmit}
+                        disabled={!customDraft.trim()}
+                        className={
+                          kit
+                            ? "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] text-white hover:opacity-90"
+                            : undefined
+                        }
+                      >
+                        Continue
+                      </Button>
+                    </div>
+                  </div>
+                ) : customMode && currentDef.allowCustom ? (
+                  <div className="space-y-2 pl-0.5">
+                    <Label
+                      htmlFor="refine-custom-inline"
+                      className={kit ? "text-white/70" : undefined}
+                    >
+                      Your answer
+                    </Label>
+                    <textarea
+                      id="refine-custom-inline"
+                      className={cn(
+                        "min-h-[88px] w-full resize-y rounded-lg border px-3 py-2 text-sm outline-none focus-visible:ring-[3px]",
+                        kit
+                          ? "border-white/14 bg-black/25 text-white ring-violet-500/30 placeholder:text-white/35"
+                          : "border-[#E8E4F8] bg-white text-[#0F0A1E] ring-[#6C47FF]/25 dark:border-white/10 dark:bg-zinc-950",
+                      )}
+                      value={customDraft}
+                      onChange={(e) => setCustomDraft(e.target.value)}
+                      placeholder="Type your answer…"
+                    />
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => {
+                          setCustomMode(false);
+                          setCustomDraft("");
+                        }}
+                        variant="outline"
+                        className={kit ? "border-white/20 bg-transparent text-white hover:bg-white/10" : undefined}
+                      >
+                        Back to choices
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={handleCustomSubmit}
+                        disabled={!customDraft.trim()}
+                        className={
+                          kit
+                            ? "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] text-white hover:opacity-90"
+                            : undefined
+                        }
+                      >
+                        Continue
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-2 pl-0.5">
+                    {currentDef.pills.map((p) => (
+                      <Button
+                        key={p.label}
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        className={cn(
+                          "rounded-full transition-colors duration-150 active:scale-[0.98]",
+                          kit &&
+                            "border border-white/18 bg-white/10 text-white hover:bg-white/16 hover:border-white/28",
+                        )}
+                        onClick={() =>
+                          handlePill(currentDef.fieldKey, p.value, p.label)
+                        }
+                      >
+                        {p.label}
+                      </Button>
+                    ))}
+                  </div>
+                )}
               </div>
-            </div>
+            ) : !remoteLoading && !remoteError ? (
+              <div className="space-y-3 border-t border-white/10 pt-3 dark:border-white/10">
+                {pendingLlmPatches ? (
+                  <div
+                    className={cn(
+                      "rounded-lg border px-3 py-2 text-sm",
+                      kit
+                        ? "border-violet-400/30 bg-violet-950/30 text-white/90"
+                        : "border-violet-200 bg-violet-50 dark:border-violet-800 dark:bg-violet-950/40",
+                    )}
+                  >
+                    <p className="mb-2 text-xs font-medium">
+                      Ada suggested field updates (optional)
+                    </p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={applyPendingPatches}
+                      className={
+                        kit
+                          ? "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] text-white hover:opacity-90"
+                          : undefined
+                      }
+                    >
+                      Merge suggestions into answers
+                    </Button>
+                  </div>
+                ) : null}
 
-            <div className="space-y-2">
-              <Label htmlFor="refine-niche-inline" className={kit ? "text-white/70" : undefined}>
-                Niche or account theme (optional)
-              </Label>
-              <input
-                id="refine-niche-inline"
-                className={cn(
-                  "h-10 w-full rounded-lg border px-3 text-sm outline-none focus-visible:ring-[3px]",
-                  kit
-                    ? "border-white/14 bg-black/25 text-white ring-violet-500/30 placeholder:text-white/35"
-                    : "border-[#E8E4F8] bg-white ring-[#6C47FF]/25 dark:border-white/10 dark:bg-zinc-950",
-                )}
-                value={summaryNiche}
-                onChange={(e) => setSummaryNiche(e.target.value)}
-                placeholder="e.g. Islamic content, B2B SaaS, comedy…"
-              />
-            </div>
+                <div className="space-y-2">
+                  <Label htmlFor="refine-niche-inline" className={kit ? "text-white/70" : undefined}>
+                    Niche or account theme (optional)
+                  </Label>
+                  <input
+                    id="refine-niche-inline"
+                    className={cn(
+                      "h-10 w-full rounded-lg border px-3 text-sm outline-none focus-visible:ring-[3px]",
+                      kit
+                        ? "border-white/14 bg-black/25 text-white ring-violet-500/30 placeholder:text-white/35"
+                        : "border-[#E8E4F8] bg-white ring-[#6C47FF]/25 dark:border-white/10 dark:bg-zinc-950",
+                    )}
+                    value={summaryNiche}
+                    onChange={(e) => setSummaryNiche(e.target.value)}
+                    placeholder="e.g. Islamic content, B2B SaaS, comedy…"
+                  />
+                </div>
 
-            <div className="flex flex-col gap-2 pt-1 sm:flex-row">
-              <Button
-                type="button"
-                className={cn(
-                  "flex-1",
-                  kit &&
-                    "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] text-white hover:opacity-90",
-                )}
-                onClick={handleConfirmGenerate}
-              >
-                {kind === "video_variations" ? "Looks good — start job" : "Looks good, generate"}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                className={cn(
-                  "flex-1",
-                  kit && "border-white/20 bg-transparent text-white hover:bg-white/10",
-                )}
-                onClick={goBackToQuestions}
-              >
-                Edit answers
-              </Button>
-            </div>
-          </>
-        ) : null}
+                <div className="flex flex-col gap-2 pt-1 sm:flex-row">
+                  <Button
+                    type="button"
+                    className={cn(
+                      "flex-1",
+                      kit &&
+                        "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] text-white hover:opacity-90",
+                    )}
+                    onClick={handleConfirmGenerate}
+                  >
+                    {kind === "video_variations" ? "Looks good — start job" : "Looks good, generate"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className={cn(
+                      "flex-1",
+                      kit && "border-white/20 bg-transparent text-white hover:bg-white/10",
+                    )}
+                    onClick={goBackToQuestions}
+                  >
+                    Edit answers
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+
+            <div ref={threadEndRef} className="h-1 shrink-0" aria-hidden />
+          </div>
+        )}
       </div>
     </div>
   );

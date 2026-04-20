@@ -1498,6 +1498,7 @@ export function AdaVideoWorkspace({
               onOpenMobileNav={() => setShellMenuOpen(true)}
               hideMarketingTitle
               omitChromeHeader
+              embedClipCoach
             />
           </div>
         ) : (

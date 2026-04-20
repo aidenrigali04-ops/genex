@@ -299,6 +299,13 @@ export function AdaClipWorkspace({
 
           {refinementOpen && !loading && onRefinementConfirm ? (
             <div className="w-full">
+              {/*
+                Refinement UX: `/api/refinement-plan` supplies personalized `remoteRefinement.steps`
+                when loading completes. `RefinementChatPanel` shows those (or static fallbacks) as a
+                scrollable thread with editable user bubbles, optional notes per step, and optional
+                "Ask Ada" via `/api/refinement-thread`. Confirm still yields `GenerationContextV1` for
+                the same downstream generate path as before.
+              */}
               <RefinementChatPanel
                 active={refinementOpen}
                 kind="text_generation"

@@ -18,6 +18,7 @@ import { GenerationFeedbackPanel } from "@/components/generation-feedback-panel"
 import { RatingWidget } from "@/components/rating-widget";
 import { LazyVideoPlayer } from "@/components/lazy-video-player";
 import { SettingsRail } from "@/components/genex/settings-rail";
+import { VideoClipCoachChat } from "@/components/genex/video-clip-coach-chat";
 import { RefinementChatPanel } from "@/components/refinement-chat-panel";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -85,6 +86,8 @@ type Props = {
   hideMarketingTitle?: boolean;
   /** Parent shell provides top chrome (e.g. Ada video workspace header). */
   omitChromeHeader?: boolean;
+  /** Ada kit: LLM clip coach rail (`/api/chat` clip_first) beside the workspace. */
+  embedClipCoach?: boolean;
 };
 
 type JobRow = {
@@ -583,6 +586,7 @@ export const VideoVariationWorkspace = forwardRef<
     onOpenMobileNav,
     hideMarketingTitle = false,
     omitChromeHeader = false,
+    embedClipCoach = false,
   } = props;
   const [prompt, setPrompt] = useState("");
   const [youtubeUrl, setYoutubeUrl] = useState("");
@@ -608,6 +612,9 @@ export const VideoVariationWorkspace = forwardRef<
   const [refinementOpen, setRefinementOpen] = useState(false);
   const [jobGenerationContext, setJobGenerationContext] =
     useState<GenerationContextV1 | null>(null);
+  /** Live refinement answers for clip coach before confirm (Ada kit only). */
+  const [refinementDraftContext, setRefinementDraftContext] =
+    useState<GenerationContextV1 | null>(null);
   const [lastSubmittedPrompt, setLastSubmittedPrompt] = useState("");
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -617,6 +624,11 @@ export const VideoVariationWorkspace = forwardRef<
   useEffect(() => {
     onJobFinishedRef.current = onJobFinished;
   }, [onJobFinished]);
+
+  useEffect(() => {
+    if (!refinementOpen) setRefinementDraftContext(null);
+  }, [refinementOpen]);
+
   /** True while a direct-upload job is queued but `storage_path` is not linked yet (worker cannot claim). */
   const [jobAwaitingUploadLink, setJobAwaitingUploadLink] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -804,6 +816,47 @@ export const VideoVariationWorkspace = forwardRef<
     return isValidHttpUrl(normalizeYoutubeUrlForJob(youtubeUrl));
   }, [videoFile, youtubeUrl]);
 
+  const clipCoachBriefPrefix = useMemo(() => {
+    const parts: string[] = [];
+    if (videoFile) {
+      parts.push(`Source: uploaded file "${videoFile.name}"`);
+    } else {
+      const u = normalizeYoutubeUrlForJob(youtubeUrl);
+      if (isValidHttpUrl(u)) parts.push(`Source: YouTube ${u}`);
+    }
+    const p = prompt.trim();
+    if (p) {
+      parts.push(
+        `Current clip instruction draft:\n${
+          p.length > 1200 ? `${p.slice(0, 1200)}…` : p
+        }`,
+      );
+    }
+    return parts.join("\n\n");
+  }, [videoFile, youtubeUrl, prompt]);
+
+  const handleApplyCoachToPrompt = useCallback((text: string) => {
+    const t = text.trim();
+    if (!t) return;
+    setPrompt((p) => {
+      const base = p.trim();
+      return base ? `${base}\n\n— From Ada clip coach —\n${t}` : t;
+    });
+    toast.success("Coach reply added to your clip prompt");
+  }, []);
+
+  const handleRefinementDraftForCoach = useCallback(
+    (ctx: GenerationContextV1) => {
+      setRefinementDraftContext(ctx);
+    },
+    [],
+  );
+
+  const clipCoachGenerationContext = useMemo(
+    () => jobGenerationContext ?? refinementDraftContext,
+    [jobGenerationContext, refinementDraftContext],
+  );
+
   const submitWithRefinementContext = async (ctx: GenerationContextV1) => {
     const resolvedVariation =
       variationPreset === "custom"
@@ -970,7 +1023,12 @@ export const VideoVariationWorkspace = forwardRef<
         <div className="absolute -left-[20%] bottom-[-35%] h-[480px] w-[1400px] rotate-[-57deg] bg-[#230639] opacity-75 blur-[130px]" />
       </div>
 
-      <div className="relative z-[1] flex min-h-0 flex-1 flex-row">
+      <div
+        className={cn(
+          "relative z-[1] flex min-h-0 flex-1",
+          embedClipCoach ? "flex-col xl:flex-row" : "flex-row",
+        )}
+      >
         <div className="flex min-h-0 min-w-0 flex-1 flex-col font-[family-name:var(--font-instrument-sans)]">
           {omitChromeHeader ? null : (
             <header className="flex h-20 shrink-0 items-center justify-between gap-4 border-b border-white px-4 backdrop-blur-[50px] sm:px-6">
@@ -1231,6 +1289,11 @@ export const VideoVariationWorkspace = forwardRef<
                           void submitWithRefinementContext(ctx)
                         }
                         onCancel={() => setRefinementOpen(false)}
+                        onDraftContextChange={
+                          embedClipCoach
+                            ? handleRefinementDraftForCoach
+                            : undefined
+                        }
                       />
                     </div>
                   </div>
@@ -1871,6 +1934,21 @@ export const VideoVariationWorkspace = forwardRef<
             </div>
           </div>
         </div>
+
+        {embedClipCoach ? (
+          <aside
+            className="flex min-h-[min(36vh,280px)] max-h-[min(48vh,480px)] w-full shrink-0 flex-col border-t border-white/10 xl:max-h-none xl:h-auto xl:min-h-0 xl:w-[min(400px,40vw)] xl:border-l xl:border-t-0"
+            aria-label="Ada clip coach"
+          >
+            <VideoClipCoachChat
+              user={user}
+              generationContext={clipCoachGenerationContext}
+              clipBriefPrefix={clipCoachBriefPrefix}
+              onApplyToPrompt={handleApplyCoachToPrompt}
+              className="min-h-0 xl:min-h-[min(100%,520px)]"
+            />
+          </aside>
+        ) : null}
       </div>
 
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
