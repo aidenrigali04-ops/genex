@@ -54,7 +54,8 @@ function loadTextVideoRunner() {
 const POLL_MS = 5000;
 const TMP_ROOT = "/tmp/genex";
 const VIDEOS_BUCKET = "videos";
-const ERR_MSG_MAX = 500;
+/** Per-row `error_message` / variation `error` cap — keep generous for FFmpeg stderr excerpts. */
+const ERR_MSG_MAX = 1800;
 
 const supabaseUrl =
   process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -757,12 +758,14 @@ function pickCaptionFontfile() {
     "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf",
     "/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf",
     "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-    "/usr/share/fonts/truetype/noto/NotoSans[wdth,wght].ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
   ].filter(Boolean);
   for (const c of candidates) {
+    const p = String(c);
+    /** `[` / `]` in paths break `-filter_complex` pad syntax — never use variable-font filenames here. */
+    if (p.includes("[") || p.includes("]")) continue;
     try {
-      if (fs.existsSync(c)) return c;
+      if (fs.existsSync(p)) return p;
     } catch {
       /* ignore */
     }
@@ -778,7 +781,26 @@ function escapeDrawtext(text) {
     .replace(/\[/g, "\\[")
     .replace(/\]/g, "\\]")
     .replace(/%/g, "\\%")
-    .replace(/\n/g, " ");
+    .replace(/\n/g, " ")
+    .replace(/,/g, "\\,")
+    .replace(/;/g, "\\;")
+    .replace(/=/g, "\\=");
+}
+
+const MIN_FFMPEG_TRIM_SEC = 0.05;
+
+function clampSegmentTrimForFfmpeg(start, end, durationSec) {
+  const d = Number(durationSec);
+  const cap = Number.isFinite(d) && d > 0 ? d : 1e6;
+  let s = Math.max(0, Math.min(Number(start) || 0, cap));
+  let e = Math.max(s, Math.min(Number(end) || 0, cap));
+  if (e - s < MIN_FFMPEG_TRIM_SEC) {
+    e = Math.min(cap, s + MIN_FFMPEG_TRIM_SEC);
+  }
+  if (e <= s) {
+    e = Math.min(cap, s + MIN_FFMPEG_TRIM_SEC);
+  }
+  return { start: s, end: e };
 }
 
 function buildFilterGraph(jobId, segments, durationSec, hasAudio, captionOverlay) {
@@ -786,8 +808,11 @@ function buildFilterGraph(jobId, segments, durationSec, hasAudio, captionOverlay
   const vChains = [];
   const vTags = [];
   for (let i = 0; i < n; i++) {
-    const s = Math.max(0, Math.min(segments[i].start, durationSec));
-    const e = Math.max(s, Math.min(segments[i].end, durationSec));
+    const { start: s, end: e } = clampSegmentTrimForFfmpeg(
+      segments[i].start,
+      segments[i].end,
+      durationSec,
+    );
     const tag = `v${i}`;
     vChains.push(`[0:v]trim=start=${s}:end=${e},setpts=PTS-STARTPTS[${tag}]`);
     vTags.push(`[${tag}]`);
@@ -801,7 +826,7 @@ function buildFilterGraph(jobId, segments, durationSec, hasAudio, captionOverlay
     const fontfile = pickCaptionFontfile();
     if (fontfile) {
       const escFont = fontfile.replace(/'/g, "'\\''");
-      const text = escapeDrawtext(String(captionOverlay).trim());
+      const text = escapeDrawtext(String(captionOverlay).trim().slice(0, 220));
       const style = process.env.GENEX_CAPTION_STYLE ?? "default";
 
       // Safe zone: keep captions in bottom-third, 80px margin from edge
@@ -834,8 +859,11 @@ function buildFilterGraph(jobId, segments, durationSec, hasAudio, captionOverlay
     const aChains = [];
     const aTags = [];
     for (let i = 0; i < n; i++) {
-      const s = Math.max(0, Math.min(segments[i].start, durationSec));
-      const e = Math.max(s, Math.min(segments[i].end, durationSec));
+      const { start: s, end: e } = clampSegmentTrimForFfmpeg(
+        segments[i].start,
+        segments[i].end,
+        durationSec,
+      );
       const tag = `a${i}`;
       aChains.push(`[0:a]atrim=start=${s}:end=${e},asetpts=PTS-STARTPTS[${tag}]`);
       aTags.push(`[${tag}]`);
@@ -849,6 +877,10 @@ function buildFilterGraph(jobId, segments, durationSec, hasAudio, captionOverlay
 
 async function renderVariationWithFfmpeg(jobId, inputMp4, outPath, plan, durationSec, hasAudio) {
   return new Promise((resolve, reject) => {
+    if (!Array.isArray(plan.segments) || plan.segments.length === 0) {
+      reject(new Error("Variation has no segments to render."));
+      return;
+    }
     const { graph, outVideoTag, audioLabel } = buildFilterGraph(
       jobId,
       plan.segments,
@@ -877,11 +909,33 @@ async function renderVariationWithFfmpeg(jobId, inputMp4, outPath, plan, duratio
     args.push("-c:v", "libx264", "-preset", preset, "-crf", crf, "-movflags", "+faststart", outPath);
 
     log(jobId, `ffmpeg encoding variation ${plan.variation_number}…`);
-    const child = spawn("ffmpeg", args, { stdio: "inherit", env: process.env });
+    const stderrChunks = [];
+    const child = spawn("ffmpeg", args, {
+      stdio: ["ignore", "inherit", "pipe"],
+      env: process.env,
+    });
+    child.stderr?.on("data", (buf) => {
+      stderrChunks.push(buf);
+    });
     child.on("error", reject);
     child.on("close", (code) => {
       if (code === 0) resolve();
-      else reject(new Error(`ffmpeg exited with code ${code}`));
+      const raw = Buffer.concat(stderrChunks)
+        .toString("utf8")
+        .replace(/\r\n/g, "\n");
+      const tail = raw.trim();
+      const excerpt =
+        tail.length > 2800 ? `…\n${tail.slice(-2800)}` : tail || "(no stderr)";
+      try {
+        log(jobId, `ffmpeg variation ${plan.variation_number} stderr:\n${excerpt}`);
+      } catch {
+        /* ignore */
+      }
+      reject(
+        new Error(
+          `ffmpeg exited with code ${code} (variation ${plan.variation_number}). Last output:\n${excerpt}`,
+        ),
+      );
     });
   });
 }

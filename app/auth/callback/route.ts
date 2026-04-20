@@ -1,8 +1,7 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { isBillingEntitled } from "@/lib/billing-entitlement";
-import { isUnlimitedCreditsModeServer } from "@/lib/credits-config";
+import { postAuthLandingPath } from "@/lib/auth-post-sign-in";
 import { normalizeInternalReturnPath } from "@/lib/normalize-internal-return-path";
 import { createClient } from "@/lib/supabase/server";
 
@@ -28,32 +27,12 @@ export async function GET(request: Request) {
     if (!error) {
       cookieStore.delete(OAUTH_RETURN_COOKIE);
 
-      if (!isUnlimitedCreditsModeServer()) {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        if (user) {
-          const { data: profile } = await supabase
-            .from("profiles")
-            .select("subscription_status, unlimited_credits")
-            .eq("id", user.id)
-            .maybeSingle();
-          const row = profile as {
-            subscription_status?: string | null;
-            unlimited_credits?: boolean | null;
-          } | null;
-          const profileUnlimited = Boolean(row?.unlimited_credits);
-          if (
-            !isBillingEntitled(row?.subscription_status, profileUnlimited)
-          ) {
-            return NextResponse.redirect(
-              new URL(
-                `/onboarding/plan?next=${encodeURIComponent(safeNext)}`,
-                requestUrl.origin,
-              ),
-            );
-          }
-        }
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (user) {
+        const dest = await postAuthLandingPath(supabase, user.id, safeNext);
+        return NextResponse.redirect(new URL(dest, requestUrl.origin));
       }
 
       return NextResponse.redirect(new URL(safeNext, requestUrl.origin));

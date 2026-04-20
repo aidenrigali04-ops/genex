@@ -3,6 +3,7 @@
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 
+import { postAuthLandingPath } from "@/lib/auth-post-sign-in";
 import { normalizeInternalReturnPath } from "@/lib/normalize-internal-return-path";
 import { createClient } from "@/lib/supabase/server";
 
@@ -74,7 +75,14 @@ export async function signInWithEmail(formData: FormData) {
     );
   }
 
-  redirect(next);
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    redirect(next);
+  }
+  const destination = await postAuthLandingPath(supabase, user.id, next);
+  redirect(destination);
 }
 
 export async function signUpWithEmail(formData: FormData) {
@@ -131,8 +139,13 @@ export async function signUpWithEmail(formData: FormData) {
     );
   }
 
-  if (data.session) {
-    redirect(`/onboarding/plan?next=${encodeURIComponent(next)}`);
+  if (data.session && data.user) {
+    const destination = await postAuthLandingPath(
+      supabase,
+      data.user.id,
+      next,
+    );
+    redirect(destination);
   }
 
   redirect(
