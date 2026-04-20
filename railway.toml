@@ -7,8 +7,9 @@
 [deploy]
 startCommand = "npm start"
 
-# Text→video jobs run inside the main `worker.js` tick (same process as video_jobs).
-# Set on that worker service: PEXELS_API_KEY, ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID (plus SUPABASE_* , OPENAI_API_KEY).
+# Primary: source clipping (`video_jobs`) — same worker: OPENAI_API_KEY, SUPABASE_* , ffmpeg in image.
+# Secondary: text→video (`text_video_jobs`) in the same `worker.js` tick unless ENABLE_TEXT_VIDEO_JOBS=0.
+# For text→video on the worker: PEXELS_API_KEY, ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID (mirror ENABLE_TEXT_VIDEO_JOBS on Next if you disable the API).
 # Optional second service: root `worker`, `node text-video-worker.js`, worker/Dockerfile (ffmpeg).
 #
 # [[services]]

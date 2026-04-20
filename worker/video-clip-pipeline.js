@@ -111,6 +111,7 @@ export async function tightenClipIntentWithOpenAI(openai, jobId, prompt, duratio
 
   const model = process.env.OPENAI_CLIP_TIGHTEN_MODEL?.trim() || "gpt-4o-mini";
   const system = `You normalize user intent for a SOURCE-VIDEO clipping pipeline (real edits from timestamps, not generative B-roll).
+The user's raw_prompt is authoritative: extract literal must-haves (topics to include/avoid, speakers, pacing, platform) before inferring extras.
 Return ONLY JSON with keys:
 version (always 1),
 clip_count_requested (integer 3-8, default 5),

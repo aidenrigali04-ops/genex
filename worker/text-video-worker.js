@@ -10,8 +10,16 @@ import {
   describePexelsEnvForLogs,
   isPexelsConfigured,
 } from "./resolve-pexels-key.js";
+import { isTextVideoJobsEnabled } from "./text-video-feature-flag.js";
 
 loadGenexWorkerEnv(import.meta.url);
+
+if (!isTextVideoJobsEnabled()) {
+  console.log(
+    "[text-video-worker] ENABLE_TEXT_VIDEO_JOBS is disabled — exiting (no text_video_jobs will be claimed).",
+  );
+  process.exit(0);
+}
 
 const POLL_MS = 5000;
 

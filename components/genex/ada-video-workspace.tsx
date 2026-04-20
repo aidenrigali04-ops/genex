@@ -30,6 +30,7 @@ import {
   Zap,
 } from "lucide-react";
 
+import { VideoVariationWorkspace } from "@/components/video-variation-workspace";
 import { UNLIMITED_CREDITS_SENTINEL } from "@/lib/credits-config";
 import { cn } from "@/lib/utils";
 
@@ -46,18 +47,25 @@ const DEFAULT_TEXT_VIDEO_CREDITS = Number(
 
 const VIDEO_WORKSPACE_NAV = [
   { id: "clip_my_video" as const, label: "Clip My Video", Icon: Video },
-  { id: "generate_video" as const, label: "Generate Video", Icon: Clapperboard },
+  {
+    id: "stock_from_script" as const,
+    label: "Stock video from script",
+    Icon: Clapperboard,
+  },
 ] as const;
 
 export type AdaVideoShellNavId = (typeof VIDEO_WORKSPACE_NAV)[number]["id"];
 
 export type AdaVideoWorkspaceProps = {
   userId: string | null;
+  /** Session user for source clipping (`video_jobs`); prefer over `userId` alone. */
+  authUser?: { id: string; email: string } | null;
   creditsRemaining: number;
   creditsUnlimited: boolean;
   onCreditChange?: (remaining: number) => void;
   onJobFinished?: () => void;
   onUpgrade?: () => void;
+  onOpenSignIn?: () => void;
   /** Credits pill + account menu rendered in the workspace header (adaKit). */
   headerTrailing?: ReactNode;
   /** Leave video workspace when user picks a non-video shell nav item. */
@@ -296,12 +304,15 @@ type AdaVideoHeaderProps = {
   onRecentClick: () => void;
   headerTrailing?: ReactNode;
   onMenuClick?: () => void;
+  /** Stock-from-script jobs list; hidden when primary mode is source clipping. */
+  showRecent?: boolean;
 };
 
 function AdaVideoHeader({
   onRecentClick,
   headerTrailing,
   onMenuClick,
+  showRecent = true,
 }: AdaVideoHeaderProps): JSX.Element {
   return (
     <header className="flex h-[72px] shrink-0 items-center justify-between border-b border-white/[0.06] px-5 py-3">
@@ -320,14 +331,16 @@ function AdaVideoHeader({
         <div className="min-w-0 flex-1" aria-hidden />
       </div>
       <div className="flex shrink-0 items-center gap-3">
-        <button
-          type="button"
-          onClick={onRecentClick}
-          className="flex items-center gap-2 rounded-[32px] border border-white/48 px-3 py-2 text-[14px] font-medium leading-[24px] tracking-[0.14px] text-white transition-colors hover:bg-white/8"
-        >
-          <Clock className="h-5 w-5" aria-hidden />
-          Recent
-        </button>
+        {showRecent ? (
+          <button
+            type="button"
+            onClick={onRecentClick}
+            className="flex items-center gap-2 rounded-[32px] border border-white/48 px-3 py-2 text-[14px] font-medium leading-[24px] tracking-[0.14px] text-white transition-colors hover:bg-white/8"
+          >
+            <Clock className="h-5 w-5" aria-hidden />
+            Recent
+          </button>
+        ) : null}
         {headerTrailing}
       </div>
     </header>
@@ -840,16 +853,26 @@ function AdaVideoClipResponseCard({ job, onRegenerate }: AdaVideoClipResponseCar
 
 export function AdaVideoWorkspace({
   userId,
+  authUser = null,
   creditsRemaining,
   creditsUnlimited,
   onCreditChange,
   onJobFinished,
   onUpgrade,
+  onOpenSignIn,
   headerTrailing,
-  onSidebarNavigate,
+  onSidebarNavigate: _onSidebarNavigate,
+  onWorkspaceSettings: _onWorkspaceSettings,
+  onWorkspaceAccount: _onWorkspaceAccount,
   variant = "default",
 }: AdaVideoWorkspaceProps): JSX.Element {
+  void _onSidebarNavigate;
+  void _onWorkspaceSettings;
+  void _onWorkspaceAccount;
   const kit = variant === "adaKit";
+  const [kitVideoMode, setKitVideoMode] = useState<
+    "source_clip" | "stock_script"
+  >("source_clip");
   const [inputMode, setInputMode] = useState<"url" | "text">("url");
   const [urlValue, setUrlValue] = useState("");
   const [textValue, setTextValue] = useState("");
@@ -1137,15 +1160,10 @@ export function AdaVideoWorkspace({
     setTextValue(pick.prompt);
   }, []);
 
-  const handleShellNav = useCallback(
-    (id: AdaVideoShellNavId): void => {
-      if (id === "clip_my_video") return;
-      if (id === "generate_video") {
-        onSidebarNavigate?.(id);
-      }
-    },
-    [onSidebarNavigate],
-  );
+  const handleShellNav = useCallback((id: AdaVideoShellNavId): void => {
+    if (id === "clip_my_video") setKitVideoMode("source_clip");
+    if (id === "stock_from_script") setKitVideoMode("stock_script");
+  }, []);
 
   const statusKey = activeJobData?.status ?? "queued";
   const statusInfo = STATUS_MAP[statusKey] ?? STATUS_MAP.queued;
@@ -1173,7 +1191,8 @@ export function AdaVideoWorkspace({
     activeJob !== null || jobHistory.length > 0;
 
   const sidebarProps: AdaVideoSidebarProps = {
-    activeTab: "clip_my_video",
+    activeTab:
+      kitVideoMode === "source_clip" ? "clip_my_video" : "stock_from_script",
     onTabChange: (id) => {
       handleShellNav(id);
       setShellMenuOpen(false);
@@ -1373,9 +1392,10 @@ export function AdaVideoWorkspace({
           onRecentClick={() => setRecentOpen((o) => !o)}
           headerTrailing={headerTrailing}
           onMenuClick={() => setShellMenuOpen(true)}
+          showRecent={kitVideoMode === "stock_script"}
         />
 
-        {recentOpen ? (
+        {kitVideoMode === "stock_script" && recentOpen ? (
           <div className="absolute right-6 top-[88px] z-20 max-h-72 w-72 overflow-y-auto rounded-2xl border border-white/16 bg-[#0A050F]/95 p-2 shadow-xl backdrop-blur-md">
             {jobHistory.length === 0 ? (
               <p className="px-2 py-3 text-sm text-white/50">No clips yet.</p>
@@ -1398,6 +1418,22 @@ export function AdaVideoWorkspace({
           </div>
         ) : null}
 
+        {kitVideoMode === "source_clip" ? (
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <VideoVariationWorkspace
+              user={authUser ?? (userId ? { id: userId, email: "" } : null)}
+              creditsRemaining={creditsRemaining}
+              creditsUnlimited={creditsUnlimited}
+              setCreditsRemaining={(n) => onCreditChange?.(n)}
+              onOpenBuy={() => onUpgrade?.()}
+              onOpenSignIn={() => onOpenSignIn?.()}
+              onJobFinished={() => onJobFinished?.()}
+              onOpenMobileNav={() => setShellMenuOpen(true)}
+              hideMarketingTitle
+              omitChromeHeader
+            />
+          </div>
+        ) : (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {loadingHistory && !resultsStateB ? (
             <div className="flex flex-1 items-center justify-center">
@@ -1423,7 +1459,7 @@ export function AdaVideoWorkspace({
                     </div>
 
                     <h2 className="max-w-2xl self-stretch text-center font-[family-name:var(--font-instrument-serif)] text-[28px] font-normal tracking-tight text-white/95 sm:text-[32px]">
-                      What should we clip or generate?
+                      Describe your script for stock footage + voiceover
                     </h2>
 
                     <div className="relative w-full max-w-full overflow-hidden">
@@ -1552,6 +1588,7 @@ export function AdaVideoWorkspace({
             </>
           )}
         </div>
+        )}
       </div>
     </div>
   );

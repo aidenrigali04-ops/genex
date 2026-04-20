@@ -11,6 +11,7 @@ import {
   withClipExclusive,
 } from "@/lib/clip-session-store";
 import { createClient } from "@/lib/supabase/server";
+import { isTextVideoJobsApiEnabled } from "@/lib/text-video-api-enabled";
 import { runTextVideoClipEngine } from "@/lib/text-video-clip-engine";
 
 const TEXT_VIDEO_CREDIT_COST = parseInt(
@@ -90,6 +91,17 @@ export async function POST(req: Request) {
 
   if (!session?.user?.id) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  if (!isTextVideoJobsApiEnabled()) {
+    return Response.json(
+      {
+        error: "text_video_disabled",
+        message:
+          "Stock video from script is disabled on this deployment (ENABLE_TEXT_VIDEO_JOBS).",
+      },
+      { status: 503 },
+    );
   }
 
   let json: unknown;

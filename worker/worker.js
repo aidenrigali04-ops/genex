@@ -15,6 +15,7 @@ import {
   describePexelsEnvForLogs,
   isPexelsConfigured,
 } from "./resolve-pexels-key.js";
+import { isTextVideoJobsEnabled } from "./text-video-feature-flag.js";
 
 import {
   buildSnapCandidates,
@@ -446,15 +447,16 @@ const VARIATION_PLAN_MAX_TOTAL_SEC = 100;
 const GPT_SYSTEM = `You are a short-form video editor AI. Given a video transcript with timestamps and a user's creative prompt, plan exactly 5 distinct video variations for TikTok/Reels/Shorts.
 
 Critical rules about variation design:
-- READ the job_prompt carefully. If the user specified a goal (e.g. "Grow followers", "Promote a product"), EVERY variation label and segment selection must serve that goal.
+- READ the job_prompt carefully. Treat explicit user constraints (forbidden topics, required phrases, approximate timestamps, "only my words", fixed clip length, single angle) as HARD requirements. Do not contradict them for the sake of novelty.
+- If the user specified a goal (e.g. "Grow followers", "Promote a product"), EVERY variation label and segment selection must serve that goal.
 - If the user specified a niche (e.g. "Fitness", "Faith-forward"), the style_note for each variation must reflect that niche's native content style.
 - If the user specified a delivery (e.g. "captions on screen", "voiceover"), the caption_overlay and style_note must reflect that.
 - Honor tightened_intent when present: tone, target_platform, must_include_keywords, scoring_weights_hint, and intent_expansion must bias which transcript moments you pick and how you write style_note / caption_overlay.
 - When planner_context.source_is_windowed is true, transcript_segments are a SUBSET of the full video for token limits, but timestamps are ABSOLUTE wall-clock seconds — every segment {start,end} MUST stay within 0..video_duration_sec and you must still diversify picks across the whole runtime (do not only edit the first few minutes unless the prompt demands it).
 - editor_signals.scene_cut_times_sec and editor_signals.silence_boundary_times_sec plus word_boundaries_sec are measured from the real media — place each segment start/end within ~0.45s of at least one of those times when possible so cuts land on natural boundaries (avoid mid-breath / mid-cut unless transcript forces it).
 - First 3 seconds of each variation (first segment start) should overlap a high-energy or high-information moment when the transcript allows (hook-first discipline).
-- Make each of the 5 variations genuinely different in angle, not just different segments of the same narrative. Name them descriptively: "Hook-first cut", "Story arc", "Contrarian angle", "CTA-led", "Transformation edit".
-- Never use generic labels like "Variation 1" or "Short clip".
+- Make each variation meaningfully distinct when the prompt calls for range; if the user asked for a uniform series (same structure, same message), keep all five tightly aligned to that pattern instead of forcing unrelated angles.
+- Name variations descriptively from the user's goals (e.g. "Hook-first cut", "Story arc") — never generic labels like "Variation 1" or "Short clip".
 
 Rules for total runtime of each variation (sum of segment lengths after clipping to 0…video_duration_sec):
 - Respect planner_constraints.total_segment_seconds_min and total_segment_seconds_max exactly (post-processing may snap trims slightly; stay inside the window).
@@ -1164,13 +1166,15 @@ async function tick() {
     await processJob(vjob);
     return true;
   }
-  const { claimNextTextVideoJob, processTextVideoJob } =
-    await loadTextVideoRunner();
-  const tvJob = await claimNextTextVideoJob(supabaseAdmin);
-  if (tvJob) {
-    log(tvJob.id, "text-video claimed (queued → planning).");
-    await processTextVideoJob(supabaseAdmin, tvJob);
-    return true;
+  if (isTextVideoJobsEnabled()) {
+    const { claimNextTextVideoJob, processTextVideoJob } =
+      await loadTextVideoRunner();
+    const tvJob = await claimNextTextVideoJob(supabaseAdmin);
+    if (tvJob) {
+      log(tvJob.id, "text-video claimed (queued → planning).");
+      await processTextVideoJob(supabaseAdmin, tvJob);
+      return true;
+    }
   }
   return false;
 }
@@ -1181,6 +1185,7 @@ async function main() {
   await verifySupabaseServiceRole();
   const pexelsOk = isPexelsConfigured();
   console.log("[worker] text-video keys", {
+    textVideoJobsPoll: isTextVideoJobsEnabled(),
     pexels: pexelsOk,
     elevenlabs: Boolean(process.env.ELEVENLABS_API_KEY?.trim()),
     openai: Boolean(process.env.OPENAI_API_KEY?.trim()),
@@ -1205,7 +1210,9 @@ async function main() {
         idleTicks += 1;
         if (idleTicks >= 12) {
           console.log(
-            "[worker] idle ~60s: no claimable `queued` row in video_jobs or text_video_jobs (submit a job, or check Table Editor / worker_claim_next_* RPC migrations).",
+            "[worker] idle ~60s: no claimable `queued` row in video_jobs" +
+              (isTextVideoJobsEnabled() ? " or text_video_jobs" : "") +
+              " (submit a job, or check Table Editor / worker_claim_next_* RPC migrations).",
           );
           await logQueueDiagnostics();
           idleTicks = 0;

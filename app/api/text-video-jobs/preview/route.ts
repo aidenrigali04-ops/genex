@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { isTextVideoJobsApiEnabled } from "@/lib/text-video-api-enabled";
 import { createClient } from "@/lib/supabase/server";
 import { planShots } from "@/worker/text-video/shot-planner.js";
 
@@ -16,6 +17,13 @@ export async function POST(req: Request) {
 
   if (!session?.user?.id) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  if (!isTextVideoJobsApiEnabled()) {
+    return Response.json(
+      { error: "text_video_disabled", message: "Preview disabled (ENABLE_TEXT_VIDEO_JOBS)." },
+      { status: 503 },
+    );
   }
 
   let json: unknown;

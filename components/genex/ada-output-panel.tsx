@@ -442,13 +442,43 @@ export function AdaOutputPanel({
             <>
               <div className="space-y-3">
                 {parsedClipPackage.script.trim() ? (
-                  <TextToVideoLauncher
-                    script={parsedClipPackage.script}
-                    hooks={parsedClipPackage.hooks}
-                    generationId={generationId}
-                    onCreditChange={onTextVideoCreditsRemainingChange}
-                    variant={kit ? "adaKit" : "default"}
-                  />
+                  <details
+                    className={cn(
+                      "group rounded-xl border",
+                      kit
+                        ? "border-white/12 bg-white/[0.04]"
+                        : "border-ada-border bg-ada-sidebar/80",
+                    )}
+                  >
+                    <summary
+                      className={cn(
+                        "cursor-pointer px-3 py-2.5 text-sm font-medium marker:content-none [&::-webkit-details-marker]:hidden",
+                        kit ? "text-white/90" : "text-ada-primary",
+                      )}
+                    >
+                      <span className="inline-flex items-center gap-2">
+                        <Sparkles className="size-4 shrink-0 opacity-70" aria-hidden />
+                        Stock video from script (optional)
+                        <span className="text-xs font-normal opacity-60 group-open:hidden">
+                          — tap to expand
+                        </span>
+                      </span>
+                    </summary>
+                    <div
+                      className={cn(
+                        "border-t px-3 pb-3 pt-2",
+                        kit ? "border-white/10" : "border-ada-border",
+                      )}
+                    >
+                      <TextToVideoLauncher
+                        script={parsedClipPackage.script}
+                        hooks={parsedClipPackage.hooks}
+                        generationId={generationId}
+                        onCreditChange={onTextVideoCreditsRemainingChange}
+                        variant={kit ? "adaKit" : "default"}
+                      />
+                    </div>
+                  </details>
                 ) : null}
                 <div
                   className={cn(

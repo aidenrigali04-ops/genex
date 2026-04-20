@@ -1028,6 +1028,7 @@ export function HomeWorkspace({
               <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                 <AdaVideoWorkspace
                   userId={user?.id ?? null}
+                  authUser={user}
                   creditsRemaining={creditsRemaining}
                   creditsUnlimited={creditsUnlimited}
                   onCreditChange={(n) => {
@@ -1035,6 +1036,7 @@ export function HomeWorkspace({
                   }}
                   onJobFinished={onVideoJobFinished}
                   onUpgrade={() => setBuyOpen(true)}
+                  onOpenSignIn={() => setSignInOpen(true)}
                   onWorkspaceSettings={openWorkspaceSettings}
                   onWorkspaceAccount={handleFigmaAccount}
                   headerTrailing={
@@ -1043,12 +1045,6 @@ export function HomeWorkspace({
                       {accountMenu}
                     </div>
                   }
-                  onSidebarNavigate={(id) => {
-                    if (id === "generate_video") {
-                      setWorkspaceTab("clip");
-                      setMobileNavOpen(false);
-                    }
-                  }}
                   variant="adaKit"
                 />
               </div>

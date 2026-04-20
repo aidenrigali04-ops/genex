@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+/** Funnel: primary = source clipping (`video_jobs`); secondary = stock-from-script (`text_video_jobs`). */
 export type AhaEvent =
   | "clip_identified" // first clip timestamp surfaces from a video input
   | "copy_hook" // user copies any hook — PRIMARY north star
@@ -12,7 +13,8 @@ export type AhaEvent =
   | "voice_profile_complete" // all three voice fields filled for the first time
   | "hook_strength_high" // output panel surfaced a high hook-strength signal
   | "variation_launched" // user opens video variation workspace
-  | "text_video_started" // user launches text-to-video job
+  | "video_job_submitted" // primary: user queued a source clip job (video_jobs)
+  | "text_video_started" // secondary: user launched stock-from-script (text_video_jobs)
   | "first_generation_complete" // user's very first clip package finished streaming
   | "streak_3_days"
   | "streak_7_days"

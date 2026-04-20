@@ -1,5 +1,9 @@
 ## Video Job Contract
 
+**Primary product path:** source clipping — `video_jobs` (upload/URL + user `prompt` → transcribe → plan → FFmpeg variations). This is what most users should run.
+
+**Secondary / optional:** `text_video_jobs` (script + stock footage + TTS assembly). Same `worker.js` poll loop unless `ENABLE_TEXT_VIDEO_JOBS=0` (disables claiming and should match the Next API flag so new jobs are not accepted).
+
 ### Input (`video_jobs` row the worker reads)
 
 - `id`: uuid
@@ -35,7 +39,7 @@ generating → complete | failed
 
 ## Text → video jobs (`text_video_jobs`)
 
-The main process (`npm run worker` → `worker.js`) claims and runs these on the same poll loop as `video_jobs`. Optional standalone: `npm run text-video --prefix worker`.
+Secondary feature. The main process (`npm run worker` → `worker.js`) claims and runs these on the same poll loop as `video_jobs` when `ENABLE_TEXT_VIDEO_JOBS` is not disabled. Optional standalone: `npm run text-video --prefix worker` (exits immediately if `ENABLE_TEXT_VIDEO_JOBS=0`).
 
 ### Claim
 

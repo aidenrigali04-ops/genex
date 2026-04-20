@@ -56,8 +56,10 @@ import {
   Sparkles,
 } from "lucide-react";
 
+import { trackAha } from "@/lib/analytics";
 import type { VideoVariationItem, VideoJobStatus } from "@/lib/video-job-types";
 import { VIDEO_JOB_CREDIT_COST } from "@/lib/video-job-cost";
+import { createClient } from "@/lib/supabase/client";
 import type { GenerationContextV1 } from "@/lib/generation-context";
 import { isGenerationContextV1 } from "@/lib/generation-context";
 import type { PlatformId } from "@/lib/platforms";
@@ -75,6 +77,8 @@ type Props = {
   onOpenMobileNav?: () => void;
   /** When embedded in the global landing shell, omit the internal marketing hero. */
   hideMarketingTitle?: boolean;
+  /** Parent shell provides top chrome (e.g. Ada video workspace header). */
+  omitChromeHeader?: boolean;
 };
 
 type JobRow = {
@@ -572,6 +576,7 @@ export const VideoVariationWorkspace = forwardRef<
     onJobFinished,
     onOpenMobileNav,
     hideMarketingTitle = false,
+    omitChromeHeader = false,
   } = props;
   const [prompt, setPrompt] = useState("");
   const [youtubeUrl, setYoutubeUrl] = useState("");
@@ -813,6 +818,10 @@ export const VideoVariationWorkspace = forwardRef<
       }
       setJobId(id);
       setJobStatus("queued");
+      if (user) {
+        const sb = createClient();
+        void trackAha(sb, user.id, "video_job_submitted", { job_id: id });
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Request failed.";
       setError(msg);
@@ -904,70 +913,94 @@ export const VideoVariationWorkspace = forwardRef<
 
       <div className="relative z-[1] flex min-h-0 flex-1 flex-row">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col font-[family-name:var(--font-instrument-sans)]">
-          <header className="flex h-20 shrink-0 items-center justify-between gap-4 border-b border-white px-4 backdrop-blur-[50px] sm:px-6">
-            <h1 className="min-w-0 truncate font-[family-name:var(--font-instrument-serif)] text-2xl font-normal tracking-[0.36px] text-white sm:text-4xl">
-              {showPreGenerationHub ? "New Video" : chatTitle}
-            </h1>
-            <div className="flex shrink-0 items-center gap-2 sm:gap-3">
-              {onOpenMobileNav ? (
+          {omitChromeHeader ? null : (
+            <header className="flex h-20 shrink-0 items-center justify-between gap-4 border-b border-white px-4 backdrop-blur-[50px] sm:px-6">
+              <h1 className="min-w-0 truncate font-[family-name:var(--font-instrument-serif)] text-2xl font-normal tracking-[0.36px] text-white sm:text-4xl">
+                {showPreGenerationHub ? "New Video" : chatTitle}
+              </h1>
+              <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+                {onOpenMobileNav ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="lg:hidden rounded-full text-white hover:bg-white/10"
+                    aria-label="Open menu"
+                    onClick={() => onOpenMobileNav()}
+                  >
+                    <Menu className="size-5" />
+                  </Button>
+                ) : null}
+                {showPreGenerationHub ? null : (
+                  <>
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="hidden items-center gap-2 rounded-full border border-transparent bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)] px-4 text-white shadow-[0_0_20px_rgba(203,45,206,0.24)] hover:opacity-95 sm:inline-flex"
+                      onClick={() => {
+                        resetJobUi();
+                        setPrompt("");
+                        setYoutubeUrl("");
+                        setVideoFile(null);
+                        if (fileRef.current) fileRef.current.value = "";
+                      }}
+                    >
+                      <Sparkles className="size-5" />
+                      New
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="inline-flex items-center gap-2 rounded-full border border-transparent bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)] px-3 text-white shadow-[0_0_20px_rgba(203,45,206,0.24)] hover:opacity-95 sm:hidden"
+                      onClick={() => {
+                        resetJobUi();
+                        setPrompt("");
+                        setYoutubeUrl("");
+                        setVideoFile(null);
+                        if (fileRef.current) fileRef.current.value = "";
+                      }}
+                    >
+                      <Sparkles className="size-4" />
+                      New
+                    </Button>
+                  </>
+                )}
                 <Button
                   type="button"
                   size="sm"
-                  variant="ghost"
-                  className="lg:hidden rounded-full text-white hover:bg-white/10"
-                  aria-label="Open menu"
-                  onClick={() => onOpenMobileNav()}
+                  variant="outline"
+                  className="rounded-full border-white/40 bg-transparent text-sm font-medium tracking-wide text-white hover:bg-white/10"
+                  onClick={() =>
+                    toast.message("Recent generations will live here soon.")
+                  }
                 >
-                  <Menu className="size-5" />
+                  Recent
                 </Button>
-              ) : null}
-              {showPreGenerationHub ? null : (
-                <>
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="hidden items-center gap-2 rounded-full border border-transparent bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)] px-4 text-white shadow-[0_0_20px_rgba(203,45,206,0.24)] hover:opacity-95 sm:inline-flex"
-                    onClick={() => {
-                      resetJobUi();
-                      setPrompt("");
-                      setYoutubeUrl("");
-                      setVideoFile(null);
-                      if (fileRef.current) fileRef.current.value = "";
-                    }}
-                  >
-                    <Sparkles className="size-5" />
-                    New
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="inline-flex items-center gap-2 rounded-full border border-transparent bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)] px-3 text-white shadow-[0_0_20px_rgba(203,45,206,0.24)] hover:opacity-95 sm:hidden"
-                    onClick={() => {
-                      resetJobUi();
-                      setPrompt("");
-                      setYoutubeUrl("");
-                      setVideoFile(null);
-                      if (fileRef.current) fileRef.current.value = "";
-                    }}
-                  >
-                    <Sparkles className="size-4" />
-                    New
-                  </Button>
-                </>
-              )}
+              </div>
+            </header>
+          )}
+          {omitChromeHeader && !showPreGenerationHub ? (
+            <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-white/[0.06] px-4 sm:px-6">
+              <p className="min-w-0 truncate text-sm font-medium text-white/80">
+                {chatTitle}
+              </p>
               <Button
                 type="button"
                 size="sm"
-                variant="outline"
-                className="rounded-full border-white/40 bg-transparent text-sm font-medium tracking-wide text-white hover:bg-white/10"
-                onClick={() =>
-                  toast.message("Recent generations will live here soon.")
-                }
+                className="shrink-0 rounded-full border border-transparent bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)] px-3 text-white shadow-[0_0_20px_rgba(203,45,206,0.24)] hover:opacity-95"
+                onClick={() => {
+                  resetJobUi();
+                  setPrompt("");
+                  setYoutubeUrl("");
+                  setVideoFile(null);
+                  if (fileRef.current) fileRef.current.value = "";
+                }}
               >
-                Recent
+                <Sparkles className="mr-1 inline size-4" />
+                New
               </Button>
             </div>
-          </header>
+          ) : null}
 
           <div
             id="video-output"
