@@ -4,6 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Sparkles, Video } from "lucide-react";
 
 import { LazyVideoPlayer } from "@/components/lazy-video-player";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import {
+  normalizeVariationCount,
+  validateDurationOptions,
+} from "@/lib/clip-generation-options";
+import type { ClipLengthMode } from "@/lib/clip-generation-options";
 import { cn } from "@/lib/utils";
 
 const VOICE_OPTIONS = [
@@ -89,7 +96,41 @@ export function TextToVideoLauncher({
   const [elapsed, setElapsed] = useState(0);
   const elapsedRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const [variationPreset, setVariationPreset] = useState<
+    "1" | "2" | "3" | "5" | "custom"
+  >("3");
+  const [variationCustomStr, setVariationCustomStr] = useState("6");
+  const [clipLengthMode, setClipLengthMode] = useState<ClipLengthMode>("auto");
+  const [minDurationStr, setMinDurationStr] = useState("");
+  const [maxDurationStr, setMaxDurationStr] = useState("");
+
   const voScript = [hooks.trim(), script.trim()].filter(Boolean).join("\n\n");
+
+  const resolvedVariationCount = () =>
+    variationPreset === "custom"
+      ? normalizeVariationCount(Number.parseInt(variationCustomStr, 10))
+      : normalizeVariationCount(Number.parseInt(variationPreset, 10));
+
+  const buildPlannerBody = () => {
+    const minParsed =
+      clipLengthMode === "custom" && minDurationStr.trim() !== ""
+        ? Number(minDurationStr)
+        : null;
+    const maxParsed =
+      clipLengthMode === "custom" && maxDurationStr.trim() !== ""
+        ? Number(maxDurationStr)
+        : null;
+    const minDurationSec =
+      minParsed != null && Number.isFinite(minParsed) ? minParsed : null;
+    const maxDurationSec =
+      maxParsed != null && Number.isFinite(maxParsed) ? maxParsed : null;
+    return {
+      variationCount: resolvedVariationCount(),
+      clipLengthMode,
+      minDurationSec,
+      maxDurationSec,
+    };
+  };
 
   const totalPreviewDuration =
     shotPreview?.reduce((s, sh) => s + (Number(sh.duration) || 0), 0) ?? 0;
@@ -107,7 +148,7 @@ export function TextToVideoLauncher({
       if (patch.duration !== undefined) {
         const n = Number(patch.duration);
         duration = Number.isFinite(n)
-          ? Math.min(8, Math.max(2, Math.round(n)))
+          ? Math.min(12, Math.max(2, Math.round(n)))
           : cur.duration;
       }
       next[index] = {
@@ -124,6 +165,16 @@ export function TextToVideoLauncher({
       setErrorMsg("Add a little more script to continue (20+ characters).");
       return;
     }
+    const extra = buildPlannerBody();
+    const dur = validateDurationOptions({
+      clipLengthMode: extra.clipLengthMode,
+      minDurationSec: extra.minDurationSec,
+      maxDurationSec: extra.maxDurationSec,
+    });
+    if (!dur.ok) {
+      setErrorMsg(dur.message);
+      return;
+    }
     setStatus("previewing");
     setPreviewBusy(true);
     setErrorMsg(null);
@@ -136,7 +187,14 @@ export function TextToVideoLauncher({
       const res = await fetch("/api/text-video-jobs/preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ script: voScript, hookStyle }),
+        body: JSON.stringify({
+          script: voScript,
+          hookStyle,
+          variationCount: extra.variationCount,
+          clipLengthMode: extra.clipLengthMode,
+          minDurationSec: extra.minDurationSec,
+          maxDurationSec: extra.maxDurationSec,
+        }),
       });
       const data = (await res.json()) as {
         shots?: TextVideoShotPreview[];
@@ -147,15 +205,17 @@ export function TextToVideoLauncher({
       if (!res.ok) {
         setStatus("failed");
         setErrorMsg(
-          data.message ?? data.error ?? `Preview failed (${res.status})`,
+          `${data.message ?? data.error ?? `Preview failed (${res.status})`} No credits were charged. Try again.`,
         );
         return;
       }
 
       const shots = data.shots;
-      if (!Array.isArray(shots) || shots.length < 6) {
+      if (!Array.isArray(shots) || shots.length < 3) {
         setStatus("failed");
-        setErrorMsg("Could not plan shots. Try again.");
+        setErrorMsg(
+          "Could not plan shots. No credits were charged. Try again.",
+        );
         return;
       }
 
@@ -163,7 +223,7 @@ export function TextToVideoLauncher({
         shots.map((s) => ({
           keyword: String(s.keyword ?? ""),
           duration: Math.min(
-            8,
+            12,
             Math.max(2, Math.round(Number(s.duration) || 5)),
           ),
           caption: String(s.caption ?? ""),
@@ -171,7 +231,7 @@ export function TextToVideoLauncher({
       );
     } catch {
       setStatus("failed");
-      setErrorMsg("Connection issue. Try again.");
+      setErrorMsg("Connection issue. No credits were charged. Try again.");
     } finally {
       setPreviewBusy(false);
     }
@@ -185,6 +245,7 @@ export function TextToVideoLauncher({
     setOutputUrl(null);
 
     try {
+      const extra = buildPlannerBody();
       const res = await fetch("/api/text-video-jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -194,6 +255,10 @@ export function TextToVideoLauncher({
           voiceId,
           hookStyle,
           shotPlan: shotPreview,
+          variationCount: extra.variationCount,
+          clipLengthMode: extra.clipLengthMode,
+          minDurationSec: extra.minDurationSec,
+          maxDurationSec: extra.maxDurationSec,
         }),
       });
 
@@ -208,7 +273,7 @@ export function TextToVideoLauncher({
       if (!res.ok) {
         setStatus("previewing");
         setErrorMsg(
-          data.message ?? data.error ?? `Failed to start (${res.status})`,
+          `${data.message ?? data.error ?? `Failed to start (${res.status})`} No credits were charged. Try again.`,
         );
         return;
       }
@@ -222,7 +287,7 @@ export function TextToVideoLauncher({
       }
     } catch {
       setStatus("previewing");
-      setErrorMsg("Connection issue. Try again.");
+      setErrorMsg("Connection issue. No credits were charged. Try again.");
     }
   };
 
@@ -370,8 +435,8 @@ export function TextToVideoLauncher({
               )}
             >
               {kit
-                ? "5 credits · ~1–2 min"
-                : "Stock footage, voice, captions · 5 credits · ~1–2 min"}
+                ? "5 credits · ~1–2 min · choose how many scene options"
+                : "Stock footage, voice, captions · 5 credits · flexible length"}
             </p>
           </div>
         </div>
@@ -412,6 +477,144 @@ export function TextToVideoLauncher({
                 {errorMsg}
               </p>
             ) : null}
+            <details
+              className={cn(
+                "rounded-lg border px-2.5 py-2 text-left text-xs",
+                kit ? "border-white/12 bg-white/[0.04]" : "border-ada-border bg-ada-elevated/40",
+              )}
+            >
+              <summary
+                className={cn(
+                  "cursor-pointer select-none font-medium",
+                  kit ? "text-white/75" : "text-ada-secondary",
+                )}
+              >
+                Advanced
+              </summary>
+              <div className="mt-2 space-y-3">
+                <div>
+                  <Label
+                    className={cn(
+                      "text-[10px]",
+                      kit ? "text-white/45" : "text-ada-disabled",
+                    )}
+                  >
+                    Scene options (guidance)
+                  </Label>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {(["1", "2", "3", "5"] as const).map((n) => (
+                      <Button
+                        key={n}
+                        type="button"
+                        size="sm"
+                        variant={variationPreset === n ? "default" : "outline"}
+                        className="h-7 rounded-full px-2.5 text-[11px]"
+                        onClick={() => setVariationPreset(n)}
+                      >
+                        {n}
+                      </Button>
+                    ))}
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={
+                        variationPreset === "custom" ? "default" : "outline"
+                      }
+                      className="h-7 rounded-full px-2.5 text-[11px]"
+                      onClick={() => setVariationPreset("custom")}
+                    >
+                      Custom
+                    </Button>
+                    {variationPreset === "custom" ? (
+                      <input
+                        type="number"
+                        min={1}
+                        max={12}
+                        aria-label="Custom scene option count"
+                        className={cn(
+                          "h-7 w-14 rounded-md border px-1 text-center text-[11px] outline-none",
+                          kit
+                            ? "border-white/20 bg-white/5 text-white"
+                            : "border-ada-border bg-ada-input text-ada-primary",
+                        )}
+                        value={variationCustomStr}
+                        onChange={(e) => setVariationCustomStr(e.target.value)}
+                      />
+                    ) : null}
+                  </div>
+                </div>
+                <div>
+                  <Label
+                    className={cn(
+                      "text-[10px]",
+                      kit ? "text-white/45" : "text-ada-disabled",
+                    )}
+                  >
+                    Target runtime (optional)
+                  </Label>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={clipLengthMode === "auto" ? "default" : "outline"}
+                      className="h-7 rounded-full px-2.5 text-[11px]"
+                      onClick={() => setClipLengthMode("auto")}
+                    >
+                      Auto
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={
+                        clipLengthMode === "custom" ? "default" : "outline"
+                      }
+                      className="h-7 rounded-full px-2.5 text-[11px]"
+                      onClick={() => setClipLengthMode("custom")}
+                    >
+                      Custom
+                    </Button>
+                  </div>
+                  {clipLengthMode === "custom" ? (
+                    <div className="mt-1.5 flex gap-2">
+                      <input
+                        type="number"
+                        min={1}
+                        placeholder="Min s"
+                        className={cn(
+                          "h-7 w-20 rounded-md border px-1.5 text-[11px] outline-none",
+                          kit
+                            ? "border-white/20 bg-white/5 text-white placeholder:text-white/35"
+                            : "border-ada-border bg-ada-input text-ada-primary",
+                        )}
+                        value={minDurationStr}
+                        onChange={(e) => setMinDurationStr(e.target.value)}
+                      />
+                      <input
+                        type="number"
+                        min={1}
+                        placeholder="Max s"
+                        className={cn(
+                          "h-7 w-20 rounded-md border px-1.5 text-[11px] outline-none",
+                          kit
+                            ? "border-white/20 bg-white/5 text-white placeholder:text-white/35"
+                            : "border-ada-border bg-ada-input text-ada-primary",
+                        )}
+                        value={maxDurationStr}
+                        onChange={(e) => setMaxDurationStr(e.target.value)}
+                      />
+                    </div>
+                  ) : null}
+                  <p
+                    className={cn(
+                      "mt-1.5 text-[10px] leading-snug",
+                      kit ? "text-white/40" : "text-ada-disabled",
+                    )}
+                  >
+                    Longer totals may take more time to generate.
+                  </p>
+                </div>
+              </div>
+            </details>
             <button
               type="button"
               onClick={() => void requestPreview()}
@@ -518,7 +721,7 @@ export function TextToVideoLauncher({
                           <input
                             type="number"
                             min={2}
-                            max={8}
+                            max={12}
                             value={shot.duration}
                             onChange={(e) =>
                               updateShotPreview(i, {
@@ -541,9 +744,7 @@ export function TextToVideoLauncher({
                 <button
                   type="button"
                   onClick={() => void confirmAndGenerate()}
-                  disabled={
-                    totalPreviewDuration < 28 || totalPreviewDuration > 60
-                  }
+                  disabled={totalPreviewDuration < 8 || totalPreviewDuration > 200}
                   className={cn(
                     "w-full rounded-lg py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-92 disabled:pointer-events-none disabled:opacity-35",
                     kit
@@ -553,14 +754,24 @@ export function TextToVideoLauncher({
                 >
                   Generate · 5 credits
                 </button>
-                {totalPreviewDuration < 28 || totalPreviewDuration > 60 ? (
+                {totalPreviewDuration < 8 || totalPreviewDuration > 200 ? (
                   <p
                     className={cn(
                       "text-center text-[11px]",
                       kit ? "text-amber-200/85" : "text-ada-error",
                     )}
                   >
-                    Length needs to be 28–60s total (now {totalPreviewDuration}s).
+                    Unusual total length ({totalPreviewDuration}s). Adjust scene
+                    seconds or regenerate.
+                  </p>
+                ) : totalPreviewDuration > 90 ? (
+                  <p
+                    className={cn(
+                      "text-center text-[11px]",
+                      kit ? "text-amber-200/80" : "text-ada-secondary",
+                    )}
+                  >
+                    Longer videos may take more time to generate.
                   </p>
                 ) : null}
                 <button

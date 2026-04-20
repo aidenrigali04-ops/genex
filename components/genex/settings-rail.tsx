@@ -30,7 +30,7 @@ export function SettingsRail({
       ? presetLabel && presetLabel.trim()
         ? presetLabel
         : "None"
-      : "5 variations";
+      : "Multiple clip options";
 
   const rows = [
     {

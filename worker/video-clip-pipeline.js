@@ -82,7 +82,7 @@ export function heuristicTightenedIntent(prompt, durationSec) {
   /** @type {const} */
   const base = {
     version: 1,
-    clip_count_requested: 5,
+    clip_count_requested: 5 /** legacy field; source worker uses generation_context.variationCount */,
     duration_seconds_min: dmin,
     duration_seconds_max: dmax,
     aspect_ratio: "9:16",
@@ -119,7 +119,7 @@ export async function tightenClipIntentWithOpenAI(openai, jobId, prompt, duratio
 The user's raw_prompt is authoritative: extract literal must-haves (topics to include/avoid, speakers, pacing, platform) before inferring extras.
 Return ONLY JSON with keys:
 version (always 1),
-clip_count_requested (integer 3-8, default 5),
+clip_count_requested (integer 1-12, default 5; informational for rubric),
 duration_seconds_min (2–min(175, video_duration_sec−0.5); omit only if truly unspecified),
 duration_seconds_max (must exceed min; cap at min(180, video_duration_sec+0.5)),
 aspect_ratio ("9:16"|"1:1"|"16:9"),
@@ -176,7 +176,7 @@ Guardrails:
     }
     const out = {
       version: 1,
-      clip_count_requested: clamp(Math.round(Number(j.clip_count_requested) || 5), 3, 8),
+      clip_count_requested: clamp(Math.round(Number(j.clip_count_requested) || 5), 1, 12),
       duration_seconds_min: dmin,
       duration_seconds_max: dmax,
       aspect_ratio: ["9:16", "1:1", "16:9"].includes(j.aspect_ratio) ? j.aspect_ratio : "9:16",
@@ -665,13 +665,61 @@ export function refinementTargetToPlannerBounds(targetSec, durationSec) {
 }
 
 /**
- * When the user chose a rough length in refinement, that wins over model-inferred rubric bounds.
+ * How many source clips the user asked for (1–12).
+ * @param {unknown} gc
+ */
+export function readVariationCountFromGenerationContext(gc) {
+  const DEFAULT_VARIATION_COUNT = 3;
+  const MIN = 1;
+  const MAX = 12;
+  if (!gc || typeof gc !== "object") return DEFAULT_VARIATION_COUNT;
+  const n = Number(/** @type {{ variationCount?: unknown }} */ (gc).variationCount);
+  if (!Number.isFinite(n) || Number.isNaN(n)) return DEFAULT_VARIATION_COUNT;
+  return Math.min(MAX, Math.max(MIN, Math.floor(n)));
+}
+
+/**
+ * When the user chose explicit min/max seconds, or a rough length in refinement, that wins over inferred rubric bounds.
  * @param {unknown} gc
  * @param {number} durationSec
  * @returns {{ minTotal: number; maxTotal: number } | null}
  */
 export function clipDurationBoundsFromGenerationContext(gc, durationSec) {
   if (!gc || typeof gc !== "object" || gc.version !== 1) return null;
+
+  const mode = String(/** @type {{ clipLengthMode?: unknown }} */ (gc).clipLengthMode).toLowerCase();
+  if (mode === "custom") {
+    const minRaw = /** @type {{ minDurationSec?: unknown }} */ (gc).minDurationSec;
+    const maxRaw = /** @type {{ maxDurationSec?: unknown }} */ (gc).maxDurationSec;
+    const hasMin =
+      minRaw != null && Number.isFinite(Number(minRaw)) && Number(minRaw) > 0;
+    const hasMax =
+      maxRaw != null && Number.isFinite(Number(maxRaw)) && Number(maxRaw) > 0;
+    if (!hasMin && !hasMax) return null;
+
+    const cap = Number.isFinite(durationSec) && durationSec > 0 ? durationSec : DURATION_HARD_MAX;
+    const maxCap = Math.min(VARIATION_PLAN_MAX_TOTAL + 0.75, cap + 0.75);
+    const minV = hasMin ? Number(minRaw) : null;
+    const maxV = hasMax ? Number(maxRaw) : null;
+
+    let minTotal = 0.25;
+    let maxTotal = maxCap;
+    if (hasMin && hasMax && minV != null && maxV != null) {
+      minTotal = Math.max(0.25, minV * 0.88);
+      maxTotal = Math.min(maxCap, maxV * 1.12);
+    } else if (hasMin && minV != null) {
+      minTotal = Math.max(0.25, minV * 0.82);
+      maxTotal = maxCap;
+    } else if (hasMax && maxV != null) {
+      minTotal = 0.25;
+      maxTotal = Math.min(maxCap, maxV * 1.08);
+    }
+    if (maxTotal <= minTotal + 0.25) {
+      maxTotal = Math.min(maxCap, minTotal + 4);
+    }
+    return { minTotal, maxTotal };
+  }
+
   const answers = gc.answers;
   if (!answers || typeof answers !== "object") return null;
   const raw = String(answers.targetLength ?? "").trim();

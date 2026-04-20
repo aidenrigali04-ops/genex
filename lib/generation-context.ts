@@ -1,4 +1,5 @@
 import type { PlatformId } from "@/lib/platforms";
+import type { ClipLengthMode } from "@/lib/clip-generation-options";
 
 export const GENERATION_CONTEXT_VERSION = 1 as const;
 
@@ -11,6 +12,11 @@ export type GenerationContextV1 = {
   answers: Record<string, string>;
   /** ISO timestamp when user confirmed refinement */
   confirmedAt: string;
+  /** Source clipping: how many distinct edits to produce (1–12). */
+  variationCount?: number;
+  clipLengthMode?: ClipLengthMode;
+  minDurationSec?: number | null;
+  maxDurationSec?: number | null;
 };
 
 export function isGenerationContextV1(v: unknown): v is GenerationContextV1 {
@@ -47,6 +53,18 @@ export function formatGenerationContextForPrompt(raw: unknown): string {
     const label = humanizeKey(k);
     lines.push(`• ${label}: ${val}`);
   }
+  if (typeof raw.variationCount === "number" && Number.isFinite(raw.variationCount)) {
+    lines.push(`• Variation count: ${raw.variationCount}`);
+  }
+  if (raw.clipLengthMode === "custom" || raw.clipLengthMode === "auto") {
+    lines.push(`• Clip length mode: ${raw.clipLengthMode}`);
+  }
+  if (raw.minDurationSec != null && Number.isFinite(raw.minDurationSec)) {
+    lines.push(`• Minimum clip duration (seconds): ${raw.minDurationSec}`);
+  }
+  if (raw.maxDurationSec != null && Number.isFinite(raw.maxDurationSec)) {
+    lines.push(`• Maximum clip duration (seconds): ${raw.maxDurationSec}`);
+  }
   lines.push("=== END USER REQUIREMENTS ===");
   lines.push(
     "Do NOT ignore any requirement above. Apply every constraint literally.",
@@ -69,6 +87,12 @@ export function buildSummaryFromContext(ctx: GenerationContextV1): string {
   }
   for (const [k, v] of Object.entries(ctx.answers)) {
     if (String(v).trim()) parts.push(`${humanizeKey(k)}: ${String(v).trim()}`);
+  }
+  if (typeof ctx.variationCount === "number") {
+    parts.push(`Variations: ${ctx.variationCount}`);
+  }
+  if (ctx.clipLengthMode) {
+    parts.push(`Length: ${ctx.clipLengthMode}`);
   }
   return parts.join(" — ");
 }

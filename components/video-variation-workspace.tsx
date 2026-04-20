@@ -19,6 +19,7 @@ import { RatingWidget } from "@/components/rating-widget";
 import { LazyVideoPlayer } from "@/components/lazy-video-player";
 import { SettingsRail } from "@/components/genex/settings-rail";
 import { RefinementChatPanel } from "@/components/refinement-chat-panel";
+import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -56,6 +57,11 @@ import {
   Sparkles,
 } from "lucide-react";
 
+import {
+  normalizeVariationCount,
+  validateDurationOptions,
+} from "@/lib/clip-generation-options";
+import type { ClipLengthMode } from "@/lib/clip-generation-options";
 import { trackAha } from "@/lib/analytics";
 import type { VideoVariationItem, VideoJobStatus } from "@/lib/video-job-types";
 import { VIDEO_JOB_CREDIT_COST } from "@/lib/video-job-cost";
@@ -615,6 +621,15 @@ export const VideoVariationWorkspace = forwardRef<
   const [jobAwaitingUploadLink, setJobAwaitingUploadLink] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
+  /** 1 | 2 | 3 | 5 | custom — maps to variationCount after normalize. */
+  const [variationPreset, setVariationPreset] = useState<
+    "1" | "2" | "3" | "5" | "custom"
+  >("3");
+  const [variationCustomStr, setVariationCustomStr] = useState("6");
+  const [clipLengthMode, setClipLengthMode] = useState<ClipLengthMode>("auto");
+  const [minDurationStr, setMinDurationStr] = useState("");
+  const [maxDurationStr, setMaxDurationStr] = useState("");
+
   useImperativeHandle(ref, () => ({
     openSettings: () => {
       setSettingsOpen(true);
@@ -790,13 +805,50 @@ export const VideoVariationWorkspace = forwardRef<
   }, [videoFile, youtubeUrl]);
 
   const submitWithRefinementContext = async (ctx: GenerationContextV1) => {
+    const resolvedVariation =
+      variationPreset === "custom"
+        ? normalizeVariationCount(Number.parseInt(variationCustomStr, 10))
+        : normalizeVariationCount(Number.parseInt(variationPreset, 10));
+
+    const minParsed =
+      clipLengthMode === "custom" && minDurationStr.trim() !== ""
+        ? Number(minDurationStr)
+        : null;
+    const maxParsed =
+      clipLengthMode === "custom" && maxDurationStr.trim() !== ""
+        ? Number(maxDurationStr)
+        : null;
+    const minDurationSec =
+      minParsed != null && Number.isFinite(minParsed) ? minParsed : null;
+    const maxDurationSec =
+      maxParsed != null && Number.isFinite(maxParsed) ? maxParsed : null;
+
+    const dur = validateDurationOptions({
+      clipLengthMode,
+      minDurationSec,
+      maxDurationSec,
+    });
+    if (!dur.ok) {
+      toast.error(dur.message);
+      return;
+    }
+
+    const mergedCtx: GenerationContextV1 = {
+      ...ctx,
+      variationCount: resolvedVariation,
+      clipLengthMode,
+      ...(clipLengthMode === "custom"
+        ? { minDurationSec, maxDurationSec }
+        : {}),
+    };
+
     setRefinementOpen(false);
     setSubmitting(true);
     setUploadPct(0);
     setFinishingOnServer(false);
     resetJobUi();
     setLastSubmittedPrompt(prompt.trim());
-    setJobGenerationContext(ctx);
+    setJobGenerationContext(mergedCtx);
 
     try {
       const { id, remainingCredits } =
@@ -804,14 +856,14 @@ export const VideoVariationWorkspace = forwardRef<
           ? await submitUploadJobViaDirectStorage({
               file: videoFile,
               prompt: prompt.trim(),
-              generationContext: ctx,
+              generationContext: mergedCtx,
               onProgress: setUploadPct,
               onUploadFullySent: () => setFinishingOnServer(true),
             })
           : await postVideoJobUrlJson({
               prompt: prompt.trim(),
               youtubeUrl: normalizeYoutubeUrlForJob(youtubeUrl),
-              generationContext: ctx,
+              generationContext: mergedCtx,
             });
       if (typeof remainingCredits === "number") {
         setCreditsRemaining(remainingCredits);
@@ -820,7 +872,14 @@ export const VideoVariationWorkspace = forwardRef<
       setJobStatus("queued");
       if (user) {
         const sb = createClient();
-        void trackAha(sb, user.id, "video_job_submitted", { job_id: id });
+        void trackAha(sb, user.id, "video_job_submitted", {
+          job_id: id,
+          variation_count_selected: resolvedVariation,
+          clip_length_mode_selected: clipLengthMode,
+          custom_duration_used:
+            clipLengthMode === "custom" &&
+            (minDurationSec != null || maxDurationSec != null),
+        });
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Request failed.";
@@ -874,11 +933,11 @@ export const VideoVariationWorkspace = forwardRef<
 
   const handleSurprisePrompt = useCallback(() => {
     const ideas = [
-      "Turn the most emotional beats into 5 vertical clips with bold hooks and captions.",
+      "Turn the most emotional beats into punchy vertical clips with bold hooks and captions.",
       "Extract surprising moments, add fast cuts, and optimize for TikTok retention.",
-      "Make five Shorts that each open with a pattern interrupt, then deliver one clear takeaway.",
+      "Make several Shorts that each open with a pattern interrupt, then deliver one clear takeaway.",
       "Create cinematic trailer-style clips from this footage with punchy on-screen text.",
-      "Find five standalone mic-drop moments and stack tight captions for Reels.",
+      "Find standalone mic-drop moments and stack tight captions for Reels.",
     ];
     setPrompt(ideas[Math.floor(Math.random() * ideas.length)]!);
   }, []);
@@ -1639,13 +1698,162 @@ export const VideoVariationWorkspace = forwardRef<
               ) : null}
             </div>
 
+            {user && hasInput ? (
+              <details className="mt-3 rounded-xl border border-white/12 bg-white/[0.04] px-3 py-2 text-left text-white/90">
+                <summary className="cursor-pointer select-none text-xs font-medium text-white/80">
+                  Advanced clip options
+                </summary>
+                <div className="mt-3 space-y-4 pb-1">
+                  <div>
+                    <p className="mb-2 text-[11px] text-white/50">
+                      Start with 3 options for the best balance of speed and choice.
+                    </p>
+                    <Label className="text-[11px] text-white/60">Variations</Label>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {(["1", "2", "3", "5"] as const).map((n) => (
+                        <Button
+                          key={n}
+                          type="button"
+                          size="sm"
+                          variant={
+                            variationPreset === n ? "default" : "outline"
+                          }
+                          className={
+                            variationPreset === n
+                              ? "h-8 rounded-full border-0 bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)] px-3 text-white"
+                              : "h-8 rounded-full border-white/25 bg-transparent px-3 text-white/85 hover:bg-white/10"
+                          }
+                          onClick={() => setVariationPreset(n)}
+                        >
+                          {n}
+                        </Button>
+                      ))}
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={
+                          variationPreset === "custom" ? "default" : "outline"
+                        }
+                        className={
+                          variationPreset === "custom"
+                            ? "h-8 rounded-full border-0 bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)] px-3 text-white"
+                            : "h-8 rounded-full border-white/25 bg-transparent px-3 text-white/85 hover:bg-white/10"
+                        }
+                        onClick={() => setVariationPreset("custom")}
+                      >
+                        Custom
+                      </Button>
+                      {variationPreset === "custom" ? (
+                        <input
+                          type="number"
+                          min={1}
+                          max={12}
+                          aria-label="Custom variation count"
+                          className="h-8 w-16 rounded-lg border border-white/20 bg-white/5 px-2 text-center text-sm text-white outline-none focus-visible:ring-2 focus-visible:ring-[#8800DC]/40"
+                          value={variationCustomStr}
+                          onChange={(e) => setVariationCustomStr(e.target.value)}
+                        />
+                      ) : null}
+                    </div>
+                  </div>
+                  <div>
+                    <Label className="text-[11px] text-white/60">
+                      Clip length
+                    </Label>
+                    <p className="mb-2 mt-0.5 text-[11px] text-white/50">
+                      Auto length finds the strongest clip naturally. Custom is
+                      optional guidance only.
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={
+                          clipLengthMode === "auto" ? "default" : "outline"
+                        }
+                        className={
+                          clipLengthMode === "auto"
+                            ? "h-8 rounded-full border-0 bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)] px-3 text-white"
+                            : "h-8 rounded-full border-white/25 bg-transparent px-3 text-white/85 hover:bg-white/10"
+                        }
+                        onClick={() => setClipLengthMode("auto")}
+                      >
+                        Auto
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={
+                          clipLengthMode === "custom" ? "default" : "outline"
+                        }
+                        className={
+                          clipLengthMode === "custom"
+                            ? "h-8 rounded-full border-0 bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)] px-3 text-white"
+                            : "h-8 rounded-full border-white/25 bg-transparent px-3 text-white/85 hover:bg-white/10"
+                        }
+                        onClick={() => setClipLengthMode("custom")}
+                      >
+                        Custom
+                      </Button>
+                    </div>
+                    {clipLengthMode === "custom" ? (
+                      <div className="mt-2 flex flex-wrap items-end gap-2">
+                        <div className="flex flex-col gap-1">
+                          <Label className="text-[10px] text-white/45">
+                            Min (sec, optional)
+                          </Label>
+                          <input
+                            type="number"
+                            min={1}
+                            step={1}
+                            placeholder="—"
+                            className="h-8 w-24 rounded-lg border border-white/20 bg-white/5 px-2 text-sm text-white outline-none placeholder:text-white/35 focus-visible:ring-2 focus-visible:ring-[#8800DC]/40"
+                            value={minDurationStr}
+                            onChange={(e) => setMinDurationStr(e.target.value)}
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <Label className="text-[10px] text-white/45">
+                            Max (sec, optional)
+                          </Label>
+                          <input
+                            type="number"
+                            min={1}
+                            step={1}
+                            placeholder="—"
+                            className="h-8 w-24 rounded-lg border border-white/20 bg-white/5 px-2 text-sm text-white outline-none placeholder:text-white/35 focus-visible:ring-2 focus-visible:ring-[#8800DC]/40"
+                            value={maxDurationStr}
+                            onChange={(e) => setMaxDurationStr(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    ) : null}
+                    {clipLengthMode === "custom" ? (
+                      <p className="mt-2 text-[11px] text-amber-200/80">
+                        Longer clips may take more time to generate.
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+              </details>
+            ) : null}
+
             {hasInput ? (
               <div className="mt-3 flex flex-wrap gap-2 text-xs text-white/55">
                 <span>⚡ {VIDEO_JOB_CREDIT_COST} credits</span>
                 <span className="text-white/25">·</span>
                 <span>~2–5 min</span>
                 <span className="text-white/25">·</span>
-                <span>5 variations from your footage</span>
+                <span>
+                  {variationPreset === "custom"
+                    ? normalizeVariationCount(
+                        Number.parseInt(variationCustomStr, 10),
+                      )
+                    : normalizeVariationCount(
+                        Number.parseInt(variationPreset, 10),
+                      )}{" "}
+                  clip options from your footage
+                </span>
               </div>
             ) : null}
             {user && !creditsUnlimited ? (

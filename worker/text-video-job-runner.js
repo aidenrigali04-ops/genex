@@ -21,12 +21,12 @@ const BUCKET = "text-video-outputs";
 
 /** @param {unknown} raw */
 function normalizeShotsFromDb(raw) {
-  if (!raw || !Array.isArray(raw) || raw.length < 6) return null;
+  if (!raw || !Array.isArray(raw) || raw.length < 3) return null;
   return raw.map((sh) => ({
     keyword: String(
       sh.keyword ?? "person talking smartphone vertical energetic",
     ),
-    duration: Math.min(8, Math.max(3, Math.round(Number(sh.duration) || 5))),
+    duration: Math.min(12, Math.max(2, Math.round(Number(sh.duration) || 5))),
     caption: String(sh.caption ?? "").slice(0, 200),
   }));
 }
@@ -109,11 +109,26 @@ export async function processTextVideoJob(supabase, job) {
       typeof clipEngine?.planner_context_block === "string"
         ? clipEngine.planner_context_block
         : null;
+    const hintSrc =
+      job.clip_engine && typeof job.clip_engine === "object"
+        ? job.clip_engine.planner_hints
+        : null;
+    const plannerHints =
+      hintSrc && typeof hintSrc === "object"
+        ? {
+            minShots: Number(hintSrc.minShots),
+            maxShots: Number(hintSrc.maxShots),
+            totalMinSec: Number(hintSrc.totalMinSec),
+            totalMaxSec: Number(hintSrc.totalMaxSec),
+          }
+        : undefined;
+
     let shots =
       fromDb ??
       (await planShots(job.script, {
         hookStyle: job.hook_style ?? undefined,
         clipEngineContext: clipCtx,
+        plannerHints,
         supabase,
         jobId: job.id,
         onCheckpoint: async (phase) => {

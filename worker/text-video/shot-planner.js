@@ -19,6 +19,7 @@ function getOpenAI() {
  * @typedef {{
  *   hookStyle?: string | null,
  *   clipEngineContext?: string | null,
+ *   plannerHints?: { minShots?: number, maxShots?: number, totalMinSec?: number, totalMaxSec?: number },
  *   onCheckpoint?: (phase: string, payload?: Record<string, unknown>) => void | Promise<void>,
  *   supabase?: import("@supabase/supabase-js").SupabaseClient | null,
  *   jobId?: string | null,
@@ -136,6 +137,12 @@ function enforceVisualArc(shots) {
 export async function planShotsOnce(script, options = {}) {
   const hookStyle = options.hookStyle?.trim() || null;
   const clipEngineContext = options.clipEngineContext?.trim() || null;
+  const ph = options.plannerHints ?? {};
+  const minShots = Math.max(3, Math.min(12, Math.round(Number(ph.minShots)) || 6));
+  const maxShots = Math.max(minShots, Math.min(12, Math.round(Number(ph.maxShots)) || 12));
+  let totalMinSec = Math.max(8, Number(ph.totalMinSec) || 28);
+  let totalMaxSec = Math.max(totalMinSec + 4, Number(ph.totalMaxSec) || 55);
+  if (totalMaxSec < totalMinSec + 4) totalMaxSec = totalMinSec + 8;
   const openai = getOpenAI();
   const systemPrompt = `You are a professional short-form video director with 
 10 years of TikTok and Reels editing experience.
@@ -143,7 +150,7 @@ export async function planShotsOnce(script, options = {}) {
 Given a script, output a JSON object: { "shots": [...] }
 Each shot has exactly three fields:
   - "keyword": a 3-6 word Pexels search query (see keyword rules below)
-  - "duration": integer seconds this shot plays (3–7 only)
+  - "duration": integer seconds this shot plays (2–12)
   - "caption": the exact words spoken during this shot (≤10 words, verbatim from script)
 
 KEYWORD RULES (critical for visual quality):
@@ -160,10 +167,10 @@ KEYWORD RULES (critical for visual quality):
 6. Avoid: "background", "generic", "abstract", "concept art", "illustration"
 
 TIMING RULES:
-- Total duration MUST be 28–55 seconds (sum of all duration fields)
-- Shorter shots (3–4s) for punchy hook lines
-- Longer shots (5–7s) for explanation or emotional beats
-- Minimum 6 shots, maximum 12 shots
+- Aim for total duration roughly ${totalMinSec}–${totalMaxSec} seconds (sum of all duration fields). Prefer narrative completeness over an exact second total.
+- Shorter shots (2–4s) for punchy hook lines
+- Longer shots (5–12s) for explanation or emotional beats
+- Minimum ${minShots} shots, maximum ${maxShots} shots
 
 VISUAL ARC RULES (critical for professional feel):
 - Shot 1 (OPENER): Must feature a PERSON in close-up or medium shot — face, hands,
@@ -221,26 +228,26 @@ ${script.slice(0, 4000)}`;
       const parsed = JSON.parse(raw);
       const rawShots = Array.isArray(parsed) ? parsed : parsed.shots ?? [];
 
-      if (!Array.isArray(rawShots) || rawShots.length < 6) {
-        throw new Error("Shot plan too short (need at least 6 shots)");
+      if (!Array.isArray(rawShots) || rawShots.length < minShots) {
+        throw new Error(`Shot plan too short (need at least ${minShots} shots)`);
       }
 
-      let shots = enforceVisualArc(deduplicateKeywords(rawShots)).slice(0, 12);
+      let shots = enforceVisualArc(deduplicateKeywords(rawShots)).slice(0, maxShots);
 
       let totalDuration = shots.reduce(
         (s, sh) => s + (Number(sh.duration) || 5),
         0,
       );
-      if (totalDuration < 28) {
-        throw new Error("Total duration too short (need 28–55s)");
+      if (totalDuration < totalMinSec * 0.82) {
+        throw new Error(`Total duration too short (aim ~${totalMinSec}–${totalMaxSec}s)`);
       }
-      if (totalDuration > 55) {
-        const factor = 55 / totalDuration;
+      if (totalDuration > totalMaxSec) {
+        const factor = totalMaxSec / totalDuration;
         shots = shots.map((sh) => ({
           ...sh,
           duration: Math.max(
-            3,
-            Math.min(7, Math.round((Number(sh.duration) || 5) * factor)),
+            2,
+            Math.min(12, Math.round((Number(sh.duration) || 5) * factor)),
           ),
         }));
         totalDuration = shots.reduce(
@@ -253,7 +260,7 @@ ${script.slice(0, 4000)}`;
         keyword: String(
           sh.keyword ?? "person talking smartphone vertical energetic",
         ),
-        duration: Math.min(7, Math.max(3, Math.round(Number(sh.duration) || 5))),
+        duration: Math.min(12, Math.max(2, Math.round(Number(sh.duration) || 5))),
         caption: String(sh.caption ?? "").slice(0, 200),
       }));
     } catch (e) {
@@ -307,7 +314,7 @@ function applyShotPatches(shots, patches) {
       out[i] = { ...out[i], caption: p.caption.slice(0, 200) };
     if (p.duration != null) {
       const d = Math.round(Number(p.duration));
-      if (d >= 2 && d <= 8) out[i] = { ...out[i], duration: d };
+      if (d >= 2 && d <= 12) out[i] = { ...out[i], duration: d };
     }
   }
   return out;
@@ -363,9 +370,12 @@ Rules:
       current = enforceVisualArc(deduplicateKeywords(applyShotPatches(current, patches)));
     }
 
+    const hints = options.plannerHints ?? {};
+    const tMin = Math.max(8, Number(hints.totalMinSec) || 28);
+    const tMax = Math.max(tMin + 4, Number(hints.totalMaxSec) || 55);
     const reviewSystem = `You are an adversarial QA reviewer. Return JSON ONLY:
 { "approve": boolean, "issues": string[] }
-Approve only if shot list is coherent, arc-safe, and timings sum 28–55s.`;
+Approve only if shot list is coherent, arc-safe, and timings roughly fit ${tMin}–${tMax}s (guidance, not a hard reject).`;
 
     const total = current.reduce((s, sh) => s + (Number(sh.duration) || 0), 0);
     const reviewUser = `Total duration ~${total}s. Shots:\n${JSON.stringify({ shots: current })}`;
@@ -441,21 +451,23 @@ export async function planShots(script, options = {}) {
   if (options.onCheckpoint)
     await options.onCheckpoint("planning_final", { shot_count: reviewed.length });
 
+  const ph = options.plannerHints ?? {};
+  const capMax = Math.max(20, Number(ph.totalMaxSec) || 55);
   let out = reviewed.map((sh) => ({
     keyword: String(
       sh.keyword ?? "person talking smartphone vertical energetic",
     ),
-    duration: Math.min(7, Math.max(3, Math.round(Number(sh.duration) || 5))),
+    duration: Math.min(12, Math.max(2, Math.round(Number(sh.duration) || 5))),
     caption: String(sh.caption ?? "").slice(0, 200),
   }));
   let totalDuration = out.reduce((s, sh) => s + sh.duration, 0);
-  if (totalDuration > 55) {
-    const factor = 55 / totalDuration;
+  if (totalDuration > capMax) {
+    const factor = capMax / totalDuration;
     out = out.map((sh) => ({
       ...sh,
       duration: Math.max(
-        3,
-        Math.min(7, Math.round(sh.duration * factor)),
+        2,
+        Math.min(12, Math.round(sh.duration * factor)),
       ),
     }));
     totalDuration = out.reduce((s, sh) => s + sh.duration, 0);

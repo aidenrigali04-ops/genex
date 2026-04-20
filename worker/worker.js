@@ -26,6 +26,7 @@ import {
   extractMonoWav16kForSilence,
   clipDurationBoundsFromGenerationContext,
   mergePlannerDurationBounds,
+  readVariationCountFromGenerationContext,
   normalizeWhisperWords,
   postRefineVariationSegments,
   sampleWordBoundaryTimes,
@@ -445,7 +446,9 @@ function normalizeWhisperSegments(transcription) {
 /** Max sum of segment lengths (seconds) per variation after clipping to the source. */
 const VARIATION_PLAN_MAX_TOTAL_SEC = 180;
 
-const GPT_SYSTEM = `You are a short-form video editor AI. Given a video transcript with timestamps and a user's creative prompt, plan exactly 5 distinct video variations for TikTok/Reels/Shorts.
+function buildVariationPlannerSystemPrompt(variationCount) {
+  const n = Math.min(12, Math.max(1, Math.round(Number(variationCount)) || 3));
+  return `You are a short-form video editor AI. Given a video transcript with timestamps and a user's creative prompt, plan exactly ${n} distinct video variation${n === 1 ? "" : "s"} for TikTok/Reels/Shorts.
 
 Critical rules about variation design:
 - READ the job_prompt carefully. Treat explicit user constraints (forbidden topics, required phrases, approximate timestamps, "only my words", fixed clip length, single angle) as HARD requirements. Do not contradict them for the sake of novelty.
@@ -456,14 +459,14 @@ Critical rules about variation design:
 - When planner_context.source_is_windowed is true, transcript_segments are a SUBSET of the full video for token limits, but timestamps are ABSOLUTE wall-clock seconds — every segment {start,end} MUST stay within 0..video_duration_sec and you must still diversify picks across the whole runtime (do not only edit the first few minutes unless the prompt demands it).
 - editor_signals.scene_cut_times_sec and editor_signals.silence_boundary_times_sec plus word_boundaries_sec are measured from the real media — place each segment start/end within ~0.45s of at least one of those times when possible so cuts land on natural boundaries (avoid mid-breath / mid-cut unless transcript forces it).
 - First 3 seconds of each variation (first segment start) should overlap a high-energy or high-information moment when the transcript allows (hook-first discipline).
-- Make each variation meaningfully distinct when the prompt calls for range; if the user asked for a uniform series (same structure, same message), keep all five tightly aligned to that pattern instead of forcing unrelated angles.
+- Make each variation meaningfully distinct when the prompt calls for range; if the user asked for a uniform series (same structure, same message), keep every variation tightly aligned to that pattern instead of forcing unrelated angles.
 - Name variations descriptively from the user's goals (e.g. "Hook-first cut", "Story arc") — never generic labels like "Variation 1" or "Short clip".
 
 Rules for total runtime of each variation (sum of segment lengths after clipping to 0…video_duration_sec):
-- Respect planner_constraints.total_segment_seconds_min and total_segment_seconds_max exactly (post-processing may snap trims slightly; stay inside the window).
-- Prefer totals near the middle of planner_constraints when it fits the narrative; otherwise use any value inside the allowed min/max.
-- For very short sources, use as much strong footage as fits while staying inside the min/max window.
-Return ONLY a valid JSON object (no markdown fences) with key "variations": an array of exactly 5 objects. Each object: variation_number (1-5), label (string), segments (non-empty array of {start, end} in seconds, within the video), caption_overlay (string or null), style_note (string).`;
+- Aim for planner_constraints.total_segment_seconds_min/max when it fits the narrative; prefer semantic completeness over forcing an exact second total.
+- For very short sources, use as much strong footage as fits while staying inside the min/max window when those constraints are tight.
+Return ONLY a valid JSON object (no markdown fences) with key "variations": an array of exactly ${n} objects. Each object: variation_number (1-${n}), label (string), segments (non-empty array of {start, end} in seconds, within the video), caption_overlay (string or null), style_note (string).`;
+}
 
 /**
  * Models sometimes wrap JSON in ```json fences or prepend text despite response_format.
@@ -525,6 +528,10 @@ async function planVariationsWithGptOnce(
   pipelineOpts,
 ) {
   const { minTotal, maxTotal } = pipelineOpts.mergedBounds;
+  const variationCount = Math.min(
+    12,
+    Math.max(1, Math.round(Number(pipelineOpts.variationCount)) || 3),
+  );
   const userPayload = {
     job_prompt: prompt,
     video_duration_sec: durationSec,
@@ -542,7 +549,7 @@ async function planVariationsWithGptOnce(
       full_source_segment_count: pipelineOpts.fullTranscriptSegmentCount ?? transcriptSegments.length,
     },
     planner_constraints: {
-      variation_count: 5,
+      variation_count: variationCount,
       total_segment_seconds_min: minTotal,
       total_segment_seconds_max: maxTotal,
     },
@@ -554,7 +561,7 @@ async function planVariationsWithGptOnce(
     temperature: attemptIndex > 0 ? 0.2 : 0.35,
     response_format: { type: "json_object" },
     messages: [
-      { role: "system", content: GPT_SYSTEM },
+      { role: "system", content: buildVariationPlannerSystemPrompt(variationCount) },
       { role: "user", content: JSON.stringify(userPayload) },
     ],
   });
@@ -570,17 +577,20 @@ async function planVariationsWithGptOnce(
   } else {
     throw new Error("Variations plan: missing or non-array 'variations' (could not parse JSON).");
   }
-  if (list.length > 5) list = list.slice(0, 5);
-  if (list.length !== 5) {
+  if (list.length > variationCount) list = list.slice(0, variationCount);
+  if (list.length !== variationCount) {
     throw new Error(
-      `Variations plan: expected 5 variations, got ${list.length} (after trimming to max 5).`,
+      `Variations plan: expected ${variationCount} variations, got ${list.length} (after trimming to max ${variationCount}).`,
     );
   }
 
   const out = [];
-  for (let idx = 0; idx < 5; idx++) {
+  for (let idx = 0; idx < variationCount; idx++) {
     const v = list[idx];
-    const n = Math.min(5, Math.max(1, Math.round(Number(v.variation_number ?? idx + 1))));
+    const n = Math.min(
+      variationCount,
+      Math.max(1, Math.round(Number(v.variation_number ?? idx + 1))),
+    );
     const label = typeof v.label === "string" ? v.label : `Variation ${n}`;
     const segsIn = Array.isArray(v.segments) ? v.segments : [];
     let segments = segsIn
@@ -613,7 +623,10 @@ async function planVariationsWithGptOnce(
       total += ee - ss;
     }
 
-    if (total < minTotal || total > maxTotal) {
+    if (
+      !pipelineOpts.skipDurationTotalValidation &&
+      (total < minTotal || total > maxTotal)
+    ) {
       throw new Error(
         `Variations plan: variation ${idx + 1} total clip length ${total.toFixed(1)}s is outside allowed ${minTotal.toFixed(1)}–${maxTotal.toFixed(1)}s for this video.`,
       );
@@ -640,6 +653,14 @@ async function planVariationsWithGptOnce(
 function formatGenerationContextWorker(gc) {
   if (gc == null || typeof gc !== "object") return "";
   if (gc.version === 1 && gc.answers && typeof gc.answers === "object") {
+    const vCount =
+      typeof gc.variationCount === "number" && Number.isFinite(gc.variationCount)
+        ? gc.variationCount
+        : null;
+    const clipMode =
+      gc.clipLengthMode === "custom" || gc.clipLengthMode === "auto"
+        ? gc.clipLengthMode
+        : null;
     const answers = gc.answers;
     const pick = (key) => String(answers[key] ?? "").trim();
 
@@ -665,13 +686,28 @@ function formatGenerationContextWorker(gc) {
       briefParts.push("Follow-up refinement job (prioritize latest instructions).");
     }
     const editorBrief = briefParts.length ? briefParts.join("\n") : "(none)";
+    const clipMeta = [
+      vCount != null ? `Requested variation count: ${vCount}` : null,
+      clipMode ? `Clip length mode: ${clipMode}` : null,
+      gc.minDurationSec != null && Number.isFinite(Number(gc.minDurationSec))
+        ? `Custom min duration (sec): ${Number(gc.minDurationSec)}`
+        : null,
+      gc.maxDurationSec != null && Number.isFinite(Number(gc.maxDurationSec))
+        ? `Custom max duration (sec): ${Number(gc.maxDurationSec)}`
+        : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
 
     return [
       `USER GOAL: ${userGoal}`,
       `USER NICHE: ${userNiche}`,
       `DELIVERY: ${delivery}`,
+      clipMeta ? `CLIP OPTIONS:\n${clipMeta}` : "",
       `EDITOR BRIEF:\n${editorBrief}`,
-    ].join("\n");
+    ]
+      .filter(Boolean)
+      .join("\n");
   }
   try {
     return `User context: ${JSON.stringify(gc)}`;
@@ -682,12 +718,19 @@ function formatGenerationContextWorker(gc) {
 
 async function planVariationsWithGpt(jobId, prompt, transcriptSegments, durationSec, pipelineOpts) {
   const { minTotal, maxTotal } = pipelineOpts.mergedBounds;
+  const nVar = Math.min(
+    12,
+    Math.max(1, Math.round(Number(pipelineOpts.variationCount)) || 3),
+  );
   let lastErr = new Error("Variations plan failed after retries.");
   for (let attempt = 0; attempt < 3; attempt++) {
     log(jobId, attempt === 0 ? "Planning variations with GPT-4o…" : `Planning variations retry ${attempt + 1}/3…`);
     let priorHint = null;
     if (attempt > 0) {
-      priorHint = `Previous reply was invalid (${String(lastErr.message)}). Reply with a single JSON object only. "variations" must be an array of length exactly 5. Each item needs a non-empty "segments" array of {start,end} in seconds within 0..${Number(durationSec).toFixed(2)}. Each variation's summed segment length (after clipping to the video) must be between ${minTotal.toFixed(2)} and ${maxTotal.toFixed(2)} seconds.`;
+      const durRule = pipelineOpts.skipDurationTotalValidation
+        ? "Each variation should use sensible segment totals for the story (no need to hit an exact second budget)."
+        : `Each variation's summed segment length (after clipping to the video) must be between ${minTotal.toFixed(2)} and ${maxTotal.toFixed(2)} seconds.`;
+      priorHint = `Previous reply was invalid (${String(lastErr.message)}). Reply with a single JSON object only. "variations" must be an array of length exactly ${nVar}. Each item needs a non-empty "segments" array of {start,end} in seconds within 0..${Number(durationSec).toFixed(2)}. ${durRule}`;
     }
     try {
       const raw = await planVariationsWithGptOnce(
@@ -1057,6 +1100,13 @@ async function processJob(job) {
     const wordBoundarySample = sampleWordBoundaryTimes(words, durationSec);
     const baseBounds = variationTotalDurationBounds(durationSec);
     const userLenBounds = clipDurationBoundsFromGenerationContext(job.generation_context, durationSec);
+    const clipMode = String(
+      job.generation_context && job.generation_context.clipLengthMode != null
+        ? job.generation_context.clipLengthMode
+        : "",
+    ).toLowerCase();
+    const skipDurationTotalValidation =
+      clipMode !== "custom" && userLenBounds == null;
     const mergedBounds = userLenBounds
       ? userLenBounds
       : mergePlannerDurationBounds(baseBounds, tightened, durationSec);
@@ -1066,6 +1116,11 @@ async function processJob(job) {
         `Clip length: using refinement target window ${userLenBounds.minTotal.toFixed(1)}–${userLenBounds.maxTotal.toFixed(1)}s (overrides inferred rubric).`,
       );
     }
+    if (skipDurationTotalValidation) {
+      log(jobId, "Clip length: auto mode — planner will not hard-fail on exact segment totals.");
+    }
+    const variationCount = readVariationCountFromGenerationContext(job.generation_context);
+    log(jobId, `Planning ${variationCount} variation(s).`);
     const snapCandidates = buildSnapCandidates(sceneCuts, silenceMids, words, durationSec);
 
     log(jobId, "Planning…");
@@ -1085,6 +1140,8 @@ async function processJob(job) {
       snapCandidates,
       planningWindows,
       fullTranscriptSegmentCount: transcriptSegments.length,
+      variationCount,
+      skipDurationTotalValidation,
     });
     planned = [...planned].sort((a, b) => a.variation_number - b.variation_number);
 

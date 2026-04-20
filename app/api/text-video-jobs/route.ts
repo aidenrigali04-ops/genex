@@ -12,6 +12,12 @@ import {
 } from "@/lib/clip-session-store";
 import { createClient } from "@/lib/supabase/server";
 import { isTextVideoJobsApiEnabled } from "@/lib/text-video-api-enabled";
+import {
+  normalizeVariationCount,
+  textVideoPlannerHintsFromPayload,
+  validateDurationOptions,
+} from "@/lib/clip-generation-options";
+import type { ClipLengthMode } from "@/lib/clip-generation-options";
 import { runTextVideoClipEngine } from "@/lib/text-video-clip-engine";
 
 const TEXT_VIDEO_CREDIT_COST = parseInt(
@@ -26,7 +32,7 @@ const generationIdSchema = z.union([
 
 const shotPlanEntrySchema = z.object({
   keyword: z.string().min(1).max(200),
-  duration: z.coerce.number().int().min(2).max(8),
+  duration: z.coerce.number().int().min(2).max(12),
   caption: z.string().max(500),
 });
 
@@ -36,16 +42,24 @@ const bodySchema = z
     generationId: generationIdSchema.optional(),
     voiceId: z.string().min(1).max(128).optional(),
     hookStyle: z.string().min(1).max(64).optional(),
-    shotPlan: z.array(shotPlanEntrySchema).min(6).max(24).optional(),
+    shotPlan: z.array(shotPlanEntrySchema).min(3).max(24).optional(),
+    variationCount: z.coerce.number().int().min(1).max(12).optional(),
+    clipLengthMode: z.enum(["auto", "custom"]).optional(),
+    minDurationSec: z.number().positive().nullish(),
+    maxDurationSec: z.number().positive().nullish(),
   })
   .superRefine((data, ctx) => {
-    if (!data.shotPlan?.length) return;
-    const sum = data.shotPlan.reduce((s, sh) => s + sh.duration, 0);
-    if (sum < 28 || sum > 60) {
+    const mode = (data.clipLengthMode ?? "auto") as ClipLengthMode;
+    const v = validateDurationOptions({
+      clipLengthMode: mode,
+      minDurationSec: data.minDurationSec ?? null,
+      maxDurationSec: data.maxDurationSec ?? null,
+    });
+    if (!v.ok) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Shot plan total duration must be between 28 and 60 seconds.",
-        path: ["shotPlan"],
+        message: v.message,
+        path: ["minDurationSec"],
       });
     }
   });
@@ -232,6 +246,13 @@ export async function POST(req: Request) {
       clipBundle.hook_style_resolved ||
       undefined;
 
+    const plannerHints = textVideoPlannerHintsFromPayload({
+      variationCount: normalizeVariationCount(parsed.data.variationCount),
+      clipLengthMode: (parsed.data.clipLengthMode ?? "auto") as ClipLengthMode,
+      minDurationSec: parsed.data.minDurationSec ?? null,
+      maxDurationSec: parsed.data.maxDurationSec ?? null,
+    });
+
     const { data: job, error } = await supabase
       .from("text_video_jobs")
       .insert({
@@ -240,7 +261,10 @@ export async function POST(req: Request) {
         script: parsed.data.script,
         voice_id: voiceId,
         credit_cost: TEXT_VIDEO_CREDIT_COST,
-        clip_engine: clipBundle,
+        clip_engine: {
+          ...clipBundle,
+          planner_hints: plannerHints,
+        },
         ...(resolvedHook ? { hook_style: resolvedHook } : {}),
         ...(shotPlanForInsert ? { shot_plan: shotPlanForInsert } : {}),
       })
