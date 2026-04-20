@@ -52,7 +52,7 @@ function AuthField({
   );
 }
 
-function AdaMarketingPanel() {
+export function AdaMarketingPanel() {
   return (
     <div
       className={cn(

@@ -108,7 +108,7 @@ export async function signUpWithEmail(formData: FormData) {
   const baseUrl = getBaseUrl(headerStore.get("origin"));
   const supabase = await createClient();
 
-  const { error } = await supabase.auth.signUp({
+  const { data, error } = await supabase.auth.signUp({
     email,
     password,
     options: {
@@ -126,8 +126,12 @@ export async function signUpWithEmail(formData: FormData) {
     );
   }
 
+  if (data.session) {
+    redirect(`/onboarding/plan?next=${encodeURIComponent(next)}`);
+  }
+
   redirect(
-    `${next.startsWith("/") ? next : "/"}?authSuccess=${encodeURIComponent("Check your inbox to confirm your email.")}`,
+    `/auth/sign-up?authSuccess=${encodeURIComponent("Check your inbox to confirm your email.")}&${qNext}`,
   );
 }
 

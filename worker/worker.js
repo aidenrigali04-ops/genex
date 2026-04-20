@@ -24,6 +24,7 @@ import {
   detectSilenceMidpointsFfmpeg,
   detectSilenceMidpointsFromWav,
   extractMonoWav16kForSilence,
+  clipDurationBoundsFromGenerationContext,
   mergePlannerDurationBounds,
   normalizeWhisperWords,
   postRefineVariationSegments,
@@ -442,7 +443,7 @@ function normalizeWhisperSegments(transcription) {
 }
 
 /** Max sum of segment lengths (seconds) per variation after clipping to the source. */
-const VARIATION_PLAN_MAX_TOTAL_SEC = 100;
+const VARIATION_PLAN_MAX_TOTAL_SEC = 180;
 
 const GPT_SYSTEM = `You are a short-form video editor AI. Given a video transcript with timestamps and a user's creative prompt, plan exactly 5 distinct video variations for TikTok/Reels/Shorts.
 
@@ -460,8 +461,8 @@ Critical rules about variation design:
 
 Rules for total runtime of each variation (sum of segment lengths after clipping to 0…video_duration_sec):
 - Respect planner_constraints.total_segment_seconds_min and total_segment_seconds_max exactly (post-processing may snap trims slightly; stay inside the window).
-- If video_duration_sec >= 15: prefer 21–34s totals when the narrative supports it; otherwise use the full allowed min/max.
-- If video_duration_sec < 15: use as much strong footage as fits—each variation should total roughly 70–100% of the source length (still use multiple segments when it helps).
+- Prefer totals near the middle of planner_constraints when it fits the narrative; otherwise use any value inside the allowed min/max.
+- For very short sources, use as much strong footage as fits while staying inside the min/max window.
 Return ONLY a valid JSON object (no markdown fences) with key "variations": an array of exactly 5 objects. Each object: variation_number (1-5), label (string), segments (non-empty array of {start, end} in seconds, within the video), caption_overlay (string or null), style_note (string).`;
 
 /**
@@ -509,9 +510,9 @@ function variationTotalDurationBounds(durationSec) {
   const cap = Number.isFinite(d) && d > 0 ? d : VARIATION_PLAN_MAX_TOTAL_SEC;
   const maxTotal = Math.min(VARIATION_PLAN_MAX_TOTAL_SEC + 0.5, cap + 0.75);
   const minTotal =
-    cap >= 15
-      ? 14.5
-      : Math.max(0.25, Math.min(14.5, cap * 0.65));
+    cap >= 10
+      ? Math.min(5, cap * 0.35)
+      : Math.max(0.25, Math.min(5, cap * 0.65));
   return { minTotal, maxTotal };
 }
 
@@ -582,7 +583,7 @@ async function planVariationsWithGptOnce(
     const n = Math.min(5, Math.max(1, Math.round(Number(v.variation_number ?? idx + 1))));
     const label = typeof v.label === "string" ? v.label : `Variation ${n}`;
     const segsIn = Array.isArray(v.segments) ? v.segments : [];
-    const segments = segsIn
+    let segments = segsIn
       .map((s) => ({
         start: Number(s.start),
         end: Number(s.end),
@@ -591,6 +592,18 @@ async function planVariationsWithGptOnce(
 
     if (segments.length === 0) {
       throw new Error(`Variations plan: variation ${idx + 1} has no valid segments.`);
+    }
+
+    // Validate totals on refined segments (snapping can shrink; grow pass can fix short plans).
+    segments = postRefineVariationSegments(
+      segments,
+      pipelineOpts.snapCandidates ?? [],
+      pipelineOpts.words ?? [],
+      durationSec,
+      { minTotal, maxTotal },
+    );
+    if (!Array.isArray(segments) || segments.length === 0) {
+      throw new Error(`Variations plan: variation ${idx + 1} has no valid segments after refinement.`);
     }
 
     let total = 0;
@@ -644,7 +657,9 @@ function formatGenerationContextWorker(gc) {
     for (const [k, v] of Object.entries(answers)) {
       if (mappedKeys.has(k)) continue;
       const t = String(v ?? "").trim();
-      if (t) briefParts.push(`${k}: ${t}`);
+      if (!t) continue;
+      if (k === "targetLength" && /^__any_length__$/i.test(t)) continue;
+      briefParts.push(`${k}: ${t}`);
     }
     if (gc.forkedFromJobId) {
       briefParts.push("Follow-up refinement job (prioritize latest instructions).");
@@ -683,16 +698,7 @@ async function planVariationsWithGpt(jobId, prompt, transcriptSegments, duration
         priorHint,
         pipelineOpts,
       );
-      return raw.map((v) => ({
-        ...v,
-        segments: postRefineVariationSegments(
-          v.segments,
-          pipelineOpts.snapCandidates,
-          pipelineOpts.words,
-          durationSec,
-          { minTotal, maxTotal },
-        ),
-      }));
+      return raw;
     } catch (e) {
       lastErr = e instanceof Error ? e : new Error(String(e));
       log(jobId, `Variations plan attempt ${attempt + 1} failed: ${lastErr.message}`);
@@ -1050,7 +1056,16 @@ async function processJob(job) {
 
     const wordBoundarySample = sampleWordBoundaryTimes(words, durationSec);
     const baseBounds = variationTotalDurationBounds(durationSec);
-    const mergedBounds = mergePlannerDurationBounds(baseBounds, tightened, durationSec);
+    const userLenBounds = clipDurationBoundsFromGenerationContext(job.generation_context, durationSec);
+    const mergedBounds = userLenBounds
+      ? userLenBounds
+      : mergePlannerDurationBounds(baseBounds, tightened, durationSec);
+    if (userLenBounds) {
+      log(
+        jobId,
+        `Clip length: using refinement target window ${userLenBounds.minTotal.toFixed(1)}–${userLenBounds.maxTotal.toFixed(1)}s (overrides inferred rubric).`,
+      );
+    }
     const snapCandidates = buildSnapCandidates(sceneCuts, silenceMids, words, durationSec);
 
     log(jobId, "Planning…");

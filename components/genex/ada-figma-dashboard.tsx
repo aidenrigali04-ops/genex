@@ -143,6 +143,12 @@ export function AdaFigmaSidebarNav({
           })}
         </div>
 
+        {recentSection ? (
+          <div className="border-t border-white/20 pt-4">
+            {recentSection}
+          </div>
+        ) : null}
+
         {generationStreak > 0 ? (
           <div
             className="mx-1 flex items-center gap-2 rounded-[32px] border border-white/25 bg-white/10 px-4 py-2.5 text-sm text-white/95"
@@ -236,10 +242,6 @@ export function AdaFigmaSidebarNav({
             My account
           </button>
         </div>
-
-        {recentSection ? (
-          <div className="mt-2 border-t border-white/20 pt-4">{recentSection}</div>
-        ) : null}
       </div>
     </div>
   );

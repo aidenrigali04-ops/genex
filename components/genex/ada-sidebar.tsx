@@ -4,7 +4,7 @@ import type { JSX } from "react";
 import { Clock, FileText, LogOut, User, Video, Zap } from "lucide-react";
 
 import {
-  FREE_DAILY_CREDITS,
+  GUEST_LIFETIME_FREE_CREDITS,
   UNLIMITED_CREDITS_SENTINEL,
 } from "@/lib/credits-config";
 import { cn } from "@/lib/utils";
@@ -25,6 +25,8 @@ export type AdaSidebarProps = {
   user: { id: string; email: string } | null;
   creditsRemaining: number;
   creditsUnlimited: boolean;
+  /** Denominator for the credits ring (e.g. monthly allowance or guest cap). */
+  creditMeterDenom?: number;
   workspaceTab: "video" | "clip";
   onWorkspaceTab: (t: "video" | "clip") => void;
   onUpgrade: () => void;
@@ -93,6 +95,7 @@ export function AdaSidebar({
   user,
   creditsRemaining,
   creditsUnlimited,
+  creditMeterDenom,
   workspaceTab,
   onWorkspaceTab,
   onUpgrade,
@@ -104,7 +107,10 @@ export function AdaSidebar({
   generationStreak = 0,
   footerOnly = false,
 }: AdaSidebarProps): JSX.Element {
-  const denom = Math.max(10, FREE_DAILY_CREDITS);
+  const denom = Math.max(
+    10,
+    creditMeterDenom ?? GUEST_LIFETIME_FREE_CREDITS,
+  );
   const creditPercent = creditsUnlimited
     ? 100
     : Math.max(0, Math.min(100, (creditsRemaining / denom) * 100));

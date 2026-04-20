@@ -6,10 +6,12 @@
 
 import { spawn } from "node:child_process";
 
-const DURATION_HARD_MIN = 15;
-const DURATION_HARD_MAX = 90;
-const DEFAULT_CLIP_MIN = 21;
-const DEFAULT_CLIP_MAX = 60;
+/** Absolute floor/ceiling for inferred clip totals (seconds); always clamped to source length in planners. */
+const DURATION_HARD_MIN = 2;
+const DURATION_HARD_MAX = 180;
+/** Soft defaults when the model omits explicit min/max — wide window so edits are not over-constrained. */
+const DEFAULT_CLIP_MIN = 6;
+const DEFAULT_CLIP_MAX = 72;
 const SNAP_WINDOW_SEC = 2.25;
 const MIN_SEGMENT_LEN = 0.35;
 
@@ -36,12 +38,12 @@ export function heuristicTightenedIntent(prompt, durationSec) {
   let dmin = DEFAULT_CLIP_MIN;
   let dmax = DEFAULT_CLIP_MAX;
 
-  const range = /\b(\d{1,2})\s*[-–]\s*(\d{1,3})\s*(?:s(?:ec(?:onds)?)?)\b/i.exec(prompt);
+  const range = /\b(\d{1,3})\s*[-–]\s*(\d{1,3})\s*(?:s(?:ec(?:onds)?)?)\b/i.exec(prompt);
   if (range) {
     dmin = clamp(parseInt(range[1], 10), DURATION_HARD_MIN, DURATION_HARD_MAX - 1);
     dmax = clamp(parseInt(range[2], 10), dmin + 1, DURATION_HARD_MAX);
   } else {
-    const single = /\b(?:~|about|around)?\s*(\d{1,2})\s*(?:s(?:ec(?:onds)?)?)\b/i.exec(prompt);
+    const single = /\b(?:~|about|around)?\s*(\d{1,3})\s*(?:s(?:ec(?:onds)?)?)\b/i.exec(prompt);
     if (single) {
       const v = clamp(parseInt(single[1], 10), DURATION_HARD_MIN, DURATION_HARD_MAX);
       dmin = clamp(v - 8, DURATION_HARD_MIN, v - 1);
@@ -52,6 +54,9 @@ export function heuristicTightenedIntent(prompt, durationSec) {
   const cap = Number.isFinite(durationSec) && durationSec > 0 ? durationSec : 600;
   dmax = Math.min(dmax, cap + 0.5, DURATION_HARD_MAX);
   dmin = Math.min(dmin, dmax - 1);
+  if (dmax <= dmin + 0.25) {
+    dmax = Math.min(cap + 0.5, DURATION_HARD_MAX, dmin + Math.max(1, cap * 0.35));
+  }
 
   let tone = "mixed";
   if (/\b(funny|comedy|humor|joke)\b/.test(p)) tone = "funny";
@@ -89,7 +94,7 @@ export function heuristicTightenedIntent(prompt, durationSec) {
     scoring_weights_hint:
       "Prioritize hooks in first 3s, complete thought units, emotional peaks, and endings that land a punch or CTA.",
     intent_expansion:
-      "Short-form edit: strong cold open, retain narrative coherence, avoid mid-sentence cuts at in/out; prefer 21–34s total when the source supports it for retention.",
+      "Short-form edit: strong cold open, retain narrative coherence, avoid mid-sentence cuts at in/out; total length should follow the user's duration hints (or stay in a natural band for the source).",
     caption_style: /\b(minimal|clean|subtitles?)\b/i.test(p) ? "minimal" : "kinetic",
     confidence: 0.35,
     source: "heuristic",
@@ -115,8 +120,8 @@ The user's raw_prompt is authoritative: extract literal must-haves (topics to in
 Return ONLY JSON with keys:
 version (always 1),
 clip_count_requested (integer 3-8, default 5),
-duration_seconds_min (15-88),
-duration_seconds_max (16-90, must exceed min),
+duration_seconds_min (2–min(175, video_duration_sec−0.5); omit only if truly unspecified),
+duration_seconds_max (must exceed min; cap at min(180, video_duration_sec+0.5)),
 aspect_ratio ("9:16"|"1:1"|"16:9"),
 tone ("funny"|"educational"|"hype"|"calm"|"mixed"),
 target_platform ("tiktok"|"reels"|"shorts"|"yt_shorts"|"generic"),
@@ -129,8 +134,8 @@ caption_style ("kinetic"|"minimal"|"subtitle"),
 confidence (number 0-1).
 
 Guardrails:
-- If the user contradicts (e.g. "90s" and "15s max"), prefer 15-90 shorts window and note in intent_expansion.
-- Default duration_seconds_min/max to 21 and 60 when unspecified for TikTok/Reels-style requests.
+- If the user gives an explicit clip length (seconds or a short range), set duration_seconds_min/max to a generous band around that target (roughly ±25–40% or ±10s for very short clips), still clamped inside the source runtime.
+- When the user does NOT specify a length, use a wide default window (about 6–72s, or shorter if the source is shorter than ~72s) so the editor is not over-constrained.
 - video_duration_sec is provided; never ask for clip totals longer than the source.`;
 
   const user = JSON.stringify({
@@ -152,7 +157,7 @@ Guardrails:
     const raw = res.choices[0]?.message?.content;
     if (!raw) return fallback();
     const j = JSON.parse(raw);
-    const dmin = clamp(
+    let dmin = clamp(
       Number(j.duration_seconds_min) || DEFAULT_CLIP_MIN,
       DURATION_HARD_MIN,
       DURATION_HARD_MAX - 1,
@@ -163,6 +168,12 @@ Guardrails:
       DURATION_HARD_MAX,
     );
     dmax = Math.min(dmax, durationSec + 0.5);
+    dmin = Math.min(dmin, Math.max(DURATION_HARD_MIN, dmax - 0.5));
+    if (dmax <= dmin + 0.25) {
+      const h = heuristicTightenedIntent(prompt, durationSec);
+      dmin = h.duration_seconds_min;
+      dmax = h.duration_seconds_max;
+    }
     const out = {
       version: 1,
       clip_count_requested: clamp(Math.round(Number(j.clip_count_requested) || 5), 3, 8),
@@ -587,7 +598,7 @@ export function variationBoundsFromIntent(intent, durationSec) {
   return { minTotal, maxTotal };
 }
 
-export const VARIATION_PLAN_MAX_TOTAL = 100;
+export const VARIATION_PLAN_MAX_TOTAL = 180;
 
 /**
  * Intersect base worker bounds with rubric bounds from prompt tightening.
@@ -602,4 +613,72 @@ export function mergePlannerDurationBounds(base, intent, durationSec) {
   if (minTotal > maxTotal) return base;
   maxTotal = Math.max(maxTotal, minTotal + 0.5);
   return { minTotal, maxTotal };
+}
+
+/**
+ * Parse refinement "target length" / custom text into a single target second value.
+ * @param {unknown} s
+ * @returns {number | null}
+ */
+export function parseRoughTargetSecondsFromLengthAnswer(s) {
+  const t = String(s ?? "").trim();
+  if (!t) return null;
+  if (/^__any_length__$/i.test(t)) return null;
+  if (/\b(any length|no preference|editor choose|surprise me)\b/i.test(t)) return null;
+  const range = /\b(\d+(?:\.\d+)?)\s*[-–]\s*(\d+(?:\.\d+)?)\s*(?:s(?:ec(?:onds)?)?|seconds?)?\b/i.exec(t);
+  if (range) {
+    const a = Number(range[1]);
+    const b = Number(range[2]);
+    if (Number.isFinite(a) && Number.isFinite(b)) {
+      return clamp((a + b) / 2, 1, DURATION_HARD_MAX);
+    }
+  }
+  const labeled = /\b(\d+(?:\.\d+)?)\s*(?:s(?:ec(?:onds)?)?|seconds?)\b/i.exec(t);
+  if (labeled && Number.isFinite(Number(labeled[1]))) {
+    return clamp(Number(labeled[1]), 1, DURATION_HARD_MAX);
+  }
+  const bare = t.match(/\d+(?:\.\d+)?/);
+  if (bare) {
+    const v = Number(bare[0]);
+    return Number.isFinite(v) && v > 0 ? clamp(v, 1, DURATION_HARD_MAX) : null;
+  }
+  return null;
+}
+
+/**
+ * Maps a user-chosen target (seconds) to planner min/max with generous slack so snapping does not violate bounds.
+ * @param {number} targetSec
+ * @param {number} durationSec
+ */
+export function refinementTargetToPlannerBounds(targetSec, durationSec) {
+  const cap = Number.isFinite(durationSec) && durationSec > 0 ? durationSec : DURATION_HARD_MAX;
+  const maxCap = Math.min(VARIATION_PLAN_MAX_TOTAL + 0.75, cap + 0.75);
+  const T = clamp(Number(targetSec), 1, cap);
+  const padLow = Math.max(2, T * 0.32);
+  const padHi = Math.max(4, T * 0.42);
+  let minTotal = clamp(T - padLow, 0.5, maxCap - 1);
+  let maxTotal = clamp(T + padHi, minTotal + 0.75, maxCap);
+  if (T <= cap * 0.98 && maxTotal < Math.min(maxCap, T + 3)) {
+    maxTotal = Math.min(maxCap, Math.max(maxTotal, T + 5));
+  }
+  return { minTotal, maxTotal };
+}
+
+/**
+ * When the user chose a rough length in refinement, that wins over model-inferred rubric bounds.
+ * @param {unknown} gc
+ * @param {number} durationSec
+ * @returns {{ minTotal: number; maxTotal: number } | null}
+ */
+export function clipDurationBoundsFromGenerationContext(gc, durationSec) {
+  if (!gc || typeof gc !== "object" || gc.version !== 1) return null;
+  const answers = gc.answers;
+  if (!answers || typeof answers !== "object") return null;
+  const raw = String(answers.targetLength ?? "").trim();
+  if (!raw) return null;
+  if (/^__any_length__$/i.test(raw)) return null;
+  if (/\b(any length|no preference|editor choose|surprise me)\b/i.test(raw)) return null;
+  const target = parseRoughTargetSecondsFromLengthAnswer(raw);
+  if (target == null || !Number.isFinite(target)) return null;
+  return refinementTargetToPlannerBounds(target, durationSec);
 }

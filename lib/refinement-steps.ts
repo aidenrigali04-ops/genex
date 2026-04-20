@@ -46,9 +46,10 @@ export function buildRefinementSteps(
       {
         id: "length",
         message:
-          "Rough target length for each cut? (We still respect your source footage.)",
+          "Rough target length for each cut? (Optional — we still respect your source footage.)",
         fieldKey: "targetLength",
         pills: [
+          { label: "No preference", value: "__any_length__" },
           { label: "15s", value: "~15 seconds per variation" },
           { label: "30s", value: "~30 seconds per variation" },
           { label: "60s", value: "~60 seconds per variation" },

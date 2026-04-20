@@ -1,12 +1,20 @@
+import { redirect } from "next/navigation";
+
 import { HomeWorkspace } from "@/components/home-workspace";
 import {
+  GUEST_LIFETIME_FREE_CREDITS,
   isUnlimitedCreditsModeServer,
   UNLIMITED_CREDITS_SENTINEL,
 } from "@/lib/credits-config";
+import { isBillingEntitled } from "@/lib/billing-entitlement";
 import { parseStoredGenerationOutput } from "@/lib/generation-output";
-import { remainingCreditsForDisplay } from "@/lib/profile-credits-display";
+import {
+  remainingCreditsForDisplay,
+  type ProfileCreditsRow,
+} from "@/lib/profile-credits-display";
 import { isPlatformId, type PlatformId } from "@/lib/platforms";
 import type { AdaSidebarVoiceProfile } from "@/components/genex/ada-sidebar";
+import type { ClipPackageHistoryItem } from "@/components/home-workspace";
 import { createClient } from "@/lib/supabase/server";
 
 type SearchParams = {
@@ -32,12 +40,13 @@ export default async function Home({ searchParams }: PageProps) {
   let clipRows: Record<string, unknown>[] = [];
   let totalClipCount = 0;
   let profileUnlimited = false;
+  let creditMeterMax = GUEST_LIFETIME_FREE_CREDITS;
 
   if (user) {
     const { data: profile } = await supabase
       .from("profiles")
       .select(
-        "credits, last_reset_at, unlimited_credits, current_streak, niche, tone_preference, hook_style",
+        "credits, last_reset_at, unlimited_credits, subscription_status, plan_credits_remaining, bonus_credits, monthly_credit_allowance, current_streak, niche, tone_preference, hook_style",
       )
       .eq("id", user.id)
       .maybeSingle();
@@ -65,24 +74,60 @@ export default async function Home({ searchParams }: PageProps) {
       };
     }
 
+    const entitled = isBillingEntitled(
+      (profile as { subscription_status?: string | null } | null)
+        ?.subscription_status,
+      profileUnlimited,
+    );
+
+    if (
+      !unlimitedCredits &&
+      !profileUnlimited &&
+      !entitled
+    ) {
+      redirect(`/onboarding/plan?next=${encodeURIComponent("/")}`);
+    }
+
     if (unlimitedCredits || profileUnlimited) {
       initialCreditsRemaining = UNLIMITED_CREDITS_SENTINEL;
+      creditMeterMax = Math.max(
+        100,
+        (profile as { monthly_credit_allowance?: number } | null)
+          ?.monthly_credit_allowance ?? 0,
+      );
     } else if (profile) {
-      initialCreditsRemaining = remainingCreditsForDisplay({
-        credits: profile.credits as number | null,
-        last_reset_at: profile.last_reset_at as string | null,
-      });
+      const row = profile as ProfileCreditsRow;
+      initialCreditsRemaining = remainingCreditsForDisplay(row);
+      const monthly = Math.max(
+        0,
+        Math.floor(
+          Number(
+            (profile as { monthly_credit_allowance?: number | null })
+              .monthly_credit_allowance ?? 0,
+          ),
+        ),
+      );
+      creditMeterMax = Math.max(
+        10,
+        monthly,
+        typeof initialCreditsRemaining === "number"
+          ? initialCreditsRemaining
+          : 0,
+      );
     } else {
-      initialCreditsRemaining = 3;
+      initialCreditsRemaining = 0;
+      creditMeterMax = 100;
     }
 
     const { data: rows, error: clipError } = await supabase
       .from("generations")
-      .select("id, created_at, input_text, input_url, platforms, output, generation_context")
-      .eq("type", "clip_package")
+      .select(
+        "id, created_at, input_text, input_url, platforms, output, generation_context, type",
+      )
       .eq("user_id", user.id)
+      .in("type", ["clip_package", "generic"])
       .order("created_at", { ascending: false })
-      .limit(5);
+      .limit(80);
 
     if (!clipError && rows) {
       clipRows = rows as Record<string, unknown>[];
@@ -91,8 +136,8 @@ export default async function Home({ searchParams }: PageProps) {
     const { count } = await supabase
       .from("generations")
       .select("id", { count: "exact", head: true })
-      .eq("type", "clip_package")
-      .eq("user_id", user.id);
+      .eq("user_id", user.id)
+      .in("type", ["clip_package", "generic"]);
 
     totalClipCount = count ?? 0;
   }
@@ -105,6 +150,8 @@ export default async function Home({ searchParams }: PageProps) {
     const platforms: PlatformId[] =
       parsedPlatforms ?? rawPlatforms.filter(isPlatformId);
 
+    const rowType: ClipPackageHistoryItem["generationKind"] =
+      row.type === "generic" ? "generic" : "clip_package";
     return {
       id: String(row.id),
       createdAt: String(row.created_at),
@@ -113,6 +160,7 @@ export default async function Home({ searchParams }: PageProps) {
       output: displayOutput,
       platforms,
       generationContext: row.generation_context ?? null,
+      generationKind: rowType,
     };
   });
 
@@ -124,6 +172,7 @@ export default async function Home({ searchParams }: PageProps) {
           : null
       }
       initialCreditsRemaining={initialCreditsRemaining}
+      creditMeterMax={creditMeterMax}
       initialClipPackages={initialClipPackages}
       totalClipCount={totalClipCount}
       initialCurrentStreak={initialCurrentStreak}

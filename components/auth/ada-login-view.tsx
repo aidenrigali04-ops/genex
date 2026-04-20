@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { ChevronLeft, Lock, Mail } from "lucide-react";
+import { ChevronLeft, Lock, Mail, UserPlus } from "lucide-react";
 
 import { signInWithEmail, signInWithGoogle } from "@/app/auth/actions";
+import { AdaMarketingPanel } from "@/components/auth/ada-sign-up-view";
 import { AdaFigmaAmbientBackground } from "@/components/genex/ada-figma-dashboard";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -51,97 +52,107 @@ export function AdaLoginView() {
     <div className="relative min-h-dvh w-full overflow-hidden bg-[#0A050F] text-white">
       <AdaFigmaAmbientBackground />
 
-      <div className="relative z-[1] flex min-h-dvh flex-col items-center justify-center px-6 py-12">
-        <div className="flex w-full max-w-[400px] flex-col gap-8">
-          <div className="flex items-center gap-4">
-            <Link
-              href="/"
-              aria-label="Back to app"
-              className="flex size-10 shrink-0 items-center justify-center rounded-[22px] border border-white/32 text-white outline-none transition-colors hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-[#8800DC]/50"
-            >
-              <ChevronLeft className="size-5" />
-            </Link>
-            <h1
-              className="font-[family-name:var(--font-instrument-serif)] text-[30px] leading-[48px] tracking-[0.3px] text-white"
-              style={{ fontWeight: 400 }}
-            >
-              Log in
-            </h1>
-          </div>
+      <div className="relative z-[1] flex min-h-dvh flex-col lg:flex-row">
+        <div className="flex w-full flex-1 flex-col items-center gap-8 px-6 py-10 sm:px-10 lg:max-w-[756px] lg:justify-center lg:py-10">
+          <div className="flex w-full max-w-[400px] flex-col gap-8">
+            <div className="flex items-center gap-4">
+              <Link
+                href="/"
+                aria-label="Back to app"
+                className="flex size-10 shrink-0 items-center justify-center rounded-[22px] border border-white/32 text-white outline-none transition-colors hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-[#8800DC]/50"
+              >
+                <ChevronLeft className="size-5" />
+              </Link>
+              <h1
+                className="font-[family-name:var(--font-instrument-serif)] text-[30px] leading-[48px] tracking-[0.3px] text-white"
+                style={{ fontWeight: 400 }}
+              >
+                Log in
+              </h1>
+            </div>
 
-          <div className="flex flex-col gap-2 text-center">
-            <h2
-              className="font-[family-name:var(--font-instrument-serif)] text-[30px] leading-9 text-white"
-              style={{ fontWeight: 400 }}
-            >
-              Welcome back
-            </h2>
-            <p className="font-[family-name:var(--font-instrument-sans)] text-sm leading-5 tracking-[0.14px] text-white/64">
-              Sign in to continue creating with Ada
-            </p>
-          </div>
+            <div className="flex flex-col items-center gap-8">
+              <div className="flex w-full flex-col gap-2 text-center">
+                <h2
+                  className="font-[family-name:var(--font-instrument-serif)] text-[30px] leading-9 text-white"
+                  style={{ fontWeight: 400 }}
+                >
+                  Welcome back
+                </h2>
+                <p className="font-[family-name:var(--font-instrument-sans)] text-sm leading-5 tracking-[0.14px] text-white/64">
+                  Sign in to continue creating with Ada
+                </p>
+              </div>
 
-          {authError ? (
-            <p
-              className="rounded-lg border border-red-400/40 bg-red-500/10 px-3 py-2 text-center text-sm text-red-200"
-              role="alert"
-            >
-              {authError}
-            </p>
-          ) : null}
+              {authError ? (
+                <p
+                  className="w-full max-w-[400px] rounded-lg border border-red-400/40 bg-red-500/10 px-3 py-2 text-center text-sm text-red-200"
+                  role="alert"
+                >
+                  {authError}
+                </p>
+              ) : null}
 
-          <form
-            action={signInWithEmail}
-            className="flex flex-col items-center gap-4"
-          >
-            <input type="hidden" name="next" value={next} />
-            <AuthField
-              icon={Mail}
-              label="Email address"
-              name="email"
-              type="email"
-              autoComplete="email"
-              required
-            />
-            <AuthField
-              icon={Lock}
-              label="Password"
-              name="password"
-              type="password"
-              autoComplete="current-password"
-              required
-            />
-            <Button
-              type="submit"
-              className={cn(
-                "mt-2 h-auto w-full rounded-[32px] border-0 px-4 py-2 font-[family-name:var(--font-instrument-sans)] text-sm font-medium leading-6 tracking-[0.14px] text-white",
-                MAGENTA_GRAD,
-              )}
-            >
-              Sign in
-            </Button>
-          </form>
+              <form
+                action={signInWithEmail}
+                className="flex w-full flex-col items-center gap-4"
+              >
+                <input type="hidden" name="next" value={next} />
+                <AuthField
+                  icon={Mail}
+                  label="Email address"
+                  name="email"
+                  type="email"
+                  autoComplete="email"
+                  required
+                />
+                <AuthField
+                  icon={Lock}
+                  label="Password"
+                  name="password"
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                />
+                <Button
+                  type="submit"
+                  className={cn(
+                    "mt-2 h-auto w-full max-w-[400px] rounded-[32px] border-0 px-4 py-2 font-[family-name:var(--font-instrument-sans)] text-sm font-medium leading-6 tracking-[0.14px] text-white",
+                    MAGENTA_GRAD,
+                  )}
+                >
+                  Sign in
+                </Button>
+              </form>
 
-          <form action={signInWithGoogle} className="flex flex-col gap-2">
-            <input type="hidden" name="next" value={next} />
-            <Button
-              type="submit"
-              variant="outline"
-              className="h-auto w-full rounded-[32px] border-white/32 bg-white/5 py-2 font-[family-name:var(--font-instrument-sans)] text-sm text-white hover:bg-white/10"
-            >
-              Continue with Google
-            </Button>
-          </form>
+              <form
+                action={signInWithGoogle}
+                className="flex w-full max-w-[400px] flex-col gap-2"
+              >
+                <input type="hidden" name="next" value={next} />
+                <Button
+                  type="submit"
+                  variant="outline"
+                  className="h-auto w-full rounded-[32px] border-white/32 bg-white/5 py-2 font-[family-name:var(--font-instrument-sans)] text-sm text-white hover:bg-white/10"
+                >
+                  Continue with Google
+                </Button>
+              </form>
 
-          <div className="border-t border-white pt-5 text-center">
-            <Link
-              href={`/auth/sign-up?next=${encodeURIComponent(next)}`}
-              className="font-[family-name:var(--font-instrument-sans)] text-sm text-white underline-offset-2 hover:underline"
-            >
-              Create an account
-            </Link>
+              <div className="flex w-full max-w-[400px] flex-col items-center border-t border-white pt-5">
+                <Link
+                  href={`/auth/sign-up?next=${encodeURIComponent(next)}`}
+                  className="inline-flex items-center gap-2 rounded-xl px-2 py-1 font-[family-name:var(--font-instrument-sans)] text-sm text-white transition-colors hover:bg-white/10"
+                >
+                  <UserPlus className="size-3.5" aria-hidden />
+                  Create an account
+                </Link>
+              </div>
+            </div>
           </div>
         </div>
+
+        <AdaMarketingPanel />
       </div>
     </div>
   );

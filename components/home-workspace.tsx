@@ -1,20 +1,14 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Clock, User } from "lucide-react";
 
 import { signInWithGoogle, signOut } from "@/app/auth/actions";
-import { GuestSignupGateDialog } from "@/components/auth/guest-signup-gate-dialog";
+import { GuestSignupGateOverlay } from "@/components/auth/guest-signup-gate-overlay";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -30,7 +24,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Label } from "@/components/ui/label";
-import { deriveClipTitle, parseClipPackageSections } from "@/lib/clip-package";
+import {
+  deriveClipTitle,
+  parseClipPackageSections,
+  type ClipSectionMap,
+} from "@/lib/clip-package";
 import {
   buildUserMessageSummary,
   type ClipTurn,
@@ -38,7 +36,7 @@ import {
 } from "@/lib/clip-turn";
 import { MAX_CLIP_SOURCE_CHARS } from "@/lib/clip-model-input";
 import {
-  FREE_DAILY_CREDITS,
+  GUEST_LIFETIME_FREE_CREDITS,
   isUnlimitedCreditsModeClient,
   UNLIMITED_CREDITS_SENTINEL,
 } from "@/lib/credits-config";
@@ -95,11 +93,15 @@ export type ClipPackageHistoryItem = {
   output: string;
   platforms: PlatformId[];
   generationContext?: unknown | null;
+  /** `generic` = plain chat-style generation; default clip package flow when omitted. */
+  generationKind?: "clip_package" | "generic";
 };
 
 type HomeWorkspaceProps = {
   initialUser: { id: string; email: string } | null;
   initialCreditsRemaining: number | null;
+  /** Max credits for meter (monthly allowance or guest lifetime cap). */
+  creditMeterMax?: number;
   initialClipPackages: ClipPackageHistoryItem[];
   totalClipCount: number;
   /** Server profile `current_streak` for sidebar. */
@@ -115,6 +117,7 @@ type HomeWorkspaceProps = {
 export function HomeWorkspace({
   initialUser,
   initialCreditsRemaining,
+  creditMeterMax: initialCreditMeterMax = GUEST_LIFETIME_FREE_CREDITS,
   initialClipPackages,
   totalClipCount,
   initialCurrentStreak = 0,
@@ -127,10 +130,11 @@ export function HomeWorkspace({
   const creditsUnlimited =
     unlimitedCredits || isUnlimitedCreditsModeClient();
   const [user, setUser] = useState(initialUser);
+  const [creditMeterMax, setCreditMeterMax] = useState(initialCreditMeterMax);
   const [creditsRemaining, setCreditsRemaining] = useState<number>(() => {
     if (creditsUnlimited) return UNLIMITED_CREDITS_SENTINEL;
     if (initialCreditsRemaining != null) return initialCreditsRemaining;
-    return FREE_DAILY_CREDITS;
+    return GUEST_LIFETIME_FREE_CREDITS;
   });
 
   const [signInOpen, setSignInOpen] = useState(false);
@@ -190,12 +194,14 @@ export function HomeWorkspace({
     } else {
       setCreditsRemaining(readGuestCreditsRemaining());
     }
+    setCreditMeterMax(initialCreditMeterMax);
     setClips(initialClipPackages);
     setCurrentStreak(initialCurrentStreak);
     setVoiceProfile(initialVoiceProfile);
   }, [
     initialUser,
     initialCreditsRemaining,
+    initialCreditMeterMax,
     initialClipPackages,
     initialCurrentStreak,
     initialVoiceProfile,
@@ -282,7 +288,7 @@ export function HomeWorkspace({
       const g = readGuestCreditsRemaining();
       if (g <= 0) {
         setGuestSignupGateOpen(true);
-        setError("You've used your free generations today.");
+        setError("You've used your free previews. Create an account to continue.");
         return;
       }
     }
@@ -662,24 +668,41 @@ export function HomeWorkspace({
         const fallback =
           clip.inputText?.slice(0, 80) ??
           clip.inputUrl ??
-          "Saved clip";
+          (clip.generationKind === "generic" ? "Text generation" : "Saved clip");
         return { ...clip, title: deriveClipTitle(clip.output, fallback) };
       }),
     [clips],
   );
 
+  const emptyClipSectionMap = (): ClipSectionMap => ({
+    moments: "",
+    hooks: "",
+    script: "",
+    cta: "",
+    caption_hashtags: "",
+    broll: "",
+    creator_signals: "",
+  });
+
   const openClip = (clip: ClipPackageHistoryItem) => {
-    const extracted = extractPlatformSection(
-      clip.output,
-      "clip_package",
-      CLIP_PLATFORMS,
-    ).trim();
-    const rawBody =
-      extracted ||
-      (/TOP CLIP MOMENTS/i.test(clip.output) ? clip.output.trim() : "");
-    const pkg = parseClipPackageSections(
-      rawBody.length > 0 ? rawBody : clip.output,
-    );
+    const isGeneric = clip.generationKind === "generic";
+    let pkg: ClipSectionMap;
+    if (isGeneric) {
+      const body = clip.output.trim();
+      pkg = { ...emptyClipSectionMap(), script: body || "(empty output)" };
+    } else {
+      const extracted = extractPlatformSection(
+        clip.output,
+        "clip_package",
+        CLIP_PLATFORMS,
+      ).trim();
+      const rawBody =
+        extracted ||
+        (/TOP CLIP MOMENTS/i.test(clip.output) ? clip.output.trim() : "");
+      pkg = parseClipPackageSections(
+        rawBody.length > 0 ? rawBody : clip.output,
+      );
+    }
 
     let mode: "text" | "url" | "file" = "text";
     let userMessage = "Saved clip";
@@ -741,7 +764,7 @@ export function HomeWorkspace({
     setError(null);
   };
 
-  const sidebarRecentItems = myClipCards.slice(0, 12).map((clip) => ({
+  const sidebarRecentItems = myClipCards.map((clip) => ({
     id: clip.id,
     label: clip.title,
     onSelect: () => {
@@ -846,13 +869,18 @@ export function HomeWorkspace({
 
   const figmaRecentSection =
     sidebarRecentItems.length === 0 ? (
-      <p className="px-3 text-xs text-white/45">No recent clip packages yet.</p>
+      <p className="px-3 text-xs text-white/45">
+        No saved generations yet. Run a clip or chat to build your history.
+      </p>
     ) : (
       <>
-        <p className="px-3 pb-2 text-[10px] font-medium uppercase tracking-widest text-white/40">
-          Recent
+        <p className="px-3 pb-1 text-[10px] font-medium uppercase tracking-widest text-white/40">
+          Recents
         </p>
-        <div className="flex flex-col gap-1">
+        <p className="px-3 pb-2 text-[10px] leading-snug text-white/35">
+          Past generated content — tap to open in Write Content.
+        </p>
+        <div className="flex max-h-[min(42vh,22rem)] flex-col gap-1 overflow-y-auto pr-1">
           {sidebarRecentItems.map((item) => (
             <button
               key={item.id}
@@ -876,14 +904,16 @@ export function HomeWorkspace({
         className="inline-flex items-center gap-2 rounded-[32px] border border-white/48 py-2 pl-3 pr-4 text-sm font-medium tracking-[0.14px] text-white transition-colors hover:bg-white/10 font-[family-name:var(--font-instrument-sans)]"
       >
         <Clock className="size-4 shrink-0 text-white" aria-hidden />
-        Recent
+        Recents
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
         className="max-h-72 min-w-56 overflow-y-auto border border-ada-border bg-ada-card text-ada-primary"
       >
         {sidebarRecentItems.length === 0 ? (
-          <div className="px-3 py-2 text-sm text-ada-secondary">No recent items yet.</div>
+          <div className="px-3 py-2 text-sm text-ada-secondary">
+            No saved generations yet.
+          </div>
         ) : (
           sidebarRecentItems.map((item) => (
             <DropdownMenuItem
@@ -926,8 +956,12 @@ export function HomeWorkspace({
       setClipSettingsOpen(true);
       return;
     }
-    setBuyOpen(true);
-  }, [workspaceTab]);
+    if (user) {
+      openUpgrade("manual");
+    } else {
+      setBuyOpen(true);
+    }
+  }, [workspaceTab, user, openUpgrade]);
 
   const hubTitle =
     workspaceTab === "video"
@@ -1035,7 +1069,9 @@ export function HomeWorkspace({
                     if (!creditsUnlimited) setCreditsRemaining(n);
                   }}
                   onJobFinished={onVideoJobFinished}
-                  onUpgrade={() => setBuyOpen(true)}
+                  onUpgrade={() =>
+                    user ? openUpgrade("no_credits") : setBuyOpen(true)
+                  }
                   onOpenSignIn={() => setSignInOpen(true)}
                   onWorkspaceSettings={openWorkspaceSettings}
                   onWorkspaceAccount={handleFigmaAccount}
@@ -1199,6 +1235,7 @@ export function HomeWorkspace({
                     user={user}
                     creditsRemaining={creditsRemaining}
                     creditsUnlimited={creditsUnlimited}
+                    creditMeterDenom={creditMeterMax}
                     workspaceTab={workspaceTab}
                     onWorkspaceTab={(t) => {
                       setWorkspaceTab(t);
@@ -1225,12 +1262,7 @@ export function HomeWorkspace({
         </>
       ) : null}
 
-      <GuestSignupGateDialog
-        open={guestSignupGateOpen}
-        onOpenChange={setGuestSignupGateOpen}
-        nextPath="/"
-        onOpenWaitlist={() => setBuyOpen(true)}
-      />
+      <GuestSignupGateOverlay open={guestSignupGateOpen} nextPath="/" />
 
       <Dialog open={signInOpen} onOpenChange={setSignInOpen}>
         <DialogContent className="border border-ada-border bg-ada-card text-ada-primary sm:max-w-md">
@@ -1257,6 +1289,7 @@ export function HomeWorkspace({
         onOpenChange={setBuyOpen}
         creditsRemaining={creditsRemaining}
         creditsUnlimited={creditsUnlimited}
+        signedIn={Boolean(user)}
       />
 
       <AdaUpgradeModal
@@ -1264,8 +1297,10 @@ export function HomeWorkspace({
         onClose={() => setUpgradeModalOpen(false)}
         creditsRemaining={creditsRemaining}
         creditsUnlimited={creditsUnlimited}
+        creditMeterDenom={creditMeterMax}
         trigger={upgradeTrigger}
         variant="adaKit"
+        signedIn={Boolean(user)}
       />
     </>
   );
@@ -1276,11 +1311,13 @@ function BuyCreditsDialog({
   onOpenChange,
   creditsRemaining,
   creditsUnlimited,
+  signedIn,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   creditsRemaining: number;
   creditsUnlimited: boolean;
+  signedIn: boolean;
 }) {
   const [email, setEmail] = useState("");
   const [waitStatus, setWaitStatus] = useState<string | null>(null);
@@ -1317,50 +1354,40 @@ function BuyCreditsDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto border border-ada-border bg-ada-card text-ada-primary sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Upgrade & credits</DialogTitle>
+          <DialogTitle>Credits & plans</DialogTitle>
           <DialogDescription>
             {creditsUnlimited ? (
-              <>
-                Test mode: <strong>unlimited</strong> credits. Stripe
-                integration coming soon — join the waitlist below.
-              </>
+              <>Test mode: <strong>unlimited</strong> credits.</>
             ) : (
               <>
-                You have <strong>{creditsRemaining}</strong> free credits left
-                today. Stripe integration coming soon — join the waitlist below.
+                You have <strong>{creditsRemaining}</strong> credits remaining.
+                {signedIn
+                  ? " Choose a plan (3-day trial) or open Upgrade for top-ups."
+                  : " Create an account to subscribe and unlock monthly credits."}
               </>
             )}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-3 sm:grid-cols-3">
-          {[
-            { name: "Starter", credits: "30 credits", price: "$5" },
-            { name: "Creator", credits: "100 credits", price: "$12" },
-            { name: "Pro", credits: "Unlimited / mo", price: "$29/mo" },
-          ].map((p) => (
-            <Card
-              key={p.name}
-              size="sm"
-              className="border border-ada-border bg-ada-elevated transition-colors hover:border-ada-border-active"
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+          {!signedIn ? (
+            <Link
+              href="/auth/sign-up?next=%2F"
+              className="inline-flex items-center justify-center rounded-ada-input bg-linear-to-r from-[#7B5CFA] to-[#9B6FFF] px-4 py-2 text-center text-sm font-semibold text-white no-underline"
             >
-              <CardHeader>
-                <CardTitle className="text-base">{p.name}</CardTitle>
-                <CardDescription>
-                  {p.credits} — {p.price}
-                </CardDescription>
-              </CardHeader>
-              <CardFooter>
-                <Button type="button" className="w-full" disabled>
-                  Coming soon
-                </Button>
-              </CardFooter>
-            </Card>
-          ))}
+              Create account
+            </Link>
+          ) : null}
+          <Link
+            href="/onboarding/plan?next=%2F"
+            className="inline-flex items-center justify-center rounded-ada-input border border-ada-border bg-transparent px-4 py-2 text-center text-sm font-medium text-ada-primary no-underline hover:bg-ada-card-hover"
+          >
+            View plans & trial
+          </Link>
         </div>
 
         <div className="space-y-2 rounded-lg border border-dashed border-ada-border-active bg-ada-app/80 p-4">
-          <Label htmlFor="waitlist-email">Notify me at</Label>
+          <Label htmlFor="waitlist-email">Optional: product waitlist</Label>
           <div className="flex flex-col gap-2 sm:flex-row">
             <input
               id="waitlist-email"

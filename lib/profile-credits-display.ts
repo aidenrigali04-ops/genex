@@ -1,15 +1,25 @@
-import { FREE_DAILY_CREDITS } from "@/lib/credits-config";
+import { UNLIMITED_CREDITS_SENTINEL } from "@/lib/credits-config";
+import { isBillingEntitled } from "@/lib/billing-entitlement";
 
-/** Remaining credits for display (no decrement). Uses UTC calendar day vs last_reset_at. */
-export function remainingCreditsForDisplay(row: {
-  credits: number | null;
-  last_reset_at: string | null;
-} | null): number {
-  if (!row || row.last_reset_at == null) return FREE_DAILY_CREDITS;
-  const last = new Date(row.last_reset_at).toISOString().slice(0, 10);
-  const today = new Date().toISOString().slice(0, 10);
-  if (last < today) return FREE_DAILY_CREDITS;
-  const c = row.credits;
-  if (c == null || Number.isNaN(Number(c))) return FREE_DAILY_CREDITS;
-  return Math.max(0, Math.floor(Number(c)));
+export type ProfileCreditsRow = {
+  credits?: number | null;
+  last_reset_at?: string | null;
+  unlimited_credits?: boolean | null;
+  subscription_status?: string | null;
+  plan_credits_remaining?: number | null;
+  bonus_credits?: number | null;
+};
+
+/** Remaining spendable credits for display (no decrement). */
+export function remainingCreditsForDisplay(row: ProfileCreditsRow | null): number {
+  if (!row) return 0;
+  if (row.unlimited_credits) return UNLIMITED_CREDITS_SENTINEL;
+  if (
+    isBillingEntitled(row.subscription_status, row.unlimited_credits ?? false)
+  ) {
+    const p = Math.max(0, Math.floor(Number(row.plan_credits_remaining ?? 0)));
+    const b = Math.max(0, Math.floor(Number(row.bonus_credits ?? 0)));
+    return p + b;
+  }
+  return 0;
 }

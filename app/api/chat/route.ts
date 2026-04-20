@@ -11,6 +11,10 @@ import { trackAha } from "@/lib/analytics";
 import type { ClipInputMode } from "@/lib/clip-package";
 import { isUnlimitedCreditsModeServer } from "@/lib/credits-config";
 import {
+  remainingCreditsForDisplay,
+  type ProfileCreditsRow,
+} from "@/lib/profile-credits-display";
+import {
   formatGenerationContextForPrompt,
   isGenerationContextV1,
   type GenerationContextV1,
@@ -28,9 +32,7 @@ const chatBodySchema = z.object({
   guestCreditsRemaining: z.number().int().optional(),
 });
 
-type ProfileCreditsRow = {
-  credits: number | null;
-  unlimited_credits: boolean | null;
+type ProfileCreditsRowChat = ProfileCreditsRow & {
   generation_count: number | null;
 };
 
@@ -186,19 +188,7 @@ async function refundOneClipCredit(
   supabase: SupabaseClient,
   userId: string,
 ): Promise<void> {
-  const { data } = await supabase
-    .from("profiles")
-    .select("credits")
-    .eq("id", userId)
-    .maybeSingle();
-  const cur = typeof data?.credits === "number" ? data.credits : 0;
-  await supabase
-    .from("profiles")
-    .update({
-      credits: cur + 1,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", userId);
+  await supabase.rpc("refund_one_credit", { p_user_id: userId });
 }
 
 type IncrementGenerationStreakResult = {
@@ -265,7 +255,7 @@ export async function POST(req: Request): Promise<Response> {
     }
   }
 
-  let userIdForBilling: string | null = user?.id ?? null;
+  const userIdForBilling: string | null = user?.id ?? null;
   let chargedCredit = false;
   let generationCountBefore = 0;
   let hadUnlimitedProfile = false;
@@ -274,7 +264,9 @@ export async function POST(req: Request): Promise<Response> {
     const uid = userIdForBilling;
     const { data: prof, error: profErr } = await supabase
       .from("profiles")
-      .select("credits, unlimited_credits, generation_count")
+      .select(
+        "credits, unlimited_credits, generation_count, subscription_status, plan_credits_remaining, bonus_credits",
+      )
       .eq("id", uid)
       .maybeSingle();
 
@@ -289,17 +281,14 @@ export async function POST(req: Request): Promise<Response> {
       );
     }
 
-    const row = prof as ProfileCreditsRow | null;
+    const row = prof as ProfileCreditsRowChat | null;
     hadUnlimitedProfile = Boolean(row?.unlimited_credits);
     generationCountBefore =
       typeof row?.generation_count === "number" ? row.generation_count : 0;
 
     if (!unlimitedServer && !hadUnlimitedProfile) {
-      if (
-        row &&
-        typeof row.credits === "number" &&
-        row.credits <= 0
-      ) {
+      const remaining = remainingCreditsForDisplay(row);
+      if (remaining <= 0) {
         return Response.json(
           { error: "No credits remaining." },
           { status: 402 },

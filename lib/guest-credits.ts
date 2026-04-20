@@ -1,33 +1,32 @@
 import {
-  FREE_DAILY_CREDITS,
   GUEST_CREDITS_KEY,
+  GUEST_LIFETIME_FREE_CREDITS,
   GUEST_RESET_DATE_KEY,
   isUnlimitedCreditsModeClient,
   UNLIMITED_CREDITS_SENTINEL,
 } from "@/lib/credits-config";
 
-function todayLocalDate(): string {
-  return new Date().toDateString();
-}
-
-/** Remaining guest credits after applying calendar-day reset (browser local timezone). */
+/** Remaining guest credits (lifetime pool until sign-up). */
 export function readGuestCreditsRemaining(): number {
   if (isUnlimitedCreditsModeClient()) return UNLIMITED_CREDITS_SENTINEL;
-  if (typeof window === "undefined") return FREE_DAILY_CREDITS;
-  const storedDate = window.localStorage.getItem(GUEST_RESET_DATE_KEY);
-  const today = todayLocalDate();
-  if (storedDate !== today) {
-    window.localStorage.setItem(GUEST_RESET_DATE_KEY, today);
-    window.localStorage.setItem(GUEST_CREDITS_KEY, String(FREE_DAILY_CREDITS));
-    return FREE_DAILY_CREDITS;
+  if (typeof window === "undefined") return GUEST_LIFETIME_FREE_CREDITS;
+
+  try {
+    window.localStorage.removeItem(GUEST_RESET_DATE_KEY);
+  } catch {
+    /* ignore */
   }
+
   const raw = window.localStorage.getItem(GUEST_CREDITS_KEY);
   const n = raw == null ? NaN : Number.parseInt(raw, 10);
   if (Number.isNaN(n) || n < 0) {
-    window.localStorage.setItem(GUEST_CREDITS_KEY, String(FREE_DAILY_CREDITS));
-    return FREE_DAILY_CREDITS;
+    window.localStorage.setItem(
+      GUEST_CREDITS_KEY,
+      String(GUEST_LIFETIME_FREE_CREDITS),
+    );
+    return GUEST_LIFETIME_FREE_CREDITS;
   }
-  return n;
+  return Math.min(GUEST_LIFETIME_FREE_CREDITS, Math.floor(n));
 }
 
 export function decrementGuestCreditsBy(amount: number): void {
