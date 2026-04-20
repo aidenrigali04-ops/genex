@@ -24,6 +24,7 @@ import {
   type GenerationContextV1,
 } from "@/lib/generation-context";
 import { runGeneratePrelude } from "@/lib/generate-prelude";
+import { autoTitle } from "@/lib/utils";
 
 export const maxDuration = 300;
 
@@ -71,6 +72,8 @@ function createGenerationStreamText(opts: {
   orderedPlatforms: PlatformId[];
   preset: GenerationPresetId | undefined;
   generationContext?: GenerationContextV1 | null;
+  /** When set, `onFinish` updates this row instead of inserting. */
+  generationId?: string | null;
 }): StreamTextResult {
   const {
     supabase,
@@ -81,6 +84,7 @@ function createGenerationStreamText(opts: {
     orderedPlatforms,
     preset,
     generationContext,
+    generationId,
   } = opts;
 
   const headerLines = orderedPlatforms
@@ -163,17 +167,40 @@ ${sourceTextForModel}
       }
 
       if (userId) {
-        const { error } = await supabase.from("generations").insert({
-          user_id: userId,
-          input_text: sourceTextForStorage,
-          input_url: storedInputUrl,
-          platforms: orderedPlatforms,
-          output: outputToStore,
-          type: rowType,
-          generation_context: generationContext ?? null,
-        });
-        if (error) {
-          console.error("generations insert failed", error.message);
+        const computedTitle = autoTitle(
+          (sourceTextForStorage?.trim() || storedInputUrl?.trim() || ""),
+        );
+        if (generationId) {
+          const { error } = await supabase
+            .from("generations")
+            .update({
+              input_text: sourceTextForStorage || null,
+              input_url: storedInputUrl,
+              platforms: orderedPlatforms,
+              output: outputToStore,
+              type: rowType,
+              generation_context: generationContext ?? null,
+              title: computedTitle,
+            })
+            .eq("id", generationId)
+            .eq("user_id", userId);
+          if (error) {
+            console.error("generations update failed", error.message);
+          }
+        } else {
+          const { error } = await supabase.from("generations").insert({
+            user_id: userId,
+            input_text: sourceTextForStorage,
+            input_url: storedInputUrl,
+            platforms: orderedPlatforms,
+            output: outputToStore,
+            type: rowType,
+            generation_context: generationContext ?? null,
+            title: computedTitle,
+          });
+          if (error) {
+            console.error("generations insert failed", error.message);
+          }
         }
       }
     },
@@ -219,6 +246,30 @@ export async function POST(req: Request) {
   }
 
   const p = prelude;
+  let stubGenerationId: string | null = null;
+  if (p.userId) {
+    const includesClipPackage = p.orderedPlatforms.includes("clip_package");
+    const rowType = includesClipPackage ? "clip_package" : "generic";
+    const { data: stubRow, error: stubErr } = await p.supabase
+      .from("generations")
+      .insert({
+        user_id: p.userId,
+        input_text: p.sourceTextForStorage || null,
+        input_url: p.storedInputUrl,
+        platforms: p.orderedPlatforms,
+        output: "",
+        type: rowType,
+        generation_context: p.generationContext ?? null,
+      })
+      .select("id")
+      .single();
+    if (stubErr) {
+      console.error("[generate] generations stub insert failed:", stubErr.message);
+    } else if (stubRow?.id) {
+      stubGenerationId = stubRow.id as string;
+    }
+  }
+
   const body = new ReadableStream<Uint8Array>({
     async start(controller) {
       const append = (s: string) => {
@@ -242,6 +293,7 @@ export async function POST(req: Request) {
           orderedPlatforms: p.orderedPlatforms,
           preset: p.preset,
           generationContext: p.generationContext ?? null,
+          generationId: stubGenerationId,
         });
 
         await pipeStreamTextAsPlainText(result, append);
@@ -267,6 +319,9 @@ export async function POST(req: Request) {
       ...baseHeaders,
       "x-genex-is-first-gen": p.isFirstGen ? "1" : "0",
       "x-genex-streak": String(p.newStreak),
+      ...(stubGenerationId
+        ? { "x-genex-generation-id": stubGenerationId }
+        : {}),
     },
   });
 }

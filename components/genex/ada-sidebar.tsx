@@ -1,7 +1,15 @@
 "use client";
 
 import type { JSX } from "react";
-import { Clock, FileText, LogOut, User, Video, Zap } from "lucide-react";
+import {
+  Clock,
+  FileText,
+  LogOut,
+  PlusCircle,
+  User,
+  Video,
+  Zap,
+} from "lucide-react";
 
 import {
   GUEST_LIFETIME_FREE_CREDITS,
@@ -12,8 +20,21 @@ import { cn } from "@/lib/utils";
 export type AdaSidebarRecentItem = {
   id: string;
   label: string;
+  updatedAt: string;
   onSelect: () => void;
 };
+
+export function recentDateGroup(isoString: string): string {
+  const d = new Date(isoString);
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const dStart = new Date(d);
+  dStart.setHours(0, 0, 0, 0);
+  const diff = todayStart.getTime() - dStart.getTime();
+  if (diff === 0) return "Today";
+  if (diff === 86400000) return "Yesterday";
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
 
 export type AdaSidebarVoiceProfile = {
   niche: string | null;
@@ -29,6 +50,7 @@ export type AdaSidebarProps = {
   creditMeterDenom?: number;
   workspaceTab: "video" | "clip";
   onWorkspaceTab: (t: "video" | "clip") => void;
+  onNewProject: () => void;
   onUpgrade: () => void;
   onSignIn: () => void;
   onSignOut: () => void;
@@ -98,6 +120,7 @@ export function AdaSidebar({
   creditMeterDenom,
   workspaceTab,
   onWorkspaceTab,
+  onNewProject,
   onUpgrade,
   onSignIn,
   onSignOut,
@@ -321,9 +344,10 @@ export function AdaSidebar({
         <button
           type="button"
           className="flex w-full items-center justify-center gap-2 rounded-ada-input bg-linear-to-r from-[#7B5CFA] to-[#9B6FFF] py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90 active:scale-[0.98]"
-          onClick={() => onWorkspaceTab(workspaceTab)}
+          onClick={() => onNewProject()}
         >
-          <span aria-hidden>+</span> New Generation
+          <PlusCircle className="h-4 w-4 shrink-0" aria-hidden />
+          New Project
         </button>
       </div>
 
@@ -363,17 +387,35 @@ export function AdaSidebar({
         {recentItems.length === 0 ? (
           <p className="px-3 py-2 text-xs text-ada-disabled">No recent items yet.</p>
         ) : (
-          recentItems.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={item.onSelect}
-              className="flex w-full items-center gap-3 rounded-ada-input px-3 py-2 text-left text-sm text-ada-secondary transition-colors hover:bg-ada-card hover:text-ada-primary"
-            >
-              <Clock className="h-3.5 w-3.5 shrink-0 opacity-50" aria-hidden />
-              <span className="truncate">{item.label}</span>
-            </button>
-          ))
+          (() => {
+            let lastGroup: string | null = null;
+            return recentItems.map((item) => {
+              const group =
+                recentItems.length >= 5
+                  ? recentDateGroup(item.updatedAt)
+                  : null;
+              const showGroupLabel =
+                Boolean(group) && group !== lastGroup && recentItems.length >= 5;
+              if (group != null) lastGroup = group;
+              return (
+                <div key={item.id} className="space-y-0.5">
+                  {showGroupLabel ? (
+                    <p className="px-2 pt-1 text-[10px] font-medium uppercase tracking-wide text-ada-disabled/80">
+                      {group}
+                    </p>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={item.onSelect}
+                    className="flex w-full items-center gap-3 rounded-ada-input px-3 py-2 text-left text-sm text-ada-secondary transition-colors hover:bg-ada-card hover:text-ada-primary"
+                  >
+                    <Clock className="h-3.5 w-3.5 shrink-0 opacity-50" aria-hidden />
+                    <span className="truncate">{item.label}</span>
+                  </button>
+                </div>
+              );
+            });
+          })()
         )}
       </nav>
 

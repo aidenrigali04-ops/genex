@@ -20,6 +20,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -51,7 +52,10 @@ import { MAX_MEDIA_UPLOAD_BYTES } from "@/lib/media-upload-limits";
 import { isYoutubeVideoUrlForTranscript } from "@/lib/youtube-url";
 import { type PlatformId } from "@/lib/platforms";
 import type { AdaSidebarVoiceProfile } from "@/components/genex/ada-sidebar";
-import { AdaSidebar } from "@/components/genex/ada-sidebar";
+import {
+  AdaSidebar,
+  recentDateGroup,
+} from "@/components/genex/ada-sidebar";
 import { AdaClipWorkspace } from "@/components/genex/ada-clip-workspace";
 import type { VoiceProfileData } from "@/components/genex/ada-voice-profile-modal";
 import {
@@ -69,10 +73,27 @@ import {
 import { AdaVideoWorkspace } from "@/components/genex/ada-video-workspace";
 import type { GenerationContextV1 } from "@/lib/generation-context";
 import { isGenerationContextV1 } from "@/lib/generation-context";
-import { cn } from "@/lib/utils";
+import type { ProjectSession } from "@/lib/projects";
+import { trackAha } from "@/lib/analytics";
+import { autoTitle, cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 
 const CLIP_PLATFORMS: PlatformId[] = ["clip_package"];
+
+function projectSessionToClipPackageItem(
+  s: ProjectSession,
+): ClipPackageHistoryItem {
+  return {
+    id: s.id,
+    createdAt: s.createdAt,
+    inputText: s.inputText,
+    inputUrl: s.inputUrl,
+    output: s.outputText ?? "",
+    platforms: CLIP_PLATFORMS,
+    generationKind: s.generationKind,
+    generationContext: null,
+  };
+}
 
 const PRESET_CHIPS: {
   id: GenerationPresetId;
@@ -181,6 +202,9 @@ export function HomeWorkspace({
   const [voiceProfile, setVoiceProfile] = useState<AdaSidebarVoiceProfile | null>(
     initialVoiceProfile,
   );
+  const [recentProjectSessions, setRecentProjectSessions] = useState<
+    ProjectSession[]
+  >([]);
   const supabase = useMemo(() => createClient(), []);
 
   useEffect(() => {
@@ -215,6 +239,24 @@ export function HomeWorkspace({
   useEffect(() => {
     if (user) setGuestSignupGateOpen(false);
   }, [user]);
+
+  const fetchRecentProjectSessions = useCallback(async () => {
+    if (!user?.id) {
+      setRecentProjectSessions([]);
+      return;
+    }
+    const res = await fetch("/api/generations", { credentials: "same-origin" });
+    const json = (await res.json()) as {
+      data: ProjectSession[] | null;
+      error: string | null;
+    };
+    if (!res.ok || !json.data) return;
+    setRecentProjectSessions(json.data);
+  }, [user?.id]);
+
+  useEffect(() => {
+    void fetchRecentProjectSessions();
+  }, [fetchRecentProjectSessions]);
 
   useEffect(() => {
     const s = authSuccess?.trim();
@@ -312,6 +354,13 @@ export function HomeWorkspace({
     });
 
     try {
+      const titleSourceForProject =
+        inputMode === "file"
+          ? (uploadFile?.name ?? "")
+          : inputMode === "url"
+            ? url.trim()
+            : text.trim();
+
       let res: Response;
       const presetPart = preset ? { preset } : {};
       const gcPart =
@@ -438,6 +487,7 @@ export function HomeWorkspace({
         return;
       }
 
+      const generationIdHeader = res.headers.get("x-genex-generation-id");
       const firstGenHeader = res.headers.get("x-genex-is-first-gen");
       const streakHeader = res.headers.get("x-genex-streak");
       if (firstGenHeader === "1") {
@@ -604,10 +654,49 @@ export function HomeWorkspace({
             timestamp: new Date(),
             parsedClipPackage: pkg,
             rawText: accumulated,
-            generationId: null,
+            generationId: generationIdHeader,
             generationContext: lastClipGenerationContext,
           },
         ]);
+        if (user && generationIdHeader) {
+          void fetch(`/api/generations/${generationIdHeader}`, {
+            method: "PATCH",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title: autoTitle(titleSourceForProject),
+            }),
+          });
+          const nowIso = new Date().toISOString();
+          setRecentProjectSessions((prev) => {
+            const optimisticSession: ProjectSession = {
+              id: generationIdHeader,
+              title: autoTitle(titleSourceForProject),
+              inputContent: titleSourceForProject,
+              inputType:
+                inputMode === "url"
+                  ? "url"
+                  : inputMode === "file"
+                    ? "text"
+                    : titleSourceForProject.length < 120 &&
+                        titleSourceForProject.split(/\s+/).filter(Boolean)
+                          .length <= 18
+                      ? "idea"
+                      : "text",
+              outputText: accumulated,
+              createdAt: nowIso,
+              updatedAt: nowIso,
+              inputText:
+                inputMode === "text" || inputMode === "file"
+                  ? titleSourceForProject
+                  : null,
+              inputUrl: inputMode === "url" ? titleSourceForProject : null,
+              generationKind: "clip_package",
+            };
+            const rest = prev.filter((p) => p.id !== generationIdHeader);
+            return [optimisticSession, ...rest].slice(0, 20);
+          });
+        }
         setText("");
         setUrl("");
         setUploadFile(null);
@@ -684,7 +773,7 @@ export function HomeWorkspace({
     creator_signals: "",
   });
 
-  const openClip = (clip: ClipPackageHistoryItem) => {
+  const openClip = useCallback((clip: ClipPackageHistoryItem) => {
     const isGeneric = clip.generationKind === "generic";
     let pkg: ClipSectionMap;
     if (isGeneric) {
@@ -762,17 +851,86 @@ export function HomeWorkspace({
       setUrl("");
     }
     setError(null);
-  };
+  }, []);
 
-  const sidebarRecentItems = myClipCards.map((clip) => ({
-    id: clip.id,
-    label: clip.title,
-    onSelect: () => {
-      openClip(clip);
-      setMobileNavOpen(false);
+  const restoreProjectById = useCallback(
+    async (id: string) => {
+      if (!user) return;
+      void trackAha(supabase, user.id, "project_restored", {
+        generation_id: id,
+      });
+      const res = await fetch(`/api/generations/${id}`, {
+        credentials: "same-origin",
+      });
+      const json = (await res.json()) as {
+        data: ProjectSession | null;
+        error: string | null;
+      };
+      if (!res.ok || !json.data) {
+        setError(json.error ?? "Could not load project.");
+        return;
+      }
+      openClip(projectSessionToClipPackageItem(json.data));
       setWorkspaceTab("clip");
+      setMobileNavOpen(false);
     },
-  }));
+    [user, supabase, openClip],
+  );
+
+  const handleNewProject = useCallback(() => {
+    if (user) void trackAha(supabase, user.id, "new_project_started");
+    setText("");
+    setUrl("");
+    setUploadFile(null);
+    setTurns([]);
+    setStreamedText("");
+    setGenerationSteps([]);
+    setLiveTurnSnapshot(null);
+    setError(null);
+    setInputMode("text");
+    setWorkspaceTab("clip");
+    setMobileNavOpen(false);
+  }, [user, supabase]);
+
+  const sidebarRecentItems = useMemo(() => {
+    const fromSessions = recentProjectSessions.map((s) => ({
+      id: s.id,
+      label: s.title,
+      updatedAt: s.updatedAt,
+      onSelect: () => {
+        void restoreProjectById(s.id);
+      },
+    }));
+
+    if (!user) {
+      return myClipCards.map((clip) => ({
+        id: clip.id,
+        label: clip.title,
+        updatedAt: clip.createdAt,
+        onSelect: () => {
+          openClip(clip);
+          setMobileNavOpen(false);
+          setWorkspaceTab("clip");
+        },
+      }));
+    }
+
+    const apiIds = new Set(fromSessions.map((x) => x.id));
+    const extras = myClipCards
+      .filter((c) => !apiIds.has(c.id))
+      .map((clip) => ({
+        id: clip.id,
+        label: clip.title,
+        updatedAt: clip.createdAt,
+        onSelect: () => {
+          openClip(clip);
+          setMobileNavOpen(false);
+          setWorkspaceTab("clip");
+        },
+      }));
+
+    return [...fromSessions, ...extras];
+  }, [user, recentProjectSessions, myClipCards, restoreProjectById, openClip]);
 
   const initials =
     user?.email?.trim().charAt(0).toUpperCase() ??
@@ -881,19 +1039,39 @@ export function HomeWorkspace({
           Past generated content — tap to open in Write Content.
         </p>
         <div className="flex max-h-[min(42vh,22rem)] flex-col gap-1 overflow-y-auto pr-1">
-          {sidebarRecentItems.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => {
-                item.onSelect();
-                setMobileNavOpen(false);
-              }}
-              className="truncate rounded-lg px-3 py-2 text-left text-sm text-white/80 transition-colors hover:bg-white/10"
-            >
-              {item.label}
-            </button>
-          ))}
+          {(() => {
+            let lastGroup: string | null = null;
+            return sidebarRecentItems.map((item) => {
+              const group =
+                sidebarRecentItems.length >= 5
+                  ? recentDateGroup(item.updatedAt)
+                  : null;
+              const showGroupLabel =
+                Boolean(group) &&
+                group !== lastGroup &&
+                sidebarRecentItems.length >= 5;
+              if (group != null) lastGroup = group;
+              return (
+                <div key={item.id} className="space-y-0.5">
+                  {showGroupLabel ? (
+                    <p className="px-3 pt-1 text-[10px] font-medium uppercase tracking-widest text-white/40">
+                      {group}
+                    </p>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      item.onSelect();
+                      setMobileNavOpen(false);
+                    }}
+                    className="truncate rounded-lg px-3 py-2 text-left text-sm text-white/80 transition-colors hover:bg-white/10"
+                  >
+                    {item.label}
+                  </button>
+                </div>
+              );
+            });
+          })()}
         </div>
       </>
     );
@@ -915,16 +1093,36 @@ export function HomeWorkspace({
             No saved generations yet.
           </div>
         ) : (
-          sidebarRecentItems.map((item) => (
-            <DropdownMenuItem
-              key={item.id}
-              onClick={() => {
-                item.onSelect();
-              }}
-            >
-              {item.label}
-            </DropdownMenuItem>
-          ))
+          (() => {
+            let lastGroup: string | null = null;
+            return sidebarRecentItems.map((item) => {
+              const group =
+                sidebarRecentItems.length >= 5
+                  ? recentDateGroup(item.updatedAt)
+                  : null;
+              const showGroupLabel =
+                Boolean(group) &&
+                group !== lastGroup &&
+                sidebarRecentItems.length >= 5;
+              if (group != null) lastGroup = group;
+              return (
+                <div key={item.id}>
+                  {showGroupLabel ? (
+                    <DropdownMenuLabel className="px-3 py-1.5 text-[10px] font-medium uppercase tracking-widest text-ada-disabled">
+                      {group}
+                    </DropdownMenuLabel>
+                  ) : null}
+                  <DropdownMenuItem
+                    onClick={() => {
+                      item.onSelect();
+                    }}
+                  >
+                    {item.label}
+                  </DropdownMenuItem>
+                </div>
+              );
+            });
+          })()
         )}
       </DropdownMenuContent>
     </DropdownMenu>
@@ -1231,7 +1429,7 @@ export function HomeWorkspace({
               {user ? (
                 <div className="mt-4 max-h-[42dvh] overflow-y-auto">
                   <AdaSidebar
-                    footerOnly
+                    footerOnly={false}
                     user={user}
                     creditsRemaining={creditsRemaining}
                     creditsUnlimited={creditsUnlimited}
@@ -1239,6 +1437,10 @@ export function HomeWorkspace({
                     workspaceTab={workspaceTab}
                     onWorkspaceTab={(t) => {
                       setWorkspaceTab(t);
+                      setClipSettingsOpen(false);
+                    }}
+                    onNewProject={() => {
+                      handleNewProject();
                       setClipSettingsOpen(false);
                     }}
                     onUpgrade={() => {

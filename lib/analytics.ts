@@ -18,7 +18,9 @@ export type AhaEvent =
   | "first_generation_complete" // user's very first clip package finished streaming
   | "streak_3_days"
   | "streak_7_days"
-  | "first_gen_celebration";
+  | "first_gen_celebration"
+  | "project_restored"
+  | "new_project_started";
 
 export async function trackAha(
   supabase: SupabaseClient,
