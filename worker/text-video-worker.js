@@ -3,20 +3,12 @@
  * Default `npm run worker` already runs text-video jobs via worker.js.
  */
 
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import fs from "node:fs";
-
-import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.join(__dirname, ".env") });
-const rootEnvLocal = path.join(__dirname, "..", ".env.local");
-if (fs.existsSync(rootEnvLocal)) {
-  dotenv.config({ path: rootEnvLocal, override: false });
-}
-dotenv.config();
+import { loadGenexWorkerEnv } from "./load-env.js";
+import { isPexelsConfigured } from "./resolve-pexels-key.js";
+
+loadGenexWorkerEnv(import.meta.url);
 
 const POLL_MS = 5000;
 
@@ -61,7 +53,7 @@ async function poll() {
 
 console.log("[text-video-worker] Started, polling every", POLL_MS, "ms");
 console.log("[text-video-worker] text-video keys", {
-  pexels: Boolean(process.env.PEXELS_API_KEY?.trim()),
+  pexels: isPexelsConfigured(),
   elevenlabs: Boolean(process.env.ELEVENLABS_API_KEY?.trim()),
   openai: Boolean(process.env.OPENAI_API_KEY?.trim()),
 });

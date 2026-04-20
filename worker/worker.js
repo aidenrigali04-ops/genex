@@ -4,13 +4,14 @@
  */
 
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import { spawn } from "node:child_process";
 
-import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import OpenAI from "openai";
+
+import { loadGenexWorkerEnv } from "./load-env.js";
+import { isPexelsConfigured } from "./resolve-pexels-key.js";
 
 import {
   buildSnapCandidates,
@@ -33,14 +34,7 @@ import {
   transcribeChunkedMedia,
 } from "./video-clip-long.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.join(__dirname, ".env") });
-// Monorepo: Next app keys often live in repo root `.env.local` (same as text-video-worker).
-const rootEnvLocal = path.join(__dirname, "..", ".env.local");
-if (fs.existsSync(rootEnvLocal)) {
-  dotenv.config({ path: rootEnvLocal, override: false });
-}
-dotenv.config();
+loadGenexWorkerEnv(import.meta.url);
 
 /** Dynamic import so Pexels/ElevenLabs/OpenAI load after dotenv (ESM hoists static imports above). */
 let textVideoRunnerPromise;
@@ -1183,7 +1177,7 @@ async function main() {
   console.log("[worker] starting", { pollMs: POLL_MS, bucket: VIDEOS_BUCKET });
   await verifySupabaseServiceRole();
   console.log("[worker] text-video keys", {
-    pexels: Boolean(process.env.PEXELS_API_KEY?.trim()),
+    pexels: isPexelsConfigured(),
     elevenlabs: Boolean(process.env.ELEVENLABS_API_KEY?.trim()),
     openai: Boolean(process.env.OPENAI_API_KEY?.trim()),
   });

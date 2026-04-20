@@ -2,9 +2,11 @@ import { createWriteStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 
-/** Read at call time so dotenv in worker.js has already run (imports run before dotenv otherwise). */
+import { resolvePexelsApiKey } from "../resolve-pexels-key.js";
+
+/** Read at call time so dotenv in worker.js has already run. */
 function pexelsKey() {
-  return process.env.PEXELS_API_KEY?.trim() ?? "";
+  return resolvePexelsApiKey();
 }
 
 /**
@@ -77,7 +79,7 @@ function scoreVideo(video, targetDur, keyword) {
 export async function fetchPexelsClip(keyword, targetDuration) {
   if (!pexelsKey()) {
     throw new Error(
-      "Missing PEXELS_API_KEY. Add it to worker/.env or the repo root .env.local (see https://www.pexels.com/api/), or set it in your host env (e.g. Railway).",
+      "Missing Pexels API key. Set PEXELS_API_KEY (aliases: PEXELS_ACCESS_TOKEN, PEXEL_API_KEY, PEXELS_KEY) on the worker: Railway/Fly env, or genex/.env.local + genex/.env (loaded automatically). Do not leave an empty PEXELS_API_KEY= in worker/.env. See https://www.pexels.com/api/",
     );
   }
   const encoded = encodeURIComponent(keyword);

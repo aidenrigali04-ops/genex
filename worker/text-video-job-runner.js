@@ -9,6 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { isPexelsConfigured } from "./resolve-pexels-key.js";
 import { planShots } from "./text-video/shot-planner.js";
 import { fetchPexelsClip, downloadToFile } from "./text-video/pexels-fetch.js";
 import { generateVoiceover } from "./text-video/voiceover.js";
@@ -88,6 +89,16 @@ export async function processTextVideoJob(supabase, job) {
   const downloadedClips = [];
 
   try {
+    if (!isPexelsConfigured()) {
+      const msg =
+        "Missing Pexels API key. Set PEXELS_API_KEY (or PEXELS_ACCESS_TOKEN / PEXELS_KEY) on the video worker environment and redeploy. Local: add to genex/.env.local.";
+      await setStatus(supabase, job.id, {
+        status: "failed",
+        error_message: msg.slice(0, 500),
+      });
+      return;
+    }
+
     // ── STEP 1: Plan shots ──────────────────────────────────────
     const fromDb = normalizeShotsFromDb(job.shot_plan);
     const clipEngine =
