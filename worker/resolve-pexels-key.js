@@ -22,3 +22,21 @@ export function resolvePexelsApiKey() {
 export function isPexelsConfigured() {
   return resolvePexelsApiKey().length > 0;
 }
+
+/**
+ * Safe for logs: which Pexels-related vars exist and whether trimmed value is non-empty.
+ * Does not print secret contents.
+ */
+export function describePexelsEnvForLogs() {
+  const parts = [];
+  for (const k of ENV_KEYS) {
+    const raw = process.env[k];
+    if (raw === undefined) parts.push(`${k}=unset`);
+    else if (typeof raw !== "string") parts.push(`${k}=non-string`);
+    else {
+      const t = raw.trim();
+      parts.push(t ? `${k}=set(${t.length} chars)` : `${k}=EMPTY_OR_WHITESPACE`);
+    }
+  }
+  return parts.join(", ");
+}

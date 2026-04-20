@@ -11,7 +11,10 @@ import { createClient } from "@supabase/supabase-js";
 import OpenAI from "openai";
 
 import { loadGenexWorkerEnv } from "./load-env.js";
-import { isPexelsConfigured } from "./resolve-pexels-key.js";
+import {
+  describePexelsEnvForLogs,
+  isPexelsConfigured,
+} from "./resolve-pexels-key.js";
 
 import {
   buildSnapCandidates,
@@ -1176,11 +1179,21 @@ async function main() {
   ensureDir(TMP_ROOT);
   console.log("[worker] starting", { pollMs: POLL_MS, bucket: VIDEOS_BUCKET });
   await verifySupabaseServiceRole();
+  const pexelsOk = isPexelsConfigured();
   console.log("[worker] text-video keys", {
-    pexels: isPexelsConfigured(),
+    pexels: pexelsOk,
     elevenlabs: Boolean(process.env.ELEVENLABS_API_KEY?.trim()),
     openai: Boolean(process.env.OPENAI_API_KEY?.trim()),
   });
+  if (!pexelsOk) {
+    console.warn(
+      "[worker] Pexels API key not loaded — text→video jobs will fail fast. " +
+        "Diagnostics (no secrets): " +
+        describePexelsEnvForLogs() +
+        ". If Railway shows PEXELS_API_KEY but EMPTY_OR_WHITESPACE, paste the key again and redeploy. " +
+        "Confirm this variable is on the same Railway service that runs worker.js (not only the web app).",
+    );
+  }
 
   let idleTicks = 0;
   for (;;) {

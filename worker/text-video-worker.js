@@ -6,7 +6,10 @@
 import { createClient } from "@supabase/supabase-js";
 
 import { loadGenexWorkerEnv } from "./load-env.js";
-import { isPexelsConfigured } from "./resolve-pexels-key.js";
+import {
+  describePexelsEnvForLogs,
+  isPexelsConfigured,
+} from "./resolve-pexels-key.js";
 
 loadGenexWorkerEnv(import.meta.url);
 
@@ -52,11 +55,17 @@ async function poll() {
 }
 
 console.log("[text-video-worker] Started, polling every", POLL_MS, "ms");
+const pexelsOk = isPexelsConfigured();
 console.log("[text-video-worker] text-video keys", {
-  pexels: isPexelsConfigured(),
+  pexels: pexelsOk,
   elevenlabs: Boolean(process.env.ELEVENLABS_API_KEY?.trim()),
   openai: Boolean(process.env.OPENAI_API_KEY?.trim()),
 });
+if (!pexelsOk) {
+  console.warn(
+    "[text-video-worker] Pexels API key not loaded. " + describePexelsEnvForLogs(),
+  );
+}
 
 await verifySupabaseServiceRole();
 setInterval(() => void poll().catch(console.error), POLL_MS);
