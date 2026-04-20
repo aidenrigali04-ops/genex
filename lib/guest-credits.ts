@@ -29,6 +29,16 @@ export function readGuestCreditsRemaining(): number {
   return Math.min(GUEST_LIFETIME_FREE_CREDITS, Math.floor(n));
 }
 
+export function setGuestCreditsRemaining(n: number): void {
+  if (isUnlimitedCreditsModeClient()) return;
+  if (typeof window === "undefined") return;
+  const clamped = Math.max(
+    0,
+    Math.min(GUEST_LIFETIME_FREE_CREDITS, Math.floor(n)),
+  );
+  window.localStorage.setItem(GUEST_CREDITS_KEY, String(clamped));
+}
+
 export function decrementGuestCreditsBy(amount: number): void {
   if (isUnlimitedCreditsModeClient()) return;
   if (typeof window === "undefined") return;

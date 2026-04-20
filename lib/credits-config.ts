@@ -1,3 +1,5 @@
+/** Product copy + billing re-exports: `lib/product-flow.ts`. */
+
 /** @deprecated Use GUEST_LIFETIME_FREE_CREDITS; kept for a few UI fallbacks. */
 export const FREE_DAILY_CREDITS = 5;
 

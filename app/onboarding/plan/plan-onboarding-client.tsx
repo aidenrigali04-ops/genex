@@ -10,7 +10,7 @@ import {
   BILLING_TRIAL_DAYS,
   PLAN_CHECKOUT_LABEL,
   type PaidPlanTier,
-} from "@/lib/billing-plans";
+} from "@/lib/product-flow";
 import { AdaFigmaAmbientBackground } from "@/components/genex/ada-figma-dashboard";
 import { cn } from "@/lib/utils";
 

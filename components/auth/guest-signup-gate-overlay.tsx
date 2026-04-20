@@ -38,8 +38,10 @@ export function GuestSignupGateOverlay({ open, nextPath = "/" }: Props) {
         Create an account to continue
       </h1>
       <p className="max-w-md font-[family-name:var(--font-instrument-sans)] text-sm leading-relaxed text-white/64">
-        You&apos;ve used your free previews. Sign up to choose a plan with a
-        3-day free trial and keep creating.
+        You&apos;ve used your five free credits on the dashboard (write + video
+        previews). Create an account to pick a plan — every tier has a 3-day
+        free trial — then keep creating or buy optional top-ups when you need
+        more.
       </p>
       <div className="flex w-full max-w-sm flex-col gap-3">
         <Link

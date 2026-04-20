@@ -1268,8 +1268,9 @@ export function HomeWorkspace({
                   }}
                   onJobFinished={onVideoJobFinished}
                   onUpgrade={() =>
-                    user ? openUpgrade("no_credits") : setBuyOpen(true)
+                    user ? openUpgrade("no_credits") : setGuestSignupGateOpen(true)
                   }
+                  onGuestExhausted={() => setGuestSignupGateOpen(true)}
                   onOpenSignIn={() => setSignInOpen(true)}
                   onWorkspaceSettings={openWorkspaceSettings}
                   onWorkspaceAccount={handleFigmaAccount}

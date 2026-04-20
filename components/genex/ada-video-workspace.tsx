@@ -32,6 +32,10 @@ import {
 
 import { VideoVariationWorkspace } from "@/components/video-variation-workspace";
 import { UNLIMITED_CREDITS_SENTINEL } from "@/lib/credits-config";
+import {
+  readGuestCreditsRemaining,
+  setGuestCreditsRemaining,
+} from "@/lib/guest-credits";
 import { cn } from "@/lib/utils";
 
 const VOICE_OPTIONS = [
@@ -65,6 +69,8 @@ export type AdaVideoWorkspaceProps = {
   onCreditChange?: (remaining: number) => void;
   onJobFinished?: () => void;
   onUpgrade?: () => void;
+  /** When a guest cannot continue (e.g. out of credits on video). */
+  onGuestExhausted?: () => void;
   onOpenSignIn?: () => void;
   /** Credits pill + account menu rendered in the workspace header (adaKit). */
   headerTrailing?: ReactNode;
@@ -360,6 +366,8 @@ type AdaVideoInputBarProps = {
   creditCost: number;
   submitError: string | null;
   userId: string | null;
+  /** Stock-from-script: allow submit without Supabase session (guest credit pool). */
+  allowUnauthenticatedSubmit?: boolean;
   onSurpriseMe: () => void;
   onUpgrade?: () => void;
   /** Composer placeholder (ChatGPT-style follow-up copy). */
@@ -381,6 +389,7 @@ function AdaVideoInputBar({
   creditCost,
   submitError,
   userId,
+  allowUnauthenticatedSubmit = false,
   onSurpriseMe,
   onUpgrade,
   composerPlaceholder = "Message Ada…",
@@ -392,8 +401,9 @@ function AdaVideoInputBar({
       : allowShortComposer
         ? textValue.trim().length >= 2
         : textValue.trim().length >= SCRIPT_MIN_LEN;
+  const sessionRequired = !allowUnauthenticatedSubmit && !userId;
   const disabled =
-    !userId ||
+    sessionRequired ||
     isSubmitting ||
     activeJob !== null ||
     !creditsOk ||
@@ -859,6 +869,7 @@ export function AdaVideoWorkspace({
   onCreditChange,
   onJobFinished,
   onUpgrade,
+  onGuestExhausted,
   onOpenSignIn,
   headerTrailing,
   onSidebarNavigate: _onSidebarNavigate,
@@ -892,6 +903,7 @@ export function AdaVideoWorkspace({
   const [recentOpen, setRecentOpen] = useState(false);
   /** First “My idea” send stages script; second send merges follow-up (ChatGPT-style) then POSTs. */
   const [preflightStagedScript, setPreflightStagedScript] = useState<string | null>(null);
+  const [guestPollToken, setGuestPollToken] = useState<string | null>(null);
 
   const activeJobDataRef = useRef<VideoJob | null>(null);
   activeJobDataRef.current = activeJobData;
@@ -949,14 +961,22 @@ export function AdaVideoWorkspace({
   }, []);
 
   useEffect(() => {
-    if (!activeJob || !userId) {
+    if (!activeJob) {
+      stopPolling();
+      return;
+    }
+    if (!userId && !guestPollToken) {
       stopPolling();
       return;
     }
 
     const tick = async () => {
       try {
-        const res = await fetch(`/api/text-video-jobs/${activeJob}`, {
+        const qp =
+          !userId && guestPollToken
+            ? `?guestPoll=${encodeURIComponent(guestPollToken)}`
+            : "";
+        const res = await fetch(`/api/text-video-jobs/${activeJob}${qp}`, {
           credentials: "same-origin",
         });
         if (!res.ok) return;
@@ -983,6 +1003,7 @@ export function AdaVideoWorkspace({
         const st = job.status;
         if (st === "complete") {
           stopPolling();
+          setGuestPollToken(null);
           setActiveJob(null);
           setActiveJobData(null);
           activeJobDataRef.current = null;
@@ -993,6 +1014,7 @@ export function AdaVideoWorkspace({
         }
         if (st === "failed" || st === "cancelled") {
           stopPolling();
+          setGuestPollToken(null);
           setActiveJob(null);
           setActiveJobData(null);
           activeJobDataRef.current = null;
@@ -1016,7 +1038,7 @@ export function AdaVideoWorkspace({
     return () => {
       stopPolling();
     };
-  }, [activeJob, userId, loadHistory, onJobFinished, stopPolling]);
+  }, [activeJob, userId, guestPollToken, loadHistory, onJobFinished, stopPolling]);
 
   const handleCancel = useCallback(async () => {
     if (!activeJob) return;
@@ -1026,16 +1048,21 @@ export function AdaVideoWorkspace({
         method: "PATCH",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "cancelled" }),
+        body: JSON.stringify(
+          guestPollToken && !userId
+            ? { status: "cancelled", guestPoll: guestPollToken }
+            : { status: "cancelled" },
+        ),
       });
     } catch {
       /* silent */
     }
+    setGuestPollToken(null);
     setActiveJob(null);
     setActiveJobData(null);
     setActiveTerminalNote("Generation was cancelled.");
     void loadHistory();
-  }, [activeJob, loadHistory, stopPolling]);
+  }, [activeJob, guestPollToken, userId, loadHistory, stopPolling]);
 
   const handleGenerate = async (scriptOverride?: string): Promise<void> => {
     const trimmedOverride = scriptOverride?.trim() ?? "";
@@ -1052,9 +1079,21 @@ export function AdaVideoWorkspace({
 
     setSubmitError(null);
     setActiveTerminalNote(null);
-    if (!userId) {
+    const isGuest = !userId && kit && kitVideoMode === "stock_script";
+    if (!userId && !isGuest) {
       setSubmitError("Sign in to generate a video.");
       return;
+    }
+    if (isGuest) {
+      const g = readGuestCreditsRemaining();
+      if (!creditsUnlimited && g < creditCost) {
+        setSubmitError(
+          "You've used your free previews. Create an account to continue.",
+        );
+        onGuestExhausted?.();
+        onUpgrade?.();
+        return;
+      }
     }
     if (!payloadScript || isSubmitting) return;
 
@@ -1097,11 +1136,21 @@ export function AdaVideoWorkspace({
 
     setIsSubmitting(true);
     try {
+      const guestBody = isGuest
+        ? {
+            guestMode: true as const,
+            guestCreditsRemaining: readGuestCreditsRemaining(),
+          }
+        : {};
       const res = await fetch("/api/text-video-jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
-        body: JSON.stringify({ script: payloadScript, voiceId: selectedVoice }),
+        body: JSON.stringify({
+          script: payloadScript,
+          voiceId: selectedVoice,
+          ...guestBody,
+        }),
       });
       const json = (await res.json()) as {
         id?: string;
@@ -1111,14 +1160,22 @@ export function AdaVideoWorkspace({
         credit_cost?: number;
         status?: string;
         created_at?: string;
+        guest_poll_token?: string;
+        guest_mode?: boolean;
       };
       if (res.status === 402 || json.error === "no_credits") {
+        if (isGuest) onGuestExhausted?.();
         onUpgrade?.();
         return;
       }
       if (!res.ok || json.error) {
         if (res.status === 401) {
           setSubmitError("Sign in to generate a video.");
+        } else if (json.error === "guest_video_not_configured") {
+          setSubmitError(
+            json.message ??
+              "Guest video isn’t enabled on this server yet. Sign in to continue.",
+          );
         } else {
           setSubmitError(json.message ?? json.error ?? "Could not start generation.");
         }
@@ -1129,7 +1186,15 @@ export function AdaVideoWorkspace({
         setSubmitError(json.error ?? "Could not start generation.");
         return;
       }
+      if (json.guest_mode && typeof json.guest_poll_token === "string") {
+        setGuestPollToken(json.guest_poll_token);
+      } else {
+        setGuestPollToken(null);
+      }
       if (typeof json.credits_remaining === "number") {
+        if (json.guest_mode) {
+          setGuestCreditsRemaining(json.credits_remaining);
+        }
         onCreditChange?.(json.credits_remaining);
       }
       setActiveJob(id);
@@ -1216,6 +1281,8 @@ export function AdaVideoWorkspace({
     creditCost,
     submitError,
     userId,
+    allowUnauthenticatedSubmit:
+      kit && kitVideoMode === "stock_script" && !userId,
     onSurpriseMe: handleSurpriseMe,
     onUpgrade,
     composerPlaceholder:
