@@ -14,6 +14,9 @@
 # only the app lockfile is used. As a last resort set a Railway variable:
 # RAILPACK_INSTALL_CMD=npm install --omit=dev --no-audit --no-fund
 #
+# Do not set `packageManager` in package.json for Railpack: it enables Corepack and the
+# builder image may error with `lstat /opt/corepack: no such file or directory`.
+#
 [build]
 builder = "RAILPACK"
 
