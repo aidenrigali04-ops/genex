@@ -5,6 +5,13 @@
 # root) so `package-lock.json` next to `package.json` is used — a subfolder without the
 # lockfile will fail with "package.json and package-lock.json … not in sync".
 #
+# Railpack apt: `railpack.json` installs libatomic1 (build + runtime) for native deps
+# (e.g. sharp / prisma). Override with service vars RAILPACK_BUILD_APT_PACKAGES /
+# RAILPACK_DEPLOY_APT_PACKAGES if needed.
+#
+[build]
+builder = "RAILPACK"
+
 # Railpack build: if you see `failed to stat .../secrets/VAR_NAME`, Railway expects that
 # variable as a build-time secret. Fix: Service → Variables → add VAR_NAME (e.g.
 # NEXT_PUBLIC_GENEX_UNLIMITED_CREDITS=0), or remove VAR_NAME from shared / referenced vars.

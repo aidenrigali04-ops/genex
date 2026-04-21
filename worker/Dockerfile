@@ -10,6 +10,7 @@ RUN printf '%s\n' '#!/bin/sh' 'exit 0' > /usr/sbin/policy-rc.d \
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
+    libatomic1 \
     ffmpeg \
     python3 \
     python3-pip \
