@@ -204,6 +204,18 @@ export function HomeWorkspace({
     transcript: string;
   } | null>(null);
   const refinementFetchAbortRef = useRef<AbortController | null>(null);
+  const pendingInputSummaryRef = useRef<string>("");
+  const pendingInputContentRef = useRef<{
+    inputMode: "text" | "url" | "file";
+    text: string;
+    url: string;
+    uploadFile: File | null;
+  }>({
+    inputMode: "text",
+    text: "",
+    url: "",
+    uploadFile: null,
+  });
 
   const [refinementOpen, setRefinementOpen] = useState(false);
   const [clipRefinementRemote, setClipRefinementRemote] = useState<
@@ -338,6 +350,7 @@ export function HomeWorkspace({
   };
 
   const refinementPlanKey = useMemo(() => {
+    // Refine-plan fetch uses `pendingInputContentRef`; this key follows composer state for effect deps (often empty while refine is open).
     const head = text.slice(0, 160);
     const tail = text.length > 320 ? text.slice(-160) : "";
     return `${inputMode}:${text.length}:${head}:${tail}:${url.trim()}:${uploadFile?.name ?? ""}:${uploadFile?.size ?? 0}:${uploadFile?.lastModified ?? 0}`;
@@ -355,11 +368,12 @@ export function HomeWorkspace({
       detectedPurpose?: string;
       purposeRationale?: string;
     }> => {
+      const p = pendingInputContentRef.current;
       let excerpt = "";
-      if (inputMode === "text") {
-        excerpt = text.trim().slice(0, MAX_CLIP_SOURCE_CHARS);
-      } else if (inputMode === "url") {
-        const u = url.trim();
+      if (p.inputMode === "text") {
+        excerpt = p.text.slice(0, MAX_CLIP_SOURCE_CHARS);
+      } else if (p.inputMode === "url") {
+        const u = p.url.trim();
         if (isYoutubeVideoUrlForTranscript(u)) {
           const trRes = await fetch("/api/youtube-transcript", {
             method: "POST",
@@ -388,10 +402,10 @@ export function HomeWorkspace({
             excerpt = (pv.excerpt ?? "").trim().slice(0, MAX_CLIP_SOURCE_CHARS);
           }
         }
-      } else if (inputMode === "file" && uploadFile) {
-        if (looksTextualUpload(uploadFile)) {
+      } else if (p.inputMode === "file" && p.uploadFile) {
+        if (looksTextualUpload(p.uploadFile)) {
           try {
-            const blob = uploadFile.slice(0, MAX_CLIP_SOURCE_CHARS);
+            const blob = p.uploadFile.slice(0, MAX_CLIP_SOURCE_CHARS);
             excerpt = (await blob.text()).trim().slice(0, MAX_CLIP_SOURCE_CHARS);
           } catch {
             excerpt = "";
@@ -401,18 +415,18 @@ export function HomeWorkspace({
 
       let inputContent = "";
       let refineInputMode: "url" | "text" = "text";
-      if (inputMode === "text") {
-        inputContent = text.trim().slice(0, 4000);
+      if (p.inputMode === "text") {
+        inputContent = p.text.slice(0, 4000);
         refineInputMode = "text";
-      } else if (inputMode === "url") {
+      } else if (p.inputMode === "url") {
         refineInputMode = "url";
-        const u = url.trim();
+        const u = p.url.trim();
         inputContent = (excerpt.trim() || u).slice(0, 4000);
-      } else if (uploadFile) {
+      } else if (p.uploadFile) {
         refineInputMode = "text";
         inputContent = (
           excerpt.trim() ||
-          `File: ${uploadFile.name} (${uploadFile.type || "unknown type"}), ${uploadFile.size} bytes`
+          `File: ${p.uploadFile.name} (${p.uploadFile.type || "unknown type"}), ${p.uploadFile.size} bytes`
         ).slice(0, 4000);
       }
 
@@ -478,19 +492,36 @@ export function HomeWorkspace({
             : undefined,
       };
     },
-    [inputMode, text, url, uploadFile, user, voiceProfile],
+    [user, voiceProfile],
   );
 
   const beginClipRefinement = useCallback(() => {
+    // Capture summary before clearing state
+    const summary =
+      inputMode === "text"
+        ? text.trim().slice(0, 120) || "Text / idea"
+        : inputMode === "url"
+          ? url.trim() || "URL"
+          : uploadFile
+            ? `File: ${uploadFile.name}`
+            : "Upload";
+    pendingInputSummaryRef.current = summary;
+
+    pendingInputContentRef.current = {
+      inputMode,
+      text: text.trim(),
+      url: url.trim(),
+      uploadFile: uploadFile ?? null,
+    };
+
     setRefinementRetry(0);
     setClipRefinementRemote({ phase: "loading" });
     setRefinementPlanInference(null);
     setRefinementOpen(true);
-    // Clear composer immediately so user doesn't have to manually erase
     setText("");
     setUrl("");
     setUploadFile(null);
-  }, []);
+  }, [inputMode, text, url, uploadFile]);
 
   const handleRefinementOpenTypedAnswer = useCallback(
     (fieldKey: string) => {
@@ -703,15 +734,21 @@ export function HomeWorkspace({
     setError(null);
     setCopiedId(null);
 
-    if (inputMode === "text" && !text.trim()) {
+    const generationContext = pendingGenerationContextRef.current;
+    const snap = pendingInputContentRef.current;
+    const genText = text.trim() || (generationContext ? snap.text : "");
+    const genUrl = url.trim() || (generationContext ? snap.url : "");
+    const genFile = uploadFile ?? (generationContext ? snap.uploadFile : null);
+
+    if (inputMode === "text" && !genText.trim()) {
       setError("Paste an idea, transcript, or notes.");
       return;
     }
-    if (inputMode === "url" && !url.trim()) {
+    if (inputMode === "url" && !genUrl.trim()) {
       setError("Enter a URL.");
       return;
     }
-    if (inputMode === "file" && !uploadFile) {
+    if (inputMode === "file" && !genFile) {
       setError("Choose a file.");
       return;
     }
@@ -725,12 +762,11 @@ export function HomeWorkspace({
       }
     }
 
+    pendingGenerationContextRef.current = null;
+
     abortRef.current?.abort();
     abortRef.current = new AbortController();
     const { signal } = abortRef.current;
-
-    const generationContext = pendingGenerationContextRef.current;
-    pendingGenerationContextRef.current = null;
 
     setLoading(true);
     setProgress(8);
@@ -738,7 +774,7 @@ export function HomeWorkspace({
     setGenerationSteps([]);
     setStreamedText("");
     setLiveTurnSnapshot({
-      userMessage: buildUserMessageSummary(text, url, uploadFile, inputMode),
+      userMessage: buildUserMessageSummary(genText, genUrl, genFile, inputMode),
       inputMode,
       preset,
     });
@@ -746,24 +782,24 @@ export function HomeWorkspace({
     try {
       const titleSourceForProject =
         inputMode === "file"
-          ? (uploadFile?.name ?? "")
+          ? (genFile?.name ?? "")
           : inputMode === "url"
-            ? url.trim()
-            : text.trim();
+            ? genUrl.trim()
+            : genText.trim();
 
       let res: Response;
       const presetPart = preset ? { preset } : {};
       const gcPart =
         generationContext != null ? { generationContext } : {};
 
-      if (inputMode === "file" && uploadFile) {
+      if (inputMode === "file" && genFile) {
         res = await fetch("/api/generate", {
           method: "POST",
           credentials: "same-origin",
           signal,
           body: (() => {
             const fd = new FormData();
-            fd.append("file", uploadFile);
+            fd.append("file", genFile);
             fd.append("platforms", JSON.stringify(CLIP_PLATFORMS));
             if (preset) fd.append("preset", preset);
             if (generationContext) {
@@ -774,10 +810,10 @@ export function HomeWorkspace({
         });
       } else if (
         inputMode === "url" &&
-        isYoutubeVideoUrlForTranscript(url.trim())
+        isYoutubeVideoUrlForTranscript(genUrl.trim())
       ) {
         let transcriptFromPrefetch = "";
-        const urlTrim = url.trim();
+        const urlTrim = genUrl.trim();
         const cached = youtubeTranscriptCacheRef.current;
         if (
           cached &&
@@ -829,7 +865,7 @@ export function HomeWorkspace({
             body: JSON.stringify({
               mode: "text",
               text: capped,
-              sourceUrl: url.trim(),
+              sourceUrl: genUrl.trim(),
               platforms: CLIP_PLATFORMS,
               ...presetPart,
               ...gcPart,
@@ -843,7 +879,7 @@ export function HomeWorkspace({
             signal,
             body: JSON.stringify({
               mode: "url",
-              url: url.trim(),
+              url: genUrl.trim(),
               platforms: CLIP_PLATFORMS,
               ...presetPart,
               ...gcPart,
@@ -858,8 +894,8 @@ export function HomeWorkspace({
           signal,
           body: JSON.stringify({
             mode: inputMode,
-            text: inputMode === "text" ? text : undefined,
-            url: inputMode === "url" ? url : undefined,
+            text: inputMode === "text" ? genText : undefined,
+            url: inputMode === "url" ? genUrl : undefined,
             platforms: CLIP_PLATFORMS,
             ...presetPart,
             ...gcPart,
@@ -941,6 +977,7 @@ export function HomeWorkspace({
             setProgress(0);
             displayAccum = "";
             setStreamedText("");
+            setLiveTurnSnapshot(null);
             streamFatal = true;
             break;
           }
@@ -989,6 +1026,7 @@ export function HomeWorkspace({
             setProgress(0);
             displayAccum = "";
             setStreamedText("");
+            setLiveTurnSnapshot(null);
             streamFatal = true;
           } else {
             if (r3.steps.length) {
@@ -1032,7 +1070,7 @@ export function HomeWorkspace({
       const accumulated = displayAccum;
       if (!streamFatal && !accumulated.trim()) {
         setError(
-          "No text came back from the model. Check the browser Network tab for /api/generate, confirm OPENAI_API_KEY on the server, and try again.",
+          "Generation didn't return any content. No credits were charged. Please try again.",
         );
       } else if (!streamFatal && accumulated.trim()) {
         const extracted = extractPlatformSection(
@@ -1051,9 +1089,9 @@ export function HomeWorkspace({
           {
             id: crypto.randomUUID(),
             userMessage: buildUserMessageSummary(
-              text,
-              url,
-              uploadFile,
+              genText,
+              genUrl,
+              genFile,
               inputMode,
             ),
             inputMode,
@@ -1798,13 +1836,7 @@ export function HomeWorkspace({
                   onRefinementOpenTypedAnswer={handleRefinementOpenTypedAnswer}
                   refinementPlatformIds={CLIP_PLATFORMS}
                   refinementInputSummary={
-                    inputMode === "text"
-                      ? text.trim().slice(0, 120) || "Text / idea"
-                      : inputMode === "url"
-                        ? url.trim() || "URL"
-                        : uploadFile
-                          ? `File: ${uploadFile.name}`
-                          : "Upload"
+                    pendingInputSummaryRef.current || "Text / idea"
                   }
                   onRefinementConfirm={(ctx) => {
                     const ctxWithModel: GenerationContextV1 = {
