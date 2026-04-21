@@ -75,7 +75,9 @@ export function AdaComposer({
   /** Deterministic on SSR + first client paint; rotate after mount only (avoids hydration mismatch). */
   const [phIndex, setPhIndex] = useState(0);
   useEffect(() => {
-    setPhIndex(Math.floor(Math.random() * PLACEHOLDERS.length));
+    queueMicrotask(() => {
+      setPhIndex(Math.floor(Math.random() * PLACEHOLDERS.length));
+    });
   }, []);
 
   useEffect(() => {

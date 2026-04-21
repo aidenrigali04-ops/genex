@@ -146,16 +146,18 @@ export function AdaVoiceProfileModal({
   useEffect(() => {
     if (!open) return;
     const rawNiche = initial?.niche?.trim() ?? "";
-    setNiche(isValidNiche(rawNiche) ? rawNiche : "");
     const t = initial?.tone_preference?.trim() ?? "";
-    setTone(TONE_OPTIONS.includes(t as (typeof TONE_OPTIONS)[number]) ? t : "");
     const h = initial?.hook_style?.trim() ?? "";
-    setHookStyle(
-      HOOK_OPTIONS.includes(h as (typeof HOOK_OPTIONS)[number]) ? h : "",
-    );
-    setSaving(false);
-    setSavedUi(false);
-    setSaveError(false);
+    queueMicrotask(() => {
+      setNiche(isValidNiche(rawNiche) ? rawNiche : "");
+      setTone(TONE_OPTIONS.includes(t as (typeof TONE_OPTIONS)[number]) ? t : "");
+      setHookStyle(
+        HOOK_OPTIONS.includes(h as (typeof HOOK_OPTIONS)[number]) ? h : "",
+      );
+      setSaving(false);
+      setSavedUi(false);
+      setSaveError(false);
+    });
   }, [open, initial]);
 
   const handleDialogCancel = useCallback(() => {

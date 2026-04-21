@@ -1,7 +1,7 @@
 "use client";
 
 import type { JSX } from "react";
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -70,6 +70,30 @@ const ROW2: Snippet[] = [
 const MASK =
   "linear-gradient(to right, transparent 0%, black 8%, black 92%, transparent 100%)";
 
+const REDUCE_MOTION_MQ = "(prefers-reduced-motion: reduce)";
+
+function subscribeReducedMotion(onStoreChange: () => void): () => void {
+  const mq = window.matchMedia(REDUCE_MOTION_MQ);
+  mq.addEventListener("change", onStoreChange);
+  return () => mq.removeEventListener("change", onStoreChange);
+}
+
+function getReducedMotionSnapshot(): boolean {
+  return window.matchMedia(REDUCE_MOTION_MQ).matches;
+}
+
+function getReducedMotionServerSnapshot(): boolean {
+  return false;
+}
+
+function usePrefersReducedMotion(): boolean {
+  return useSyncExternalStore(
+    subscribeReducedMotion,
+    getReducedMotionSnapshot,
+    getReducedMotionServerSnapshot,
+  );
+}
+
 function SectionChip({ section }: { section: SectionKind }): JSX.Element {
   const base =
     "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-white";
@@ -106,7 +130,6 @@ function SnippetPill({
 }): JSX.Element {
   return (
     <div
-      role="text"
       className={cn(
         "flex max-w-[min(90vw,520px)] shrink-0 items-center gap-2 rounded-full px-4 py-2 text-sm",
         kit
@@ -115,7 +138,10 @@ function SnippetPill({
       )}
     >
       <SectionChip section={snippet.section} />
-      <span className="min-w-0 truncate text-left">{snippet.text}</span>
+      <span className="min-w-0 truncate text-left">
+        <span className="sr-only">{snippet.section}: </span>
+        {snippet.text}
+      </span>
     </div>
   );
 }
@@ -168,12 +194,9 @@ function MarqueeRow({
 function StaticPreview({ kit }: { kit: boolean }): JSX.Element {
   const four = [...ROW1.slice(0, 2), ...ROW2.slice(0, 2)];
   return (
-    <div
-      className="grid grid-cols-1 gap-2 sm:grid-cols-2"
-      aria-label="Example clip outputs"
-    >
-      {four.map((s, i) => (
-        <SnippetPill key={i} snippet={s} kit={kit} />
+    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+      {four.map((s) => (
+        <SnippetPill key={s.text} snippet={s} kit={kit} />
       ))}
     </div>
   );
@@ -183,15 +206,7 @@ export function AdaOutputScroll({
   variant = "default",
 }: AdaOutputScrollProps): JSX.Element {
   const kit = variant === "adaKit";
-  const [reduceMotion, setReduceMotion] = useState(false);
-
-  useEffect(() => {
-    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
-    setReduceMotion(mq.matches);
-    const fn = () => setReduceMotion(mq.matches);
-    mq.addEventListener("change", fn);
-    return () => mq.removeEventListener("change", fn);
-  }, []);
+  const reduceMotion = usePrefersReducedMotion();
 
   return (
     <div

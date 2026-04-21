@@ -9,7 +9,6 @@ import {
   parseFormatTags,
   type ClipSectionMap,
 } from "@/lib/clip-package";
-import type { GenerationContextV1 } from "@/lib/generation-context";
 import type { GenerationPresetId } from "@/lib/generation-presets";
 import type { ClipTurn } from "@/lib/clip-turn";
 import { cn } from "@/lib/utils";

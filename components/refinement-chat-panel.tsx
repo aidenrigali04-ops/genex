@@ -64,6 +64,10 @@ Tell me in your own words:
 
 I'll reflect back what I understood and we can tweak until you're ready to generate.`;
 
+/** First `/api/refinement-conversation` turn (not shown as a user bubble). */
+const REFINEMENT_CONVERSATION_OPENING_USER =
+  "Opening turn: the creator already submitted their clip request in the workspace (see input summary). Reply as the first assistant message only—briefly reflect what you understood, name two concrete levers you'll use for cut quality, then ask exactly ONE sharp follow-up. Do not ask them to repeat what they typed above.";
+
 export type RefinementChatPanelProps = {
   /** When true, the panel is shown and internal step state resets on activation. */
   active: boolean;
@@ -256,6 +260,8 @@ export function RefinementChatPanel({
   const convEndRef = useRef<HTMLDivElement>(null);
   const openAnswerTextareaRef = useRef<HTMLTextAreaElement>(null);
   const threadEndRef = useRef<HTMLDivElement>(null);
+  /** Dedupes auto-opening `/api/refinement-conversation` per plan (incl. StrictMode). */
+  const refinementOpeningInflightKeyRef = useRef<string | null>(null);
   const answersRef = useRef(answers);
   answersRef.current = answers;
 
@@ -271,10 +277,14 @@ export function RefinementChatPanel({
       setOptionalDetailDraft("");
       setLlmError(null);
       setPendingLlmPatches(null);
-      setConvMsgs([]);
-      setConvInput("");
       setConvErr(null);
-      setConvBusy(false);
+      if (!(conversationalClip && !unifiedMode)) {
+        setConvMsgs([]);
+        setConvInput("");
+        setConvBusy(false);
+      } else {
+        setConvInput("");
+      }
       if (conversationalClip && unifiedMode && refinementActive) {
         setConvMsgs([
           {
@@ -350,20 +360,6 @@ export function RefinementChatPanel({
     threadLen,
   ]);
 
-  const convLen = convMsgs.length;
-  useEffect(() => {
-    if (!active || !conversationalClip) return;
-    if (unifiedMode) return;
-    if (convLen > 0) return;
-    setConvMsgs([
-      {
-        id: newId(),
-        role: "assistant",
-        text: CLIP_CONVERSATION_WELCOME,
-      },
-    ]);
-  }, [active, conversationalClip, convLen, unifiedMode]);
-
   useEffect(() => {
     if (!active || !primaryOpenAnswer || conversationalClip) return;
     queueMicrotask(() => openAnswerTextareaRef.current?.focus());
@@ -405,11 +401,6 @@ export function RefinementChatPanel({
     if (!active || !onDraftContextChange) return;
     onDraftContextChange(draftContext);
   }, [active, draftContext, onDraftContextChange]);
-
-  const summaryText = useMemo(
-    () => buildSummaryFromContext(draftContext),
-    [draftContext],
-  );
 
   const appendSummaryAssistant = useCallback(
     (nextAnswers: Record<string, string>) => {
@@ -536,7 +527,36 @@ export function RefinementChatPanel({
     setConvInput("");
     setConvErr(null);
     setConvBusy(false);
+    refinementOpeningInflightKeyRef.current = null;
   };
+
+  const callRefinementConversationApi = useCallback(
+    async (messages: { role: "user" | "assistant"; content: string }[]) => {
+      const res = await fetch("/api/refinement-conversation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          kind,
+          platformIds,
+          inputSummary,
+          messages,
+          answersPartial: answersRef.current,
+          guestCreditsRemaining: readGuestCreditsRemaining(),
+        }),
+      });
+      const data = (await res.json()) as {
+        error?: string;
+        assistantMessage?: string;
+        answerPatches?: Record<string, string>;
+      };
+      if (!res.ok) throw new Error(data.error || "Request failed");
+      const msg = data.assistantMessage?.trim();
+      if (!msg) throw new Error("Empty response");
+      return { msg, patches: data.answerPatches };
+    },
+    [kind, platformIds, inputSummary],
+  );
 
   const sendConversationalLine = useCallback(
     async (line: string) => {
@@ -555,34 +575,13 @@ export function RefinementChatPanel({
       setConvBusy(true);
       setConvErr(null);
       try {
-        const res = await fetch("/api/refinement-conversation", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "same-origin",
-          body: JSON.stringify({
-            kind,
-            platformIds,
-            inputSummary,
-            messages: history,
-            answersPartial: answersRef.current,
-            guestCreditsRemaining: readGuestCreditsRemaining(),
-          }),
-        });
-        const data = (await res.json()) as {
-          error?: string;
-          assistantMessage?: string;
-          answerPatches?: Record<string, string>;
-          readyForConfirm?: boolean;
-        };
-        if (!res.ok) throw new Error(data.error || "Request failed");
-        const msg = data.assistantMessage?.trim();
-        if (!msg) throw new Error("Empty response");
+        const { msg, patches } = await callRefinementConversationApi(history);
         setConvMsgs((prev) => [
           ...prev,
           { id: newId(), role: "assistant", text: msg },
         ]);
-        if (data.answerPatches && Object.keys(data.answerPatches).length > 0) {
-          setAnswers((prev) => ({ ...prev, ...data.answerPatches }));
+        if (patches && Object.keys(patches).length > 0) {
+          setAnswers((prev) => ({ ...prev, ...patches }));
         }
       } catch (e) {
         setConvErr(e instanceof Error ? e.message : "Something went wrong");
@@ -590,8 +589,74 @@ export function RefinementChatPanel({
         setConvBusy(false);
       }
     },
-    [convBusy, conversationalClip, convMsgs, kind, platformIds, inputSummary],
+    [
+      convBusy,
+      conversationalClip,
+      convMsgs,
+      callRefinementConversationApi,
+    ],
   );
+
+  useEffect(() => {
+    if (!active) {
+      refinementOpeningInflightKeyRef.current = null;
+      return;
+    }
+    if (
+      !conversationalClip ||
+      unifiedMode ||
+      remoteLoading ||
+      remoteError
+    ) {
+      return;
+    }
+    if (refinementOpeningInflightKeyRef.current === refinementPlanKey) {
+      return;
+    }
+    refinementOpeningInflightKeyRef.current = refinementPlanKey;
+
+    let cancelled = false;
+    (async () => {
+      setConvBusy(true);
+      setConvErr(null);
+      setConvMsgs([]);
+      try {
+        const { msg, patches } = await callRefinementConversationApi([
+          { role: "user", content: REFINEMENT_CONVERSATION_OPENING_USER },
+        ]);
+        if (cancelled) return;
+        setConvMsgs([{ id: newId(), role: "assistant", text: msg }]);
+        if (patches && Object.keys(patches).length > 0) {
+          setAnswers((prev) => ({ ...prev, ...patches }));
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setConvErr(e instanceof Error ? e.message : "Something went wrong");
+          setConvMsgs([
+            {
+              id: newId(),
+              role: "assistant",
+              text: CLIP_CONVERSATION_WELCOME,
+            },
+          ]);
+        }
+      } finally {
+        if (!cancelled) setConvBusy(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    active,
+    conversationalClip,
+    unifiedMode,
+    remoteLoading,
+    remoteError,
+    refinementPlanKey,
+    callRefinementConversationApi,
+  ]);
 
   const handleConversationalSend = useCallback(async () => {
     const t = convInput.trim();
@@ -767,7 +832,7 @@ export function RefinementChatPanel({
             {unifiedMode
               ? "Clip coach and job setup share this thread — chat credits apply per coach reply; setup uses the refinement conversation endpoint."
               : conversationalClip
-                ? "Chat with Ada to tune this clip job — same credits as other Ada chats per reply."
+                ? "Ada leads with a tailored first message from your workspace input. Reply below only when you want to adjust the plan (same credits as other Ada chats per message)."
                 : kind === "video_variations"
                   ? "Quick questions so your five cuts match your goal."
                   : "Quick questions so your clip package matches your voice."}
@@ -815,7 +880,7 @@ export function RefinementChatPanel({
               : conversationalClip
                 ? unifiedMode
                   ? "Ada · clips & setup"
-                  : "Ada · clip setup chat"
+                  : "Ada · refine"
                 : `Step ${Math.min(step + 1, totalSteps)} of ${totalSteps}`}
           </span>
         </div>
@@ -831,7 +896,7 @@ export function RefinementChatPanel({
             : conversationalClip
               ? unifiedMode
                 ? "Ada · clips & setup"
-                : "Ada · clip setup chat"
+                : "Ada · refine"
               : `Step ${Math.min(step + 1, totalSteps)} of ${totalSteps}`}
         </div>
       )}

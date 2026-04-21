@@ -1,7 +1,6 @@
 import { openai } from "@ai-sdk/openai";
 import { streamText } from "ai";
 
-import { capSourceTextForClipModel } from "@/lib/clip-model-input";
 import { parseClipPackageSections } from "@/lib/clip-package";
 import {
   appendPresetToSystemPrompt,

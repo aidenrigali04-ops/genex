@@ -76,7 +76,7 @@ export function AdaLiveTurn({
     if (!streamedText.trim()) return;
     try {
       if (typeof window !== "undefined" && !sessionStorage.getItem("genex_first_gen_shown")) {
-        setShowFirstGenToast(true);
+        queueMicrotask(() => setShowFirstGenToast(true));
       }
     } catch {
       // sessionStorage blocked

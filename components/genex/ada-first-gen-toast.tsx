@@ -77,17 +77,21 @@ export function AdaFirstGenToast({
 
     if (!proceed) return;
 
-    setMounted(true);
-
     let mqCleanup: (() => void) | undefined;
     try {
       const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
-      setReduceMotion(mq.matches);
+      queueMicrotask(() => {
+        setMounted(true);
+        setReduceMotion(mq.matches);
+      });
       const listener = () => setReduceMotion(mq.matches);
       mq.addEventListener("change", listener);
       mqCleanup = () => mq.removeEventListener("change", listener);
     } catch {
-      setReduceMotion(false);
+      queueMicrotask(() => {
+        setMounted(true);
+        setReduceMotion(false);
+      });
     }
 
     const t = window.setTimeout(handleDismiss, 4000);

@@ -168,7 +168,7 @@ export function AdaClipWorkspace({
   useEffect(() => {
     if (showFirstGenCelebration && !celebrationShownThisSession.current) {
       celebrationShownThisSession.current = true;
-      setShowCelebration(true);
+      queueMicrotask(() => setShowCelebration(true));
     }
   }, [showFirstGenCelebration]);
 

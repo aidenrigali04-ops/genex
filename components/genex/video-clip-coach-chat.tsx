@@ -3,7 +3,7 @@
 import type { JSX } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 
 import { readGuestCreditsRemaining } from "@/lib/guest-credits";
@@ -37,15 +37,6 @@ export function VideoClipCoachChat({
   onApplyToPrompt,
   className,
 }: VideoClipCoachChatProps): JSX.Element {
-  const genRef = useRef(generationContext);
-  const briefRef = useRef(clipBriefPrefix);
-  useEffect(() => {
-    genRef.current = generationContext;
-  }, [generationContext]);
-  useEffect(() => {
-    briefRef.current = clipBriefPrefix;
-  }, [clipBriefPrefix]);
-
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
@@ -53,11 +44,11 @@ export function VideoClipCoachChat({
         credentials: "same-origin",
         body: () => ({
           inputMode: "clip_first" as const,
-          generationContext: genRef.current,
+          generationContext,
           guestCreditsRemaining: readGuestCreditsRemaining(),
         }),
       }),
-    [],
+    [generationContext],
   );
 
   const { messages, sendMessage, status, stop } = useChat({ transport });
@@ -65,7 +56,7 @@ export function VideoClipCoachChat({
   const busy = status === "submitted" || status === "streaming";
 
   const wrapUserText = (raw: string) => {
-    const b = briefRef.current.trim();
+    const b = clipBriefPrefix.trim();
     if (!b) return raw;
     return `[Clip workspace — not a transcript]\n${b}\n\n---\n\n${raw}`;
   };
