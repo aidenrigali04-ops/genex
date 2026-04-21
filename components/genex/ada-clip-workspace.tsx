@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link2, Paperclip } from "lucide-react";
 
 import { AdaComposer } from "@/components/genex/ada-composer";
@@ -152,6 +152,10 @@ export function AdaClipWorkspace({
   const threadRef = useRef<HTMLDivElement>(null);
   const [showCelebration, setShowCelebration] = useState(false);
   const celebrationShownThisSession = useRef(false);
+  const refinementSendRef = useRef<((line: string) => Promise<void>) | null>(
+    null,
+  );
+  const [refinementConvBusy, setRefinementConvBusy] = useState(false);
   const clipPackageInputMode: ClipInputMode =
     inputMode === "url" || inputMode === "file" ? "clip_first" : "generate_first";
 
@@ -182,6 +186,7 @@ export function AdaClipWorkspace({
     loading,
     error,
     refinementOpen,
+    refinementConvBusy,
     liveTurnSnapshot,
     generationSteps.length,
   ]);
@@ -189,6 +194,39 @@ export function AdaClipWorkspace({
   const handleExampleClick = (prompt: string, mode: "text" | "url") => {
     onExamplePrompt?.(prompt, mode);
   };
+
+  const handleComposerSubmit = useCallback(() => {
+    if (refinementOpen && !loading) {
+      if (refinementSendRef.current) {
+        const line = text.trim() || url.trim();
+        if (!line || refinementConvBusy) return;
+        void refinementSendRef.current(line);
+        onTextChange("");
+        onUrlChange("");
+        return;
+      }
+      return;
+    }
+    onSubmit();
+  }, [
+    refinementOpen,
+    loading,
+    text,
+    url,
+    refinementConvBusy,
+    onTextChange,
+    onUrlChange,
+    onSubmit,
+  ]);
+
+  /** When parent omits async refine-plan, treat as ready (video hub-style static steps). */
+  const refinementRemoteReady =
+    refinementRemote == null || refinementRemote.phase === "ready";
+  const refinementCanSend =
+    refinementOpen &&
+    refinementRemoteReady &&
+    !refinementConvBusy &&
+    Boolean(text.trim() || url.trim());
 
   const liveUserBubble = liveTurnSnapshot && loading && (
     <div className="flex justify-end">
@@ -329,11 +367,15 @@ export function AdaClipWorkspace({
               */}
               <RefinementChatPanel
                 active={refinementOpen}
-                kind="text_generation"
+                kind="video_variations"
                 platformIds={refinementPlatformIds}
                 inputSummary={refinementInputSummary}
                 variant={variant}
                 embedInChat
+                hideChrome
+                flatEmbedShell
+                conversationalSendRef={refinementSendRef}
+                onConversationalBusyChange={setRefinementConvBusy}
                 className="max-h-none min-h-0"
                 remoteRefinement={refinementRemote}
                 refinementPlanKey={refinementPlanKey}
@@ -405,11 +447,12 @@ export function AdaClipWorkspace({
             onPresetChange={onPresetChange}
             loading={loading}
             canSubmit={canSubmit}
-            onSubmit={onSubmit}
+            onSubmit={handleComposerSubmit}
             onStop={onStop}
             maxUploadMb={maxUploadMb}
             variant={variant}
             refinementActive={refinementOpen}
+            refinementCanSend={refinementCanSend}
           />
           <p
             className={cn(

@@ -625,6 +625,16 @@ export const VideoVariationWorkspace = forwardRef<
   const [clipCoachEnabled, setClipCoachEnabled] = useState(false);
   const [lastSubmittedPrompt, setLastSubmittedPrompt] = useState("");
 
+  const unifiedClipCoachActive = useMemo(
+    () => shouldUseUnifiedVideoClipCoach(embedClipCoach, clipCoachEnabled),
+    [embedClipCoach, clipCoachEnabled],
+  );
+
+  const refinementSendRef = useRef<((line: string) => Promise<void>) | null>(
+    null,
+  );
+  const [refinementConvBusy, setRefinementConvBusy] = useState(false);
+
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const failedToastJobIdRef = useRef<string | null>(null);
   /** Parent often passes an inline callback; keep stable so polling `useEffect` does not reset every render. */
@@ -790,10 +800,37 @@ export const VideoVariationWorkspace = forwardRef<
     setClipCoachResetNonce((n) => n + 1);
   };
 
+  const refinementMainBarCanSend = useMemo(
+    () =>
+      refinementOpen &&
+      !unifiedClipCoachActive &&
+      !submitting &&
+      !refinementConvBusy &&
+      Boolean(prompt.trim()),
+    [
+      refinementOpen,
+      unifiedClipCoachActive,
+      submitting,
+      refinementConvBusy,
+      prompt,
+    ],
+  );
+
   const handleSubmit = () => {
     setError(null);
     if (!user) {
       onOpenSignIn();
+      return;
+    }
+    if (refinementOpen && !submitting) {
+      if (unifiedClipCoachActive) return;
+      if (refinementSendRef.current) {
+        const line = prompt.trim();
+        if (!line || refinementConvBusy) return;
+        void refinementSendRef.current(line);
+        setPrompt("");
+        return;
+      }
       return;
     }
     if (!creditsUnlimited && creditsRemaining < VIDEO_JOB_CREDIT_COST) {
@@ -878,11 +915,6 @@ export const VideoVariationWorkspace = forwardRef<
   const clipCoachGenerationContext = useMemo(
     () => jobGenerationContext ?? refinementDraftContext,
     [jobGenerationContext, refinementDraftContext],
-  );
-
-  const unifiedClipCoachActive = useMemo(
-    () => shouldUseUnifiedVideoClipCoach(embedClipCoach, clipCoachEnabled),
-    [embedClipCoach, clipCoachEnabled],
   );
 
   const submitWithRefinementContext = async (ctx: GenerationContextV1) => {
@@ -1295,7 +1327,7 @@ export const VideoVariationWorkspace = forwardRef<
 
                 {refinementOpen && !submitting ? (
                   <div className="mb-8 flex w-full justify-start">
-                    <div className="w-full max-w-[min(100%,720px)] shadow-[0_12px_40px_rgba(0,0,0,0.35)]">
+                    <div className="w-full max-w-[min(100%,720px)]">
                       <RefinementChatPanel
                         active={refinementOpen}
                         kind="video_variations"
@@ -1304,9 +1336,17 @@ export const VideoVariationWorkspace = forwardRef<
                         refinementPlanKey={refinementPlanKey}
                         variant="adaKit"
                         embedInChat
+                        flatEmbedShell
+                        hideChrome={!unifiedClipCoachActive}
                         className="max-h-[min(72vh,640px)]"
                         unifiedClipCoach={unifiedClipCoachActive}
                         refinementActive={refinementOpen && !submitting}
+                        conversationalSendRef={
+                          unifiedClipCoachActive ? undefined : refinementSendRef
+                        }
+                        onConversationalBusyChange={
+                          unifiedClipCoachActive ? undefined : setRefinementConvBusy
+                        }
                         user={user}
                         onDraftContextChange={
                           unifiedClipCoachActive
@@ -1717,11 +1757,13 @@ export const VideoVariationWorkspace = forwardRef<
                     onChange={(e) => setPrompt(e.target.value)}
                     disabled={!user || submitting}
                     onKeyDown={(e) => {
-                      if (
-                        e.key === "Enter" &&
-                        !e.shiftKey &&
-                        (e.metaKey || e.ctrlKey)
-                      ) {
+                      if (e.key !== "Enter" || e.shiftKey) return;
+                      if (refinementOpen && !unifiedClipCoachActive) {
+                        e.preventDefault();
+                        handleSubmit();
+                        return;
+                      }
+                      if (e.metaKey || e.ctrlKey) {
                         e.preventDefault();
                         handleSubmit();
                       }
@@ -1821,7 +1863,13 @@ export const VideoVariationWorkspace = forwardRef<
                     size="icon"
                     className="size-8 shrink-0 rounded-full bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)] text-white shadow-[0_0_20px_rgba(203,45,206,0.24)] hover:opacity-95 disabled:opacity-40"
                     aria-label="Send"
-                    disabled={!user || submitting}
+                    disabled={
+                      !user ||
+                      submitting ||
+                      (refinementOpen &&
+                        !unifiedClipCoachActive &&
+                        !refinementMainBarCanSend)
+                    }
                     onClick={() => handleSubmit()}
                   >
                     <ArrowUp className="size-4" />

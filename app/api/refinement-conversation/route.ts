@@ -66,6 +66,33 @@ function platformLine(ids: PlatformId[]): string {
   return ids.join(", ");
 }
 
+/** User-safe copy for `generateObject` / network failures (no stack traces). */
+function refinementConversationFailureMessage(error: unknown): string {
+  const msg = error instanceof Error ? error.message : String(error);
+  const m = msg.toLowerCase();
+  if (
+    m.includes("no object generated") ||
+    m.includes("did not return a response") ||
+    m.includes("could not parse") ||
+    m.includes("failed to parse") ||
+    m.includes("type validation")
+  ) {
+    return "Ada could not produce a structured reply. No credits were charged. Try again or shorten your message.";
+  }
+  if (m.includes("rate limit") || m.includes("429") || m.includes("too many requests")) {
+    return "The model is temporarily busy. No credits were charged. Please try again in a moment.";
+  }
+  if (
+    m.includes("context length") ||
+    m.includes("maximum context") ||
+    m.includes("token") ||
+    m.includes("too long")
+  ) {
+    return "That input is too long for the model right now. No credits were charged. Try a shorter message.";
+  }
+  return "Generation failed. No credits were charged.";
+}
+
 export async function POST(req: Request): Promise<Response> {
   if (!process.env.OPENAI_API_KEY) {
     return Response.json(
@@ -125,7 +152,13 @@ export async function POST(req: Request): Promise<Response> {
         typeof guestCreditsRemaining === "number" &&
         guestCreditsRemaining >= 1;
       if (!guestOk) {
-        return Response.json({ error: "Unauthorized" }, { status: 401 });
+        return Response.json(
+          {
+            error:
+              "No guest trial credits left in this browser, or counts are out of sync. Sign in to continue, or refresh the page. No credits were charged.",
+          },
+          { status: 401 },
+        );
       }
     }
   }
@@ -280,7 +313,7 @@ export async function POST(req: Request): Promise<Response> {
     }
     return Response.json(
       {
-        error: "Generation failed. No credits were charged.",
+        error: refinementConversationFailureMessage(e),
       },
       { status: 500 },
     );

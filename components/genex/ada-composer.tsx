@@ -46,6 +46,8 @@ export type AdaComposerProps = {
   maxUploadMb: number;
   variant?: "default" | "adaKit";
   refinementActive?: boolean;
+  /** When refinement is active, allow submit from the main bar (host wires send). */
+  refinementCanSend?: boolean;
 };
 
 export function AdaComposer({
@@ -68,6 +70,7 @@ export function AdaComposer({
   maxUploadMb,
   variant = "default",
   refinementActive = false,
+  refinementCanSend = false,
 }: AdaComposerProps) {
   const kit = variant === "adaKit";
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -88,13 +91,18 @@ export function AdaComposer({
   }, [text]);
 
   useEffect(() => {
-    if (!loading && !refinementActive) textareaRef.current?.focus();
-  }, [loading, refinementActive]);
+    if (!loading && (!refinementActive || refinementCanSend)) {
+      textareaRef.current?.focus();
+    }
+  }, [loading, refinementActive, refinementCanSend]);
+
+  const canSendFromBar =
+    refinementActive && refinementCanSend ? true : canSubmit && !refinementActive;
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      if (canSubmit && !loading && !refinementActive) onSubmit();
+      if (canSendFromBar && !loading) onSubmit();
     }
   };
 
@@ -239,14 +247,14 @@ export function AdaComposer({
           <button
             type="button"
             onClick={loading ? onStop : onSubmit}
-            disabled={!loading && (!canSubmit || refinementActive)}
+            disabled={!loading && !canSendFromBar}
             className={cn(
               "mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all",
               loading
                 ? kit
                   ? "bg-red-500/90 text-white hover:opacity-90"
                   : "bg-[var(--ada-error)] text-white hover:opacity-80"
-                : canSubmit && !refinementActive
+                : canSendFromBar
                   ? kit
                     ? "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] text-white shadow-md hover:scale-105"
                     : "bg-gradient-to-br from-[#7B5CFA] to-[#9B6FFF] text-white shadow-md shadow-[#7B5CFA33] hover:scale-105"

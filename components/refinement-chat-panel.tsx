@@ -2,7 +2,14 @@
 
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MutableRefObject,
+} from "react";
 import { Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -120,6 +127,15 @@ export type RefinementChatPanelProps = {
   clipCoachResetNonce?: number;
   /** Shown in unified clip coach chrome for guest-credit copy. */
   user?: { id: string; email: string } | null;
+  /**
+   * When set with embed + conversational clip (non-unified), host uses the main composer;
+   * `current` is wired to send a user line. Panel hides its duplicate textarea.
+   */
+  conversationalSendRef?: MutableRefObject<((line: string) => Promise<void>) | null>;
+  /** Lets host disable main-bar send while Ada is typing. */
+  onConversationalBusyChange?: (busy: boolean) => void;
+  /** No nested card / badge strip — flows as one thread with the host composer. */
+  flatEmbedShell?: boolean;
 };
 
 function platformLabels(ids: PlatformId[]): string {
@@ -178,6 +194,9 @@ export function RefinementChatPanel({
   onApplyCoachToPrompt,
   clipCoachResetNonce = 0,
   user = null,
+  conversationalSendRef,
+  onConversationalBusyChange,
+  flatEmbedShell = false,
 }: RefinementChatPanelProps) {
   const llmAssist = llmAssistProp ?? embedInChat;
   const kit = variant === "adaKit";
@@ -203,6 +222,9 @@ export function RefinementChatPanel({
     !remoteError;
 
   const unifiedMode = conversationalClip && unifiedClipCoach;
+
+  const externalConversationalComposer =
+    Boolean(conversationalSendRef) && conversationalClip && !unifiedMode;
 
   const coachGenRef = useRef<GenerationContextV1 | null>(null);
   const coachBriefRef = useRef("");
@@ -598,6 +620,37 @@ export function RefinementChatPanel({
   );
 
   useEffect(() => {
+    if (!conversationalSendRef || !externalConversationalComposer) {
+      if (conversationalSendRef) conversationalSendRef.current = null;
+      return;
+    }
+    conversationalSendRef.current = async (line: string) => {
+      await sendConversationalLine(line);
+    };
+    return () => {
+      conversationalSendRef.current = null;
+    };
+  }, [
+    conversationalSendRef,
+    externalConversationalComposer,
+    sendConversationalLine,
+  ]);
+
+  useEffect(() => {
+    if (!onConversationalBusyChange) return;
+    if (!active || !externalConversationalComposer) {
+      onConversationalBusyChange(false);
+      return;
+    }
+    onConversationalBusyChange(convBusy);
+  }, [
+    active,
+    convBusy,
+    externalConversationalComposer,
+    onConversationalBusyChange,
+  ]);
+
+  useEffect(() => {
     if (!active) {
       refinementOpeningInflightKeyRef.current = null;
       return;
@@ -776,9 +829,11 @@ export function RefinementChatPanel({
     : "max-w-[95%] cursor-pointer rounded-2xl rounded-br-md border border-violet-300/60 bg-violet-50 px-4 py-3 text-left text-sm leading-relaxed text-[#0F0A1E] dark:border-violet-500/40 dark:bg-violet-950/50 dark:text-zinc-100";
 
   const shell = embedInChat
-    ? kit
-      ? "flex flex-col overflow-hidden rounded-[20px_20px_20px_4px] border border-white/14 bg-white/[0.06] shadow-[0_12px_32px_rgba(0,0,0,0.28)] backdrop-blur-md outline outline-1 -outline-offset-1 outline-white/10"
-      : "flex flex-col overflow-hidden rounded-2xl rounded-bl-md border border-ada-border bg-ada-card/95 shadow-md ring-1 ring-ada-border/40 backdrop-blur-sm"
+    ? flatEmbedShell
+      ? "flex min-h-0 flex-1 flex-col overflow-visible bg-transparent"
+      : kit
+        ? "flex flex-col overflow-hidden rounded-[20px_20px_20px_4px] border border-white/14 bg-white/[0.06] shadow-[0_12px_32px_rgba(0,0,0,0.28)] backdrop-blur-md outline outline-1 -outline-offset-1 outline-white/10"
+        : "flex flex-col overflow-hidden rounded-2xl rounded-bl-md border border-ada-border bg-ada-card/95 shadow-md ring-1 ring-ada-border/40 backdrop-blur-sm"
     : kit
       ? "divide-y divide-white/10 overflow-hidden rounded-2xl border border-white/14 bg-white/[0.06] backdrop-blur-sm outline outline-1 -outline-offset-1 outline-white/10"
       : "flex max-h-[min(90vh,720px)] flex-col gap-0 overflow-hidden rounded-xl border border-[#E8E4F8] bg-white dark:border-white/10 dark:bg-zinc-950";
@@ -862,7 +917,7 @@ export function RefinementChatPanel({
         </div>
       ) : null}
 
-      {embedInChat ? (
+      {embedInChat && !flatEmbedShell ? (
         <div
           className={cn(
             "shrink-0 border-b px-4 py-2.5",
@@ -884,7 +939,7 @@ export function RefinementChatPanel({
                 : `Step ${Math.min(step + 1, totalSteps)} of ${totalSteps}`}
           </span>
         </div>
-      ) : (
+      ) : !embedInChat ? (
         <div
           className={cn(
             "text-muted-foreground shrink-0 border-b px-4 py-2 text-xs font-medium",
@@ -899,9 +954,28 @@ export function RefinementChatPanel({
                 : "Ada · refine"
               : `Step ${Math.min(step + 1, totalSteps)} of ${totalSteps}`}
         </div>
-      )}
+      ) : null}
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+      <div
+        className={cn(
+          "min-h-0 flex-1 overflow-y-auto py-3",
+          flatEmbedShell ? "px-0" : "px-4",
+        )}
+      >
+        {flatEmbedShell && hideChrome && onCancel ? (
+          <div className={cn("mb-2 flex justify-end", flatEmbedShell && "px-1")}>
+            <button
+              type="button"
+              onClick={onCancel}
+              className={cn(
+                "text-[11px] underline-offset-2 hover:underline",
+                kit ? "text-white/45 hover:text-white/70" : "text-muted-foreground",
+              )}
+            >
+              Cancel refinement
+            </button>
+          </div>
+        ) : null}
         {!embedInChat ? (
           <div
             className={cn(
@@ -1179,7 +1253,14 @@ export function RefinementChatPanel({
               </div>
             </div>
           ) : (
-          <div className="flex min-h-[min(36vh,300px)] max-h-[min(62vh,580px)] flex-col gap-2">
+          <div
+            className={cn(
+              "flex max-h-[min(62vh,580px)] flex-col gap-2",
+              externalConversationalComposer || flatEmbedShell
+                ? "min-h-0"
+                : "min-h-[min(36vh,300px)]",
+            )}
+          >
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
               {convMsgs.map((m) =>
                 m.role === "assistant" ? (
@@ -1268,39 +1349,41 @@ export function RefinementChatPanel({
               ) : null}
               <div ref={convEndRef} className="h-1 shrink-0" aria-hidden />
             </div>
-            <div className="shrink-0 space-y-2 border-t border-white/10 pt-2 dark:border-white/10">
-              <textarea
-                rows={2}
-                className={cn(
-                  "w-full resize-none rounded-lg border px-3 py-2 text-sm outline-none focus-visible:ring-[3px]",
-                  kit
-                    ? "border-white/14 bg-black/25 text-white ring-violet-500/30 placeholder:text-white/35"
-                    : "border-[#E8E4F8] bg-white ring-[#6C47FF]/25 dark:border-white/10 dark:bg-zinc-950",
-                )}
-                value={convInput}
-                onChange={(e) => setConvInput(e.target.value)}
-                placeholder="Message Ada…"
-                disabled={convBusy}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    void handleConversationalSend();
-                  }
-                }}
-              />
-              <Button
-                type="button"
-                className={cn(
-                  "w-full sm:w-auto",
-                  kit &&
-                    "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] text-white hover:opacity-90",
-                )}
-                disabled={!convInput.trim() || convBusy}
-                onClick={() => void handleConversationalSend()}
-              >
-                {convBusy ? "Sending…" : "Send"}
-              </Button>
-            </div>
+            {!externalConversationalComposer ? (
+              <div className="shrink-0 space-y-2 border-t border-white/10 pt-2 dark:border-white/10">
+                <textarea
+                  rows={2}
+                  className={cn(
+                    "w-full resize-none rounded-lg border px-3 py-2 text-sm outline-none focus-visible:ring-[3px]",
+                    kit
+                      ? "border-white/14 bg-black/25 text-white ring-violet-500/30 placeholder:text-white/35"
+                      : "border-[#E8E4F8] bg-white ring-[#6C47FF]/25 dark:border-white/10 dark:bg-zinc-950",
+                  )}
+                  value={convInput}
+                  onChange={(e) => setConvInput(e.target.value)}
+                  placeholder="Message Ada…"
+                  disabled={convBusy}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      void handleConversationalSend();
+                    }
+                  }}
+                />
+                <Button
+                  type="button"
+                  className={cn(
+                    "w-full sm:w-auto",
+                    kit &&
+                      "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] text-white hover:opacity-90",
+                  )}
+                  disabled={!convInput.trim() || convBusy}
+                  onClick={() => void handleConversationalSend()}
+                >
+                  {convBusy ? "Sending…" : "Send"}
+                </Button>
+              </div>
+            ) : null}
           </div>
           )
         ) : (
