@@ -1,5 +1,5 @@
 import { openai } from "@ai-sdk/openai";
-import { generateObject } from "ai";
+import { APICallError, generateObject } from "ai";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -70,6 +70,18 @@ function platformLine(ids: PlatformId[]): string {
 
 /** User-safe copy for `generateObject` / network failures (no stack traces). */
 function refinementConversationFailureMessage(error: unknown): string {
+  if (APICallError.isInstance(error)) {
+    const sc = error.statusCode;
+    if (sc === 401 || sc === 403) {
+      return "OpenAI rejected the request (invalid API key or access). No credits were charged. If this keeps happening, check OPENAI_API_KEY on the server.";
+    }
+    if (sc === 429) {
+      return "The model provider rate-limited this request. No credits were charged. Try again in a moment.";
+    }
+    if (sc != null && sc >= 500) {
+      return "The model provider had a temporary error. No credits were charged. Please try again.";
+    }
+  }
   const msg = error instanceof Error ? error.message : String(error);
   const m = msg.toLowerCase();
   if (
@@ -95,18 +107,81 @@ function refinementConversationFailureMessage(error: unknown): string {
   return "Generation failed. No credits were charged.";
 }
 
+/** Best-effort DB write; must never fail the HTTP response after a good model turn. */
+function persistClipRefinementSessionFireAndForget(
+  supabase: SupabaseClient,
+  params: {
+    sessionId: string;
+    userId: string;
+    kind: "video_variations" | "text_generation";
+    inputSummary: string;
+    messages: { role: "user" | "assistant"; content: string }[];
+    answersPartial: Record<string, string>;
+  },
+): void {
+  void (async () => {
+    try {
+      const messagesJson: unknown = JSON.parse(JSON.stringify(params.messages));
+      const answersJson: unknown = JSON.parse(
+        JSON.stringify(params.answersPartial),
+      );
+      const { error: persistErr } = await supabase
+        .from("clip_refinement_sessions")
+        .upsert(
+          {
+            id: params.sessionId,
+            user_id: params.userId,
+            refinement_kind: params.kind,
+            input_summary: params.inputSummary.slice(0, 4000),
+            messages: messagesJson,
+            answers_partial: answersJson,
+          },
+          { onConflict: "id" },
+        );
+      if (persistErr) {
+        console.error(
+          "[refinement-conversation] clip_refinement_sessions upsert failed",
+          persistErr.message,
+          persistErr.code,
+          persistErr.details,
+        );
+      }
+    } catch (e) {
+      console.error(
+        "[refinement-conversation] clip_refinement_sessions persist exception",
+        e,
+      );
+    }
+  })();
+}
+
 export async function POST(req: Request): Promise<Response> {
   if (!process.env.OPENAI_API_KEY) {
     return Response.json(
       {
         error:
           "Missing OPENAI_API_KEY in environment. No credits were charged.",
+        code: "MISSING_OPENAI",
       },
       { status: 500 },
     );
   }
 
-  const supabase = await createClient();
+  let supabase: Awaited<ReturnType<typeof createClient>>;
+  try {
+    supabase = await createClient();
+  } catch (e) {
+    console.error("[refinement-conversation] createClient failed", e);
+    return Response.json(
+      {
+        error:
+          "Server misconfiguration: could not create Supabase client. No credits were charged.",
+        code: "SUPABASE_CONFIG",
+      },
+      { status: 500 },
+    );
+  }
+
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -300,25 +375,14 @@ export async function POST(req: Request): Promise<Response> {
     const readyForConfirm = refinementAnswersComplete(steps, merged);
 
     if (user?.id && sessionId) {
-      const { error: persistErr } = await supabase
-        .from("clip_refinement_sessions")
-        .upsert(
-          {
-            id: sessionId,
-            user_id: user.id,
-            refinement_kind: kind,
-            input_summary: inputSummary.slice(0, 4000),
-            messages: messages as unknown as Record<string, unknown>[],
-            answers_partial: merged,
-          },
-          { onConflict: "id" },
-        );
-      if (persistErr) {
-        console.error(
-          "[refinement-conversation] clip_refinement_sessions upsert failed",
-          persistErr.message,
-        );
-      }
+      persistClipRefinementSessionFireAndForget(supabase, {
+        sessionId,
+        userId: user.id,
+        kind,
+        inputSummary,
+        messages,
+        answersPartial: merged,
+      });
     }
 
     return Response.json({
