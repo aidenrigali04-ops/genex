@@ -632,6 +632,9 @@ export const VideoVariationWorkspace = forwardRef<
     useState("");
   const [refinementPersistenceSessionId, setRefinementPersistenceSessionId] =
     useState("");
+  /** First clip instruction for this refine session; composer clears so follow-ups do not mutate this bubble. */
+  const [refinementFrozenUserBubbleText, setRefinementFrozenUserBubbleText] =
+    useState("");
   const [jobGenerationContext, setJobGenerationContext] =
     useState<GenerationContextV1 | null>(null);
   /** Live refinement answers for clip coach before confirm (Ada kit only). */
@@ -665,6 +668,7 @@ export const VideoVariationWorkspace = forwardRef<
       setRefinementDraftContext(null);
       setRefinementSessionPlanKey("");
       setRefinementPersistenceSessionId("");
+      setRefinementFrozenUserBubbleText("");
     }
   }, [refinementOpen]);
 
@@ -875,14 +879,17 @@ export const VideoVariationWorkspace = forwardRef<
       }
     }
 
+    const rootClipInstruction = prompt.trim();
     setRefinementSessionPlanKey(
       buildVideoRefinementSessionPlanKey({
-        promptSnippet: prompt,
+        promptSnippet: rootClipInstruction,
         videoFile,
         youtubeUrl,
       }),
     );
     setRefinementPersistenceSessionId(crypto.randomUUID());
+    setRefinementFrozenUserBubbleText(rootClipInstruction);
+    setPrompt("");
     setRefinementOpen(true);
   };
 
@@ -891,13 +898,14 @@ export const VideoVariationWorkspace = forwardRef<
     return isValidHttpUrl(normalizeYoutubeUrlForJob(youtubeUrl));
   }, [videoFile, youtubeUrl]);
 
-  const refinementInputSummary = useMemo(
-    () =>
-      videoFile
-        ? `Upload: ${videoFile.name}`
-        : `YouTube: ${normalizeYoutubeUrlForJob(youtubeUrl) || youtubeUrl.trim() || "…"}`,
-    [videoFile, youtubeUrl],
-  );
+  const refinementInputSummary = useMemo(() => {
+    const base = videoFile
+      ? `Upload: ${videoFile.name}`
+      : `YouTube: ${normalizeYoutubeUrlForJob(youtubeUrl) || youtubeUrl.trim() || "…"}`;
+    const goal = refinementFrozenUserBubbleText.trim();
+    if (!goal) return base;
+    return `${base}\n\nCreator clip goal:\n${goal}`;
+  }, [videoFile, youtubeUrl, refinementFrozenUserBubbleText]);
 
   const clipCoachBriefPrefix = useMemo(() => {
     const parts: string[] = [];
@@ -907,16 +915,19 @@ export const VideoVariationWorkspace = forwardRef<
       const u = normalizeYoutubeUrlForJob(youtubeUrl);
       if (isValidHttpUrl(u)) parts.push(`Source: YouTube ${u}`);
     }
-    const p = prompt.trim();
-    if (p) {
+    const clipDraft =
+      refinementFrozenUserBubbleText.trim() || prompt.trim();
+    if (clipDraft) {
       parts.push(
         `Current clip instruction draft:\n${
-          p.length > 1200 ? `${p.slice(0, 1200)}…` : p
+          clipDraft.length > 1200
+            ? `${clipDraft.slice(0, 1200)}…`
+            : clipDraft
         }`,
       );
     }
     return parts.join("\n\n");
-  }, [videoFile, youtubeUrl, prompt]);
+  }, [videoFile, youtubeUrl, prompt, refinementFrozenUserBubbleText]);
 
   const handleApplyCoachToPrompt = useCallback((text: string) => {
     const t = text.trim();
@@ -978,12 +989,15 @@ export const VideoVariationWorkspace = forwardRef<
         : {}),
     };
 
+    const clipInstruction =
+      prompt.trim() || refinementFrozenUserBubbleText.trim();
+
     setRefinementOpen(false);
     setSubmitting(true);
     setUploadPct(0);
     setFinishingOnServer(false);
     resetJobUi();
-    setLastSubmittedPrompt(prompt.trim());
+    setLastSubmittedPrompt(clipInstruction);
     setJobGenerationContext(mergedCtx);
 
     try {
@@ -991,13 +1005,13 @@ export const VideoVariationWorkspace = forwardRef<
         videoFile != null
           ? await submitUploadJobViaDirectStorage({
               file: videoFile,
-              prompt: prompt.trim(),
+              prompt: clipInstruction,
               generationContext: mergedCtx,
               onProgress: setUploadPct,
               onUploadFullySent: () => setFinishingOnServer(true),
             })
           : await postVideoJobUrlJson({
-              prompt: prompt.trim(),
+              prompt: clipInstruction,
               youtubeUrl: normalizeYoutubeUrlForJob(youtubeUrl),
               generationContext: mergedCtx,
             });
@@ -1054,10 +1068,18 @@ export const VideoVariationWorkspace = forwardRef<
   };
 
   const chatTitle = useMemo(() => {
-    const t = lastSubmittedPrompt.trim() || prompt.trim();
+    const t =
+      lastSubmittedPrompt.trim() ||
+      refinementFrozenUserBubbleText.trim() ||
+      prompt.trim();
     if (!t) return "Video";
     return t.length > 56 ? `${t.slice(0, 56)}…` : t;
-  }, [lastSubmittedPrompt, prompt]);
+  }, [lastSubmittedPrompt, refinementFrozenUserBubbleText, prompt]);
+
+  const primaryUserBubbleText =
+    lastSubmittedPrompt.trim() ||
+    refinementFrozenUserBubbleText.trim() ||
+    (submitting ? prompt.trim() : "");
 
   const userInitials = useMemo(() => {
     const e = user?.email?.trim();
@@ -1324,9 +1346,7 @@ export const VideoVariationWorkspace = forwardRef<
               </div>
             ) : (
               <>
-                {lastSubmittedPrompt.trim() ||
-                (refinementOpen && prompt.trim()) ||
-                (submitting && prompt.trim()) ? (
+                {primaryUserBubbleText ? (
                   <div className="mb-6 flex w-full flex-col items-end gap-2">
                     <div className="flex max-w-[min(100%,600px)] items-end gap-3">
                       <div className="min-w-0 rounded-[20px_4px_20px_20px] bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)] p-4 shadow-[0_16px_24px_rgba(136,1,220,0.16)] outline outline-1 -outline-offset-1 outline-white/25">
@@ -1335,7 +1355,7 @@ export const VideoVariationWorkspace = forwardRef<
                           <span className="tracking-wide">Message</span>
                         </div>
                         <p className="whitespace-pre-wrap text-sm leading-5 tracking-wide text-white">
-                          {lastSubmittedPrompt.trim() || prompt.trim()}
+                          {primaryUserBubbleText}
                         </p>
                       </div>
                       <div
@@ -1601,9 +1621,12 @@ export const VideoVariationWorkspace = forwardRef<
                                       return;
                                     }
                                     resetJobUi({ keepSubmittedPrompt: true });
+                                    const regenRoot =
+                                      lastSubmittedPrompt.trim() ||
+                                      prompt.trim();
                                     setRefinementSessionPlanKey(
                                       buildVideoRefinementSessionPlanKey({
-                                        promptSnippet: lastSubmittedPrompt,
+                                        promptSnippet: regenRoot,
                                         videoFile,
                                         youtubeUrl,
                                       }),
@@ -1611,6 +1634,10 @@ export const VideoVariationWorkspace = forwardRef<
                                     setRefinementPersistenceSessionId(
                                       crypto.randomUUID(),
                                     );
+                                    setRefinementFrozenUserBubbleText(
+                                      regenRoot,
+                                    );
+                                    setPrompt("");
                                     setRefinementOpen(true);
                                   }}
                                 >
@@ -1649,7 +1676,11 @@ export const VideoVariationWorkspace = forwardRef<
                               <GenerationFeedbackPanel
                                 mode="video"
                                 videoJobId={jobId}
-                                originalPrompt={prompt}
+                                originalPrompt={
+                                  lastSubmittedPrompt.trim() ||
+                                  refinementFrozenUserBubbleText.trim() ||
+                                  prompt.trim()
+                                }
                                 generationContext={jobGenerationContext}
                                 variationsOutput={formatVariationsForFeedback(
                                   variations,
