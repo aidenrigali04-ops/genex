@@ -33,6 +33,8 @@ const bodySchema = z.object({
   messages: z.array(messageSchema).min(1).max(48),
   answersPartial: z.record(z.string(), z.string()).default({}),
   guestCreditsRemaining: z.number().int().optional(),
+  /** Client-generated id; transcript is upserted after a successful model turn (signed-in only). */
+  sessionId: z.string().uuid().optional(),
 });
 
 const resultSchema = z.object({
@@ -135,6 +137,7 @@ export async function POST(req: Request): Promise<Response> {
     messages,
     answersPartial,
     guestCreditsRemaining,
+    sessionId,
   } = parsed.data;
 
   const platformIds = normalizePlatforms(rawPlatforms);
@@ -295,6 +298,28 @@ export async function POST(req: Request): Promise<Response> {
       ...filteredPatches,
     };
     const readyForConfirm = refinementAnswersComplete(steps, merged);
+
+    if (user?.id && sessionId) {
+      const { error: persistErr } = await supabase
+        .from("clip_refinement_sessions")
+        .upsert(
+          {
+            id: sessionId,
+            user_id: user.id,
+            refinement_kind: kind,
+            input_summary: inputSummary.slice(0, 4000),
+            messages: messages as unknown as Record<string, unknown>[],
+            answers_partial: merged,
+          },
+          { onConflict: "id" },
+        );
+      if (persistErr) {
+        console.error(
+          "[refinement-conversation] clip_refinement_sessions upsert failed",
+          persistErr.message,
+        );
+      }
+    }
 
     return Response.json({
       assistantMessage: coerced.data.assistantMessage.trim(),

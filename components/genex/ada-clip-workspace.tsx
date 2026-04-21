@@ -66,6 +66,8 @@ export type AdaClipWorkspaceProps = {
   /** When set, panel uses async personalized steps instead of static templates. */
   refinementRemote?: RemoteRefinementState;
   refinementPlanKey?: string;
+  /** Supabase `clip_refinement_sessions.id`; new UUID per refine session from host. */
+  refinementPersistenceSessionId?: string;
   refinementPrefillInference?: {
     inferredClipPurpose?: string;
     inferredPurposeRationale?: string;
@@ -128,6 +130,7 @@ export function AdaClipWorkspace({
   onRefinementCancel,
   refinementRemote,
   refinementPlanKey = "",
+  refinementPersistenceSessionId = "",
   refinementPrefillInference,
   onRefinementOpenTypedAnswer,
   onExamplePrompt,
@@ -377,8 +380,14 @@ export function AdaClipWorkspace({
                 conversationalSendRef={refinementSendRef}
                 onConversationalBusyChange={setRefinementConvBusy}
                 className="max-h-none min-h-0"
+                user={
+                  authUserId
+                    ? { id: authUserId, email: "" }
+                    : null
+                }
                 remoteRefinement={refinementRemote}
                 refinementPlanKey={refinementPlanKey}
+                persistenceSessionId={refinementPersistenceSessionId || null}
                 prefillInference={refinementPrefillInference}
                 onOpenTypedAnswer={onRefinementOpenTypedAnswer}
                 onConfirm={onRefinementConfirm}

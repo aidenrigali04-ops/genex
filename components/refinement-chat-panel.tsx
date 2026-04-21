@@ -136,6 +136,11 @@ export type RefinementChatPanelProps = {
   onConversationalBusyChange?: (busy: boolean) => void;
   /** No nested card / badge strip — flows as one thread with the host composer. */
   flatEmbedShell?: boolean;
+  /**
+   * When set with a signed-in `user`, each successful `/api/refinement-conversation` turn
+   * upserts `clip_refinement_sessions` in Supabase (full `messages` payload for that turn).
+   */
+  persistenceSessionId?: string | null;
 };
 
 function platformLabels(ids: PlatformId[]): string {
@@ -197,6 +202,7 @@ export function RefinementChatPanel({
   conversationalSendRef,
   onConversationalBusyChange,
   flatEmbedShell = false,
+  persistenceSessionId = null,
 }: RefinementChatPanelProps) {
   const llmAssist = llmAssistProp ?? embedInChat;
   const kit = variant === "adaKit";
@@ -565,6 +571,9 @@ export function RefinementChatPanel({
           messages,
           answersPartial: answersRef.current,
           guestCreditsRemaining: readGuestCreditsRemaining(),
+          ...(user?.id && persistenceSessionId?.trim()
+            ? { sessionId: persistenceSessionId.trim() }
+            : {}),
         }),
       });
       const data = (await res.json()) as {
@@ -577,7 +586,7 @@ export function RefinementChatPanel({
       if (!msg) throw new Error("Empty response");
       return { msg, patches: data.answerPatches };
     },
-    [kind, platformIds, inputSummary],
+    [kind, platformIds, inputSummary, user?.id, persistenceSessionId],
   );
 
   const sendConversationalLine = useCallback(

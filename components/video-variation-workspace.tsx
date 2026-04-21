@@ -165,6 +165,19 @@ function isValidHttpUrl(s: string): boolean {
   }
 }
 
+/** Stable for one refine session; must not track live composer text after refine opens. */
+function buildVideoRefinementSessionPlanKey(opts: {
+  promptSnippet: string;
+  videoFile: File | null;
+  youtubeUrl: string;
+}): string {
+  const p = opts.promptSnippet.trim().slice(0, 400);
+  if (opts.videoFile) {
+    return `file:${opts.videoFile.name}:${opts.videoFile.size}:${p}`;
+  }
+  return `url:${normalizeYoutubeUrlForJob(opts.youtubeUrl)}:${p}`;
+}
+
 async function postVideoJobUrlJson(params: {
   prompt: string;
   youtubeUrl: string;
@@ -615,6 +628,10 @@ export const VideoVariationWorkspace = forwardRef<
   /** Server `error_message` when status is complete but some variations failed. */
   const [jobPartialNotice, setJobPartialNotice] = useState<string | null>(null);
   const [refinementOpen, setRefinementOpen] = useState(false);
+  const [refinementSessionPlanKey, setRefinementSessionPlanKey] =
+    useState("");
+  const [refinementPersistenceSessionId, setRefinementPersistenceSessionId] =
+    useState("");
   const [jobGenerationContext, setJobGenerationContext] =
     useState<GenerationContextV1 | null>(null);
   /** Live refinement answers for clip coach before confirm (Ada kit only). */
@@ -644,7 +661,11 @@ export const VideoVariationWorkspace = forwardRef<
   }, [onJobFinished]);
 
   useEffect(() => {
-    if (!refinementOpen) setRefinementDraftContext(null);
+    if (!refinementOpen) {
+      setRefinementDraftContext(null);
+      setRefinementSessionPlanKey("");
+      setRefinementPersistenceSessionId("");
+    }
   }, [refinementOpen]);
 
   /** True while a direct-upload job is queued but `storage_path` is not linked yet (worker cannot claim). */
@@ -854,6 +875,14 @@ export const VideoVariationWorkspace = forwardRef<
       }
     }
 
+    setRefinementSessionPlanKey(
+      buildVideoRefinementSessionPlanKey({
+        promptSnippet: prompt,
+        videoFile,
+        youtubeUrl,
+      }),
+    );
+    setRefinementPersistenceSessionId(crypto.randomUUID());
     setRefinementOpen(true);
   };
 
@@ -861,12 +890,6 @@ export const VideoVariationWorkspace = forwardRef<
     if (videoFile != null) return true;
     return isValidHttpUrl(normalizeYoutubeUrlForJob(youtubeUrl));
   }, [videoFile, youtubeUrl]);
-
-  const refinementPlanKey = useMemo(() => {
-    const p = prompt.trim().slice(0, 400);
-    if (videoFile) return `file:${videoFile.name}:${videoFile.size}:${p}`;
-    return `url:${normalizeYoutubeUrlForJob(youtubeUrl)}:${p}`;
-  }, [videoFile, youtubeUrl, prompt]);
 
   const refinementInputSummary = useMemo(
     () =>
@@ -1333,7 +1356,10 @@ export const VideoVariationWorkspace = forwardRef<
                         kind="video_variations"
                         platformIds={VIDEO_REFINEMENT_PLATFORMS}
                         inputSummary={refinementInputSummary}
-                        refinementPlanKey={refinementPlanKey}
+                        refinementPlanKey={refinementSessionPlanKey}
+                        persistenceSessionId={
+                          refinementPersistenceSessionId || null
+                        }
                         variant="adaKit"
                         embedInChat
                         flatEmbedShell
@@ -1575,6 +1601,16 @@ export const VideoVariationWorkspace = forwardRef<
                                       return;
                                     }
                                     resetJobUi({ keepSubmittedPrompt: true });
+                                    setRefinementSessionPlanKey(
+                                      buildVideoRefinementSessionPlanKey({
+                                        promptSnippet: lastSubmittedPrompt,
+                                        videoFile,
+                                        youtubeUrl,
+                                      }),
+                                    );
+                                    setRefinementPersistenceSessionId(
+                                      crypto.randomUUID(),
+                                    );
                                     setRefinementOpen(true);
                                   }}
                                 >

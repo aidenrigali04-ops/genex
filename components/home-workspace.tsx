@@ -349,12 +349,10 @@ export function HomeWorkspace({
     return `+${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
   };
 
-  const refinementPlanKey = useMemo(() => {
-    // Refine-plan fetch uses `pendingInputContentRef`; this key follows composer state for effect deps (often empty while refine is open).
-    const head = text.slice(0, 160);
-    const tail = text.length > 320 ? text.slice(-160) : "";
-    return `${inputMode}:${text.length}:${head}:${tail}:${url.trim()}:${uploadFile?.name ?? ""}:${uploadFile?.size ?? 0}:${uploadFile?.lastModified ?? 0}`;
-  }, [inputMode, text, url, uploadFile]);
+  const [refinementSessionPlanKey, setRefinementSessionPlanKey] =
+    useState("");
+  const [refinementPersistenceSessionId, setRefinementPersistenceSessionId] =
+    useState("");
 
   function looksTextualUpload(file: File): boolean {
     if (file.type.startsWith("text/")) return true;
@@ -514,6 +512,14 @@ export function HomeWorkspace({
       uploadFile: uploadFile ?? null,
     };
 
+    const snap = pendingInputContentRef.current;
+    const head = snap.text.slice(0, 160);
+    const tail = snap.text.length > 320 ? snap.text.slice(-160) : "";
+    setRefinementSessionPlanKey(
+      `${snap.inputMode}:${snap.text.length}:${head}:${tail}:${snap.url.trim()}:${snap.uploadFile?.name ?? ""}:${snap.uploadFile?.size ?? 0}:${snap.uploadFile?.lastModified ?? 0}`,
+    );
+    setRefinementPersistenceSessionId(crypto.randomUUID());
+
     setRefinementRetry(0);
     setClipRefinementRemote({ phase: "loading" });
     setRefinementPlanInference(null);
@@ -542,6 +548,10 @@ export function HomeWorkspace({
       setClipRefinementRemote(undefined);
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setRefinementPlanInference(null);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setRefinementSessionPlanKey("");
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setRefinementPersistenceSessionId("");
       return;
     }
 
@@ -592,7 +602,7 @@ export function HomeWorkspace({
     };
   }, [
     refinementOpen,
-    refinementPlanKey,
+    refinementSessionPlanKey,
     refinementRetry,
     runClipRefinementFetch,
     supabase,
@@ -1829,7 +1839,10 @@ export function HomeWorkspace({
                   }}
                   refinementOpen={refinementOpen}
                   refinementRemote={clipRefinementRemote}
-                  refinementPlanKey={refinementPlanKey}
+                  refinementPlanKey={refinementSessionPlanKey}
+                  refinementPersistenceSessionId={
+                    refinementPersistenceSessionId
+                  }
                   refinementPrefillInference={
                     refinementPlanInference ?? undefined
                   }
