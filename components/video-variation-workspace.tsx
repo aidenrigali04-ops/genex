@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
@@ -41,6 +42,7 @@ import {
 import {
   ArrowRight,
   ArrowUp,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Copy,
@@ -69,6 +71,7 @@ import { createClient } from "@/lib/supabase/client";
 import type { GenerationContextV1 } from "@/lib/generation-context";
 import { isGenerationContextV1 } from "@/lib/generation-context";
 import type { PlatformId } from "@/lib/platforms";
+import { shouldUseUnifiedVideoClipCoach } from "@/lib/video-clip-coach-toggle";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -85,7 +88,10 @@ type Props = {
   hideMarketingTitle?: boolean;
   /** Parent shell provides top chrome (e.g. Ada video workspace header). */
   omitChromeHeader?: boolean;
-  /** Ada kit: LLM clip coach rail (`/api/chat` clip_first) beside the workspace. */
+  /**
+   * Ada kit: show a compact “Clip coach” dropdown on the composer (no separate rail).
+   * When enabled, refinement uses `clip_first` coach + job setup in one panel.
+   */
   embedClipCoach?: boolean;
 };
 
@@ -615,6 +621,8 @@ export const VideoVariationWorkspace = forwardRef<
   const [refinementDraftContext, setRefinementDraftContext] =
     useState<GenerationContextV1 | null>(null);
   const [clipCoachResetNonce, setClipCoachResetNonce] = useState(0);
+  /** Ada kit only: Perplexity-style opt-in for clip_first coach inside refinement. */
+  const [clipCoachEnabled, setClipCoachEnabled] = useState(false);
   const [lastSubmittedPrompt, setLastSubmittedPrompt] = useState("");
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -870,6 +878,11 @@ export const VideoVariationWorkspace = forwardRef<
   const clipCoachGenerationContext = useMemo(
     () => jobGenerationContext ?? refinementDraftContext,
     [jobGenerationContext, refinementDraftContext],
+  );
+
+  const unifiedClipCoachActive = useMemo(
+    () => shouldUseUnifiedVideoClipCoach(embedClipCoach, clipCoachEnabled),
+    [embedClipCoach, clipCoachEnabled],
   );
 
   const submitWithRefinementContext = async (ctx: GenerationContextV1) => {
@@ -1280,7 +1293,7 @@ export const VideoVariationWorkspace = forwardRef<
                   </div>
                 ) : null}
 
-                {!embedClipCoach && refinementOpen && !submitting ? (
+                {refinementOpen && !submitting ? (
                   <div className="mb-8 flex w-full justify-start">
                     <div className="w-full max-w-[min(100%,720px)] shadow-[0_12px_40px_rgba(0,0,0,0.35)]">
                       <RefinementChatPanel
@@ -1292,6 +1305,28 @@ export const VideoVariationWorkspace = forwardRef<
                         variant="adaKit"
                         embedInChat
                         className="max-h-[min(72vh,640px)]"
+                        unifiedClipCoach={unifiedClipCoachActive}
+                        refinementActive={refinementOpen && !submitting}
+                        user={user}
+                        onDraftContextChange={
+                          unifiedClipCoachActive
+                            ? handleRefinementDraftForCoach
+                            : undefined
+                        }
+                        clipCoachGenerationContext={
+                          unifiedClipCoachActive
+                            ? clipCoachGenerationContext
+                            : null
+                        }
+                        clipCoachBriefPrefix={
+                          unifiedClipCoachActive ? clipCoachBriefPrefix : ""
+                        }
+                        onApplyCoachToPrompt={
+                          unifiedClipCoachActive
+                            ? handleApplyCoachToPrompt
+                            : undefined
+                        }
+                        clipCoachResetNonce={clipCoachResetNonce}
                         onConfirm={(ctx) =>
                           void submitWithRefinementContext(ctx)
                         }
@@ -1626,38 +1661,9 @@ export const VideoVariationWorkspace = forwardRef<
             )}
           </div>
 
-          {embedClipCoach ? (
-            <section
-              className="flex min-h-[min(28vh,240px)] max-h-[min(42vh,420px)] shrink-0 flex-col border-t border-white/10 sm:max-h-[min(48vh,520px)]"
-              aria-label="Ada clips and job setup"
-            >
-              <RefinementChatPanel
-                active
-                unifiedClipCoach
-                refinementActive={refinementOpen && !submitting}
-                refinementPlanKey={refinementPlanKey}
-                user={user}
-                kind="video_variations"
-                platformIds={VIDEO_REFINEMENT_PLATFORMS}
-                inputSummary={refinementInputSummary}
-                variant="adaKit"
-                embedInChat
-                className="min-h-0 flex-1"
-                onConfirm={(ctx) => void submitWithRefinementContext(ctx)}
-                onCancel={() => setRefinementOpen(false)}
-                onDraftContextChange={handleRefinementDraftForCoach}
-                clipCoachGenerationContext={clipCoachGenerationContext}
-                clipCoachBriefPrefix={clipCoachBriefPrefix}
-                onApplyCoachToPrompt={handleApplyCoachToPrompt}
-                clipCoachResetNonce={clipCoachResetNonce}
-              />
-            </section>
-          ) : null}
-
           <div
             className={cn(
-              "shrink-0 border-white/10 px-4 pb-5 pt-3 sm:px-10 lg:px-[clamp(24px,6vw,100px)]",
-              embedClipCoach ? "border-t-0" : "border-t",
+              "shrink-0 border-t border-white/10 px-4 pb-5 pt-3 sm:px-10 lg:px-[clamp(24px,6vw,100px)]",
             )}
           >
             <input
@@ -1722,6 +1728,46 @@ export const VideoVariationWorkspace = forwardRef<
                     }}
                   />
                 )}
+                {embedClipCoach ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      disabled={!user || submitting}
+                      className={cn(
+                        "flex h-9 shrink-0 items-center gap-1 rounded-full border px-2.5 text-[11px] font-medium tracking-wide outline-none transition-colors",
+                        "border-white/25 bg-white/[0.06] text-white/85 hover:bg-white/10",
+                        "focus-visible:ring-2 focus-visible:ring-[#8800DC]/50",
+                        "disabled:pointer-events-none disabled:opacity-40",
+                        clipCoachEnabled &&
+                          "border-[#C717D8]/50 bg-[#C717D8]/15 text-white",
+                      )}
+                      aria-haspopup="menu"
+                      aria-label="Clip coach options"
+                    >
+                      Coach
+                      <ChevronDown className="size-3.5 opacity-80" aria-hidden />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent
+                      align="start"
+                      className="w-56 border-white/10 bg-[#1a1024] p-1 text-white"
+                    >
+                      <DropdownMenuCheckboxItem
+                        checked={clipCoachEnabled}
+                        onCheckedChange={(next) => {
+                          const on = Boolean(next);
+                          setClipCoachEnabled(on);
+                          if (!on) setClipCoachResetNonce((n) => n + 1);
+                        }}
+                        className="text-sm focus:bg-white/10 focus:text-white"
+                      >
+                        Ada clip coach
+                      </DropdownMenuCheckboxItem>
+                      <p className="px-2 pb-2 pt-0.5 text-[10px] leading-snug text-white/45">
+                        When on, refinement includes a clip strategist thread
+                        (uses chat credits). No extra panel in the hub.
+                      </p>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : null}
                 <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1.5 pr-0.5 sm:gap-2 sm:pr-1">
                   <input
                     ref={youtubeUrlRef}
