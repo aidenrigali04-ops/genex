@@ -147,7 +147,7 @@ export function AdaOutputPanel({
         className={cn(
           "flex min-h-[200px] items-center justify-center rounded-2xl border border-dashed p-8 text-center text-sm",
           kit
-            ? "border-white/20 bg-white/[0.04] font-[family-name:var(--font-instrument-sans)] text-white/55"
+            ? "border-white/20 bg-white/4 font-[family-name:var(--font-instrument-sans)] text-white/55"
             : "rounded-ada-card border-ada-border bg-ada-card/50 text-ada-secondary",
         )}
       >
@@ -377,7 +377,7 @@ export function AdaOutputPanel({
                   className={cn(
                     "overflow-hidden rounded-2xl border transition-colors",
                     kit
-                      ? "border-white/14 bg-white/[0.06] backdrop-blur-sm outline outline-1 -outline-offset-1 outline-white/10 hover:border-white/25"
+                      ? "border-white/14 bg-white/[0.06] backdrop-blur-sm outline -outline-offset-1 outline-white/10 hover:border-white/25"
                       : "rounded-ada-card border-ada-border bg-ada-card hover:border-ada-border-active",
                   )}
                 >

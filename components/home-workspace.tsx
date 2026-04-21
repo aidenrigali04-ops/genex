@@ -486,6 +486,10 @@ export function HomeWorkspace({
     setClipRefinementRemote({ phase: "loading" });
     setRefinementPlanInference(null);
     setRefinementOpen(true);
+    // Clear composer immediately so user doesn't have to manually erase
+    setText("");
+    setUrl("");
+    setUploadFile(null);
   }, []);
 
   const handleRefinementOpenTypedAnswer = useCallback(

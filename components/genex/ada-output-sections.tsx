@@ -154,7 +154,7 @@ export function AdaOutputSections({
             key={i}
             className={cn(
               "h-3.5 animate-pulse rounded-full",
-              kit ? "bg-white/15" : "bg-[var(--ada-border)]",
+              kit ? "bg-white/15" : "bg-ada-border",
             )}
             style={{ width: `${w}%` }}
           />

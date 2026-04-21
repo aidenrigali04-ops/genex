@@ -297,8 +297,30 @@ export function AdaClipWorkspace({
             />
           ))}
 
+          {refinementOpen && !liveTurnSnapshot && turns.length === 0 ? (
+            <div className="flex justify-end">
+              <div
+                className={cn(
+                  "max-w-[85%] rounded-[18px] rounded-br-[4px] border px-4 py-3",
+                  kit
+                    ? "border-white/14 bg-[linear-gradient(95deg,#D31CD7_0%,#8800DC_100%)] text-white shadow-[0_12px_28px_rgba(136,1,220,0.22)]"
+                    : "border-[var(--ada-border)] bg-[var(--ada-bg-elevated)]",
+                )}
+              >
+                <p
+                  className={cn(
+                    "text-sm leading-relaxed break-words",
+                    kit ? "text-white" : "text-[var(--ada-text-primary)]",
+                  )}
+                >
+                  {refinementInputSummary}
+                </p>
+              </div>
+            </div>
+          ) : null}
+
           {refinementOpen && !loading && onRefinementConfirm ? (
-            <div className="w-full">
+            <div className="w-full animate-in fade-in duration-200">
               {/*
                 Refinement: `/api/refinement-plan` supplies `remoteRefinement.steps` for text flows.
                 `RefinementChatPanel` uses a step thread + pills here; Clip My Video (video_variations +
