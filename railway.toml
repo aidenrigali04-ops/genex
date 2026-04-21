@@ -9,6 +9,11 @@
 # (e.g. sharp / prisma). Override with service vars RAILPACK_BUILD_APT_PACKAGES /
 # RAILPACK_DEPLOY_APT_PACKAGES if needed.
 #
+# If `npm ci` fails with "Missing: stripe@… from lock file" on deploy, the build context
+# may be wrong or an old tree is cached. `.dockerignore` omits worker/package*.json so
+# only the app lockfile is used. As a last resort set a Railway variable:
+# RAILPACK_INSTALL_CMD=npm install --omit=dev --no-audit --no-fund
+#
 [build]
 builder = "RAILPACK"
 

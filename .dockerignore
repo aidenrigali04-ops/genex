@@ -1,0 +1,14 @@
+# Railpack uses Docker-style context; keep the image small and avoid a second
+# package root under worker/ confusing npm ci (worker is built separately via worker/Dockerfile).
+node_modules
+.next
+out
+.git
+.env
+.env.*
+!.env.example
+*.pem
+.DS_Store
+worker/node_modules
+worker/package.json
+worker/package-lock.json
