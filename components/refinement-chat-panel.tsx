@@ -23,6 +23,7 @@ import { refinementAnswersComplete } from "@/lib/refinement-conversation-prompt"
 import {
   buildSummaryFromContext,
   GENERATION_CONTEXT_VERSION,
+  sanitizeGenerationContextForTransport,
   type GenerationContextV1,
 } from "@/lib/generation-context";
 import { readGuestCreditsRemaining } from "@/lib/guest-credits";
@@ -538,7 +539,7 @@ export function RefinementChatPanel({
   }, [applyAnswer, currentDef, customDraft, onOpenTypedAnswer]);
 
   const handleConfirmGenerate = () => {
-    onConfirm(draftContext);
+    onConfirm(sanitizeGenerationContextForTransport(draftContext));
   };
 
   const goBackToQuestions = () => {

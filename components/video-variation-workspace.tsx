@@ -69,7 +69,10 @@ import type { VideoVariationItem, VideoJobStatus } from "@/lib/video-job-types";
 import { VIDEO_JOB_CREDIT_COST } from "@/lib/video-job-cost";
 import { createClient } from "@/lib/supabase/client";
 import type { GenerationContextV1 } from "@/lib/generation-context";
-import { isGenerationContextV1 } from "@/lib/generation-context";
+import {
+  isGenerationContextV1,
+  sanitizeGenerationContextForTransport,
+} from "@/lib/generation-context";
 import type { PlatformId } from "@/lib/platforms";
 import { shouldUseUnifiedVideoClipCoach } from "@/lib/video-clip-coach-toggle";
 import { cn } from "@/lib/utils";
@@ -635,6 +638,8 @@ export const VideoVariationWorkspace = forwardRef<
   /** First clip instruction for this refine session; composer clears so follow-ups do not mutate this bubble. */
   const [refinementFrozenUserBubbleText, setRefinementFrozenUserBubbleText] =
     useState("");
+  /** Same as frozen bubble; ref survives async gaps so job submit always has the root instruction. */
+  const refinementRootClipInstructionRef = useRef("");
   const [jobGenerationContext, setJobGenerationContext] =
     useState<GenerationContextV1 | null>(null);
   /** Live refinement answers for clip coach before confirm (Ada kit only). */
@@ -669,6 +674,7 @@ export const VideoVariationWorkspace = forwardRef<
       setRefinementSessionPlanKey("");
       setRefinementPersistenceSessionId("");
       setRefinementFrozenUserBubbleText("");
+      refinementRootClipInstructionRef.current = "";
     }
   }, [refinementOpen]);
 
@@ -888,6 +894,7 @@ export const VideoVariationWorkspace = forwardRef<
       }),
     );
     setRefinementPersistenceSessionId(crypto.randomUUID());
+    refinementRootClipInstructionRef.current = rootClipInstruction;
     setRefinementFrozenUserBubbleText(rootClipInstruction);
     setPrompt("");
     setRefinementOpen(true);
@@ -990,7 +997,11 @@ export const VideoVariationWorkspace = forwardRef<
     };
 
     const clipInstruction =
-      prompt.trim() || refinementFrozenUserBubbleText.trim();
+      prompt.trim() ||
+      refinementRootClipInstructionRef.current.trim() ||
+      refinementFrozenUserBubbleText.trim();
+
+    const safeCtx = sanitizeGenerationContextForTransport(mergedCtx);
 
     setRefinementOpen(false);
     setSubmitting(true);
@@ -998,7 +1009,7 @@ export const VideoVariationWorkspace = forwardRef<
     setFinishingOnServer(false);
     resetJobUi();
     setLastSubmittedPrompt(clipInstruction);
-    setJobGenerationContext(mergedCtx);
+    setJobGenerationContext(safeCtx);
 
     try {
       const { id, remainingCredits } =
@@ -1006,14 +1017,14 @@ export const VideoVariationWorkspace = forwardRef<
           ? await submitUploadJobViaDirectStorage({
               file: videoFile,
               prompt: clipInstruction,
-              generationContext: mergedCtx,
+              generationContext: safeCtx,
               onProgress: setUploadPct,
               onUploadFullySent: () => setFinishingOnServer(true),
             })
           : await postVideoJobUrlJson({
               prompt: clipInstruction,
               youtubeUrl: normalizeYoutubeUrlForJob(youtubeUrl),
-              generationContext: mergedCtx,
+              generationContext: safeCtx,
             });
       if (typeof remainingCredits === "number") {
         setCreditsRemaining(remainingCredits);
@@ -1634,6 +1645,8 @@ export const VideoVariationWorkspace = forwardRef<
                                     setRefinementPersistenceSessionId(
                                       crypto.randomUUID(),
                                     );
+                                    refinementRootClipInstructionRef.current =
+                                      regenRoot;
                                     setRefinementFrozenUserBubbleText(
                                       regenRoot,
                                     );

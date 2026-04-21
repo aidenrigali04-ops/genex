@@ -77,7 +77,10 @@ import {
 } from "@/components/genex/ada-upgrade-modal";
 import { AdaVideoWorkspace } from "@/components/genex/ada-video-workspace";
 import type { GenerationContextV1 } from "@/lib/generation-context";
-import { isGenerationContextV1 } from "@/lib/generation-context";
+import {
+  isGenerationContextV1,
+  sanitizeGenerationContextForTransport,
+} from "@/lib/generation-context";
 import type { ProjectSession } from "@/lib/projects";
 import { trackAha } from "@/lib/analytics";
 import { autoTitle, cn } from "@/lib/utils";
@@ -746,19 +749,26 @@ export function HomeWorkspace({
 
     const generationContext = pendingGenerationContextRef.current;
     const snap = pendingInputContentRef.current;
-    const genText = text.trim() || (generationContext ? snap.text : "");
-    const genUrl = url.trim() || (generationContext ? snap.url : "");
-    const genFile = uploadFile ?? (generationContext ? snap.uploadFile : null);
+    const safeGenContext =
+      generationContext != null
+        ? sanitizeGenerationContextForTransport(generationContext)
+        : null;
+    const effectiveInputMode =
+      safeGenContext != null ? snap.inputMode : inputMode;
 
-    if (inputMode === "text" && !genText.trim()) {
+    const genText = text.trim() || (safeGenContext ? snap.text : "");
+    const genUrl = url.trim() || (safeGenContext ? snap.url : "");
+    const genFile = uploadFile ?? (safeGenContext ? snap.uploadFile : null);
+
+    if (effectiveInputMode === "text" && !genText.trim()) {
       setError("Paste an idea, transcript, or notes.");
       return;
     }
-    if (inputMode === "url" && !genUrl.trim()) {
+    if (effectiveInputMode === "url" && !genUrl.trim()) {
       setError("Enter a URL.");
       return;
     }
-    if (inputMode === "file" && !genFile) {
+    if (effectiveInputMode === "file" && !genFile) {
       setError("Choose a file.");
       return;
     }
@@ -784,25 +794,30 @@ export function HomeWorkspace({
     setGenerationSteps([]);
     setStreamedText("");
     setLiveTurnSnapshot({
-      userMessage: buildUserMessageSummary(genText, genUrl, genFile, inputMode),
-      inputMode,
+      userMessage: buildUserMessageSummary(
+        genText,
+        genUrl,
+        genFile,
+        effectiveInputMode,
+      ),
+      inputMode: effectiveInputMode,
       preset,
     });
 
     try {
       const titleSourceForProject =
-        inputMode === "file"
+        effectiveInputMode === "file"
           ? (genFile?.name ?? "")
-          : inputMode === "url"
+          : effectiveInputMode === "url"
             ? genUrl.trim()
             : genText.trim();
 
       let res: Response;
       const presetPart = preset ? { preset } : {};
       const gcPart =
-        generationContext != null ? { generationContext } : {};
+        safeGenContext != null ? { generationContext: safeGenContext } : {};
 
-      if (inputMode === "file" && genFile) {
+      if (effectiveInputMode === "file" && genFile) {
         res = await fetch("/api/generate", {
           method: "POST",
           credentials: "same-origin",
@@ -812,14 +827,14 @@ export function HomeWorkspace({
             fd.append("file", genFile);
             fd.append("platforms", JSON.stringify(CLIP_PLATFORMS));
             if (preset) fd.append("preset", preset);
-            if (generationContext) {
-              fd.append("generationContext", JSON.stringify(generationContext));
+            if (safeGenContext) {
+              fd.append("generationContext", JSON.stringify(safeGenContext));
             }
             return fd;
           })(),
         });
       } else if (
-        inputMode === "url" &&
+        effectiveInputMode === "url" &&
         isYoutubeVideoUrlForTranscript(genUrl.trim())
       ) {
         let transcriptFromPrefetch = "";
@@ -903,9 +918,9 @@ export function HomeWorkspace({
           headers: { "Content-Type": "application/json" },
           signal,
           body: JSON.stringify({
-            mode: inputMode,
-            text: inputMode === "text" ? genText : undefined,
-            url: inputMode === "url" ? genUrl : undefined,
+            mode: effectiveInputMode,
+            text: effectiveInputMode === "text" ? genText : undefined,
+            url: effectiveInputMode === "url" ? genUrl : undefined,
             platforms: CLIP_PLATFORMS,
             ...presetPart,
             ...gcPart,
@@ -1102,9 +1117,9 @@ export function HomeWorkspace({
               genText,
               genUrl,
               genFile,
-              inputMode,
+              effectiveInputMode,
             ),
-            inputMode,
+            inputMode: effectiveInputMode,
             preset,
             timestamp: new Date(),
             parsedClipPackage: pkg,
@@ -1151,9 +1166,9 @@ export function HomeWorkspace({
               title: autoTitle(titleSourceForProject),
               inputContent: titleSourceForProject,
               inputType:
-                inputMode === "url"
+                effectiveInputMode === "url"
                   ? "url"
-                  : inputMode === "file"
+                  : effectiveInputMode === "file"
                     ? "text"
                     : titleSourceForProject.length < 120 &&
                         titleSourceForProject.split(/\s+/).filter(Boolean)
@@ -1164,10 +1179,12 @@ export function HomeWorkspace({
               createdAt: nowIso,
               updatedAt: nowIso,
               inputText:
-                inputMode === "text" || inputMode === "file"
+                effectiveInputMode === "text" ||
+                effectiveInputMode === "file"
                   ? titleSourceForProject
                   : null,
-              inputUrl: inputMode === "url" ? titleSourceForProject : null,
+              inputUrl:
+                effectiveInputMode === "url" ? titleSourceForProject : null,
               generationKind: "clip_package",
             };
             const rest = prev.filter((p) => p.id !== generationIdHeader);

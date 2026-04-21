@@ -35,6 +35,21 @@ export function isGenerationContextV1(v: unknown): v is GenerationContextV1 {
   );
 }
 
+/**
+ * Coerces `answers` values to strings so JSON bodies always satisfy
+ * `z.record(z.string(), z.string())` in /api/generate and related routes.
+ */
+export function sanitizeGenerationContextForTransport(
+  ctx: GenerationContextV1,
+): GenerationContextV1 {
+  const answers: Record<string, string> = {};
+  for (const [k, v] of Object.entries(ctx.answers ?? {})) {
+    if (typeof v === "string") answers[k] = v;
+    else if (v !== undefined && v !== null) answers[k] = String(v);
+  }
+  return { ...ctx, answers };
+}
+
 /** Structured imperative blocks for system / worker prompts */
 export function formatGenerationContextForPrompt(raw: unknown): string {
   if (!raw) return "";
