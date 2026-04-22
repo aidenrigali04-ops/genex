@@ -1,5 +1,10 @@
 import { openai } from "@ai-sdk/openai";
-import { APICallError, generateObject } from "ai";
+import {
+  APICallError,
+  generateObject,
+  NoObjectGeneratedError,
+  NoOutputGeneratedError,
+} from "ai";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -20,6 +25,9 @@ import {
 import { createClient } from "@/lib/supabase/server";
 
 export const maxDuration = 60;
+
+/** Rough cap so transcript + summary stay under provider context limits. */
+const MAX_REFINEMENT_CONV_PROMPT_CHARS = 95_000;
 
 const messageSchema = z.object({
   role: z.enum(["user", "assistant"]),
@@ -68,10 +76,110 @@ function platformLine(ids: PlatformId[]): string {
   return ids.join(", ");
 }
 
+const AGENT_DEBUG_SESSION = "b060d4";
+const AGENT_DEBUG_INGEST =
+  "http://127.0.0.1:7399/ingest/e33120b8-b88c-43a8-8cb8-ba98dc672bfb";
+
+function serializeErrorForDebug(e: unknown): Record<string, unknown> {
+  const ctor =
+    e != null && typeof e === "object"
+      ? (e as { constructor?: { name?: string } }).constructor?.name
+      : typeof e;
+  const out: Record<string, unknown> = {
+    ctor: ctor ?? "unknown",
+    message: e instanceof Error ? e.message : String(e),
+  };
+  if (APICallError.isInstance(e)) {
+    out.statusCode = e.statusCode;
+    out.urlTail =
+      typeof e.url === "string" ? e.url.slice(-80) : undefined;
+    out.responseBodyPreview =
+      typeof e.responseBody === "string"
+        ? e.responseBody.slice(0, 500)
+        : undefined;
+  }
+  if (e instanceof Error && e.cause != null) {
+    out.causeMessage =
+      e.cause instanceof Error ? e.cause.message : String(e.cause);
+  }
+  return out;
+}
+
+/** NDJSON debug (local ingest + stderr for Vercel / prod). */
+function agentDebugLog(
+  hypothesisId: string,
+  location: string,
+  message: string,
+  data: Record<string, unknown>,
+): void {
+  const payload = {
+    sessionId: AGENT_DEBUG_SESSION,
+    runId:
+      typeof process.env.VERCEL_DEPLOYMENT_ID === "string"
+        ? process.env.VERCEL_DEPLOYMENT_ID
+        : "local",
+    hypothesisId,
+    location,
+    message,
+    data,
+    timestamp: Date.now(),
+  };
+  // #region agent log
+  try {
+    console.error("[agent-debug]", JSON.stringify(payload));
+  } catch {
+    /* ignore */
+  }
+  void fetch(AGENT_DEBUG_INGEST, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Debug-Session-Id": AGENT_DEBUG_SESSION,
+    },
+    body: JSON.stringify(payload),
+  }).catch(() => {});
+  // #endregion
+}
+
+function refinementFailureCode(error: unknown): string {
+  if (NoObjectGeneratedError.isInstance(error)) return "REFINEMENT_NO_OBJECT";
+  if (NoOutputGeneratedError.isInstance(error)) return "REFINEMENT_NO_OUTPUT";
+  if (APICallError.isInstance(error)) return "REFINEMENT_OPENAI_HTTP";
+  return "REFINEMENT_UNKNOWN";
+}
+
 /** User-safe copy for `generateObject` / network failures (no stack traces). */
 function refinementConversationFailureMessage(error: unknown): string {
+  if (NoObjectGeneratedError.isInstance(error)) {
+    if (error.finishReason === "length") {
+      return "Ada's reply hit length limits before settings could be saved. No credits were charged. Try a shorter thread or message.";
+    }
+    return "Ada could not return structured clip settings. No credits were charged. Try again or shorten your message.";
+  }
+  if (NoOutputGeneratedError.isInstance(error)) {
+    return "The model returned no output. No credits were charged. Please try again.";
+  }
   if (APICallError.isInstance(error)) {
     const sc = error.statusCode;
+    const body =
+      typeof error.responseBody === "string"
+        ? error.responseBody.toLowerCase()
+        : "";
+    if (
+      body.includes("invalid_api_key") ||
+      body.includes("incorrect api key")
+    ) {
+      return "OpenAI rejected the API key. No credits were charged. Check OPENAI_API_KEY on the server.";
+    }
+    if (
+      body.includes("insufficient_quota") ||
+      body.includes("billing_hard_limit")
+    ) {
+      return "OpenAI account is out of quota or billing is blocked. No credits were charged.";
+    }
+    if (body.includes("model") && (body.includes("not found") || body.includes("does not exist"))) {
+      return "The configured refinement model is not available for this API key. No credits were charged. Check OPENAI_REFINEMENT_CONVERSATION_MODEL.";
+    }
     if (sc === 401 || sc === 403) {
       return "OpenAI rejected the request (invalid API key or access). No credits were charged. If this keeps happening, check OPENAI_API_KEY on the server.";
     }
@@ -81,6 +189,9 @@ function refinementConversationFailureMessage(error: unknown): string {
     if (sc != null && sc >= 500) {
       return "The model provider had a temporary error. No credits were charged. Please try again.";
     }
+    if (sc === 400) {
+      return "OpenAI rejected the request (bad parameters or payload). No credits were charged. If this persists, check server logs.";
+    }
   }
   const msg = error instanceof Error ? error.message : String(error);
   const m = msg.toLowerCase();
@@ -89,7 +200,9 @@ function refinementConversationFailureMessage(error: unknown): string {
     m.includes("did not return a response") ||
     m.includes("could not parse") ||
     m.includes("failed to parse") ||
-    m.includes("type validation")
+    m.includes("json parse") ||
+    m.includes("type validation") ||
+    m.includes("schema")
   ) {
     return "Ada could not produce a structured reply. No credits were charged. Try again or shorten your message.";
   }
@@ -103,6 +216,9 @@ function refinementConversationFailureMessage(error: unknown): string {
     m.includes("too long")
   ) {
     return "That input is too long for the model right now. No credits were charged. Try a shorter message.";
+  }
+  if (m.includes("fetch failed") || m.includes("econnreset") || m.includes("socket")) {
+    return "Could not reach the model provider. No credits were charged. Check your connection and try again.";
   }
   return "Generation failed. No credits were charged.";
 }
@@ -334,18 +450,61 @@ export async function POST(req: Request): Promise<Response> {
 
   const prompt = `Source / input summary:\n${inputSummary.slice(0, 4000)}\n\nCurrent captured answers (JSON, may be empty):\n${JSON.stringify(answersPartial)}\n\nConversation:\n${transcript}`;
 
+  let promptForModel = prompt;
+  if (promptForModel.length > MAX_REFINEMENT_CONV_PROMPT_CHARS) {
+    const tail = "\n\n[Truncated for model context limits.]";
+    promptForModel =
+      promptForModel.slice(
+        0,
+        MAX_REFINEMENT_CONV_PROMPT_CHARS - tail.length,
+      ) + tail;
+    agentDebugLog("H3", "route.ts:truncate", "prompt truncated", {
+      originalChars: prompt.length,
+      truncatedChars: promptForModel.length,
+    });
+  }
+
+  agentDebugLog("H0", "route.ts:pre-generateObject", "about to call model", {
+    kind,
+    platformCount: platformIds.length,
+    messageCount: messages.length,
+    promptChars: promptForModel.length,
+    systemChars: system.length,
+    modelId,
+    chargedCredit,
+  });
+
   try {
     const { object } = await generateObject({
       model: openai(modelId),
       schema: resultSchema,
       temperature: 0.45,
       maxOutputTokens: 1600,
+      maxRetries: 2,
       system,
-      prompt,
+      prompt: promptForModel,
+      providerOptions: {
+        openai: {
+          strictJsonSchema: false,
+        },
+      },
+    });
+
+    agentDebugLog("H4", "route.ts:post-generateObject", "generateObject resolved", {
+      hasObject: object != null,
+      objectKeys:
+        object != null && typeof object === "object"
+          ? Object.keys(object as Record<string, unknown>).slice(0, 12)
+          : [],
     });
 
     const coerced = resultSchema.safeParse(object);
     if (!coerced.success) {
+      agentDebugLog("H2", "route.ts:coerce-fail", "resultSchema.safeParse failed", {
+        zodIssueMessages: coerced.error.issues
+          .slice(0, 10)
+          .map((i) => i.message),
+      });
       if (chargedCredit && userIdForBilling) {
         try {
           await refundOneClipCredit(supabase, userIdForBilling);
@@ -393,6 +552,12 @@ export async function POST(req: Request): Promise<Response> {
     });
   } catch (e) {
     console.error("[refinement-conversation] generateObject failed", e);
+    agentDebugLog(
+      "H1",
+      "route.ts:catch",
+      "generateObject try block threw",
+      serializeErrorForDebug(e),
+    );
     if (chargedCredit && userIdForBilling) {
       try {
         await refundOneClipCredit(supabase, userIdForBilling);
@@ -403,6 +568,7 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json(
       {
         error: refinementConversationFailureMessage(e),
+        code: refinementFailureCode(e),
       },
       { status: 500 },
     );
