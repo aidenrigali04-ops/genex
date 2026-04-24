@@ -1,5 +1,5 @@
 import { openai } from "@ai-sdk/openai";
-import { streamText } from "ai";
+import { APICallError, streamText } from "ai";
 
 import { parseClipPackageSections } from "@/lib/clip-package";
 import {
@@ -15,6 +15,7 @@ import {
 } from "@/lib/generation-stream-protocol";
 import {
   pipeStreamTextAsPlainText,
+  type PlainTextStreamOutcome,
   type StreamTextResult,
 } from "@/lib/stream-text-plain-response";
 import { createClient } from "@/lib/supabase/server";
@@ -60,6 +61,87 @@ Output sections in this exact order with these headings (include the numbers):
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
 
+const PRIMARY_GENERATE_MODEL =
+  process.env.OPENAI_GENERATE_MODEL?.trim() || "gpt-4o";
+const FALLBACK_GENERATE_MODEL =
+  process.env.OPENAI_GENERATE_FALLBACK_MODEL?.trim() || "gpt-4o-mini";
+
+function classifyGenerateError(error: unknown): {
+  retryable: boolean;
+  reason: string;
+} {
+  if (APICallError.isInstance(error)) {
+    if (error.statusCode === 429) {
+      return { retryable: true, reason: "rate_limited" };
+    }
+    if (typeof error.statusCode === "number" && error.statusCode >= 500) {
+      return { retryable: true, reason: "provider_5xx" };
+    }
+    return { retryable: false, reason: `api_${error.statusCode ?? "unknown"}` };
+  }
+  const msg = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  if (
+    msg.includes("rate limit") ||
+    msg.includes("too many requests") ||
+    msg.includes("timed out") ||
+    msg.includes("timeout") ||
+    msg.includes("socket") ||
+    msg.includes("econnreset")
+  ) {
+    return { retryable: true, reason: "transport_or_rate_limit" };
+  }
+  return { retryable: false, reason: "non_retryable" };
+}
+
+async function streamWithQualityFallback(opts: {
+  append: (s: string) => void;
+  buildResult: (modelId: string) => StreamTextResult;
+}): Promise<PlainTextStreamOutcome> {
+  const primaryModel = PRIMARY_GENERATE_MODEL;
+  const fallbackModel = FALLBACK_GENERATE_MODEL;
+
+  let primaryOutcome: PlainTextStreamOutcome;
+  try {
+    primaryOutcome = await pipeStreamTextAsPlainText(
+      opts.buildResult(primaryModel),
+      opts.append,
+      { emitErrorHints: false },
+    );
+  } catch (e) {
+    const cls = classifyGenerateError(e);
+    const canFallback = cls.retryable && fallbackModel !== primaryModel;
+    if (!canFallback) throw e;
+    console.warn("[generate] primary model stream failed; retrying fallback", {
+      primaryModel,
+      fallbackModel,
+      reason: cls.reason,
+    });
+    return pipeStreamTextAsPlainText(
+      opts.buildResult(fallbackModel),
+      opts.append,
+      { emitErrorHints: true },
+    );
+  }
+
+  if (primaryOutcome.sawText || primaryOutcome.emittedFailureHint) {
+    return primaryOutcome;
+  }
+
+  if (fallbackModel === primaryModel) {
+    return primaryOutcome;
+  }
+
+  console.warn("[generate] primary model returned no text; retrying fallback", {
+    primaryModel,
+    fallbackModel,
+  });
+  return pipeStreamTextAsPlainText(
+    opts.buildResult(fallbackModel),
+    opts.append,
+    { emitErrorHints: true },
+  );
+}
+
 function createGenerationStreamText(opts: {
   supabase: SupabaseServerClient;
   userId: string | null;
@@ -73,6 +155,7 @@ function createGenerationStreamText(opts: {
   generationContext?: GenerationContextV1 | null;
   /** When set, `onFinish` updates this row instead of inserting. */
   generationId?: string | null;
+  modelId?: string;
 }): StreamTextResult {
   const {
     supabase,
@@ -84,6 +167,7 @@ function createGenerationStreamText(opts: {
     preset,
     generationContext,
     generationId,
+    modelId,
   } = opts;
 
   const headerLines = orderedPlatforms
@@ -116,14 +200,15 @@ ${sourceTextForModel}
 
   /** `onFinish` `text` can be empty in edge cases; deltas are authoritative. */
   let streamedTextBuffer = "";
+  const resolvedModelId = modelId?.trim() || PRIMARY_GENERATE_MODEL;
 
   const result = streamText({
-    model: openai("gpt-4o"),
+    model: openai(resolvedModelId),
     maxOutputTokens: 8192,
     system: systemPrompt,
     prompt: userPrompt,
     onError({ error }) {
-      console.error("[generate] streamText error:", error);
+      console.error("[generate] streamText error:", resolvedModelId, error);
     },
     onChunk({ chunk }) {
       if (chunk.type === "text-delta" && chunk.text) {
@@ -283,19 +368,32 @@ export async function POST(req: Request) {
           );
         }
 
-        const result = createGenerationStreamText({
-          supabase: p.supabase,
-          userId: p.userId,
-          sourceTextForModel: p.sourceTextForModel,
-          sourceTextForStorage: p.sourceTextForStorage,
-          storedInputUrl: p.storedInputUrl,
-          orderedPlatforms: p.orderedPlatforms,
-          preset: p.preset,
-          generationContext: p.generationContext ?? null,
-          generationId: stubGenerationId,
-        });
+        const buildResult = (modelId: string): StreamTextResult =>
+          createGenerationStreamText({
+            supabase: p.supabase,
+            userId: p.userId,
+            sourceTextForModel: p.sourceTextForModel,
+            sourceTextForStorage: p.sourceTextForStorage,
+            storedInputUrl: p.storedInputUrl,
+            orderedPlatforms: p.orderedPlatforms,
+            preset: p.preset,
+            generationContext: p.generationContext ?? null,
+            generationId: stubGenerationId,
+            modelId,
+          });
 
-        await pipeStreamTextAsPlainText(result, append);
+        const outcome = await streamWithQualityFallback({ append, buildResult });
+        if (!outcome.sawText && !outcome.emittedFailureHint) {
+          controller.enqueue(
+            encoder.encode(
+              `${GENEX_FATAL_PREFIX}${JSON.stringify({
+                error: "empty_output",
+                message:
+                  "Generation returned no content. No credits were charged. Please try again.",
+              })}\n`,
+            ),
+          );
+        }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         controller.enqueue(
