@@ -1,6 +1,7 @@
 import { openai } from "@ai-sdk/openai";
 import {
   APICallError,
+  generateText,
   generateObject,
   NoObjectGeneratedError,
   NoOutputGeneratedError,
@@ -49,6 +50,8 @@ const resultSchema = z.object({
   assistantMessage: z.string().min(1).max(3200),
   answerPatches: z.record(z.string(), z.string()).optional(),
 });
+
+type RefinementConversationResult = z.infer<typeof resultSchema>;
 
 type ProfileCreditsRowRefine = ProfileCreditsRow & {
   generation_count: number | null;
@@ -221,6 +224,137 @@ function refinementConversationFailureMessage(error: unknown): string {
     return "Could not reach the model provider. No credits were charged. Check your connection and try again.";
   }
   return "Generation failed. No credits were charged.";
+}
+
+function extractBalancedJsonObject(text: string): string | null {
+  let start = text.indexOf("{");
+  while (start >= 0) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = start; i < text.length; i++) {
+      const ch = text[i];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (ch === "\\") {
+          escaped = true;
+          continue;
+        }
+        if (ch === "\"") {
+          inString = false;
+        }
+        continue;
+      }
+      if (ch === "\"") {
+        inString = true;
+        continue;
+      }
+      if (ch === "{") {
+        depth += 1;
+        continue;
+      }
+      if (ch === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          return text.slice(start, i + 1);
+        }
+      }
+    }
+    start = text.indexOf("{", start + 1);
+  }
+  return null;
+}
+
+function parseRefinementResultFromText(
+  text: string | undefined,
+): RefinementConversationResult | null {
+  if (!text || !text.trim()) return null;
+  const trimmed = text.trim();
+  const candidates = new Set<string>([trimmed]);
+  const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fencedMatch?.[1]) {
+    candidates.add(fencedMatch[1].trim());
+  }
+  const balanced = extractBalancedJsonObject(trimmed);
+  if (balanced) {
+    candidates.add(balanced);
+  }
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      const coerced = resultSchema.safeParse(parsed);
+      if (coerced.success) return coerced.data;
+    } catch {
+      // Keep trying other extraction candidates.
+    }
+  }
+  return null;
+}
+
+async function recoverStructuredRefinementResult(params: {
+  modelId: string;
+  system: string;
+  promptForModel: string;
+  error: unknown;
+}): Promise<RefinementConversationResult | null> {
+  if (NoObjectGeneratedError.isInstance(params.error)) {
+    const fromErrorText = parseRefinementResultFromText(params.error.text);
+    if (fromErrorText) {
+      agentDebugLog(
+        "H5",
+        "route.ts:recover-error-text",
+        "recovered structured output from NoObjectGeneratedError.text",
+        { textPreview: (params.error.text ?? "").slice(0, 220) },
+      );
+      return fromErrorText;
+    }
+  }
+
+  const fallbackSystem = `${params.system}
+
+Critical output format:
+- Return ONLY one JSON object. No markdown, no prose, no code fences.
+- JSON schema: {"assistantMessage": string, "answerPatches"?: Record<string,string>}
+- assistantMessage must be non-empty and under 3200 chars.
+- answerPatches may be omitted if nothing new is confidently captured.`;
+
+  try {
+    const { text } = await generateText({
+      model: openai(params.modelId),
+      temperature: 0.25,
+      maxOutputTokens: 1600,
+      maxRetries: 1,
+      system: fallbackSystem,
+      prompt: params.promptForModel,
+      providerOptions: {
+        openai: {
+          strictJsonSchema: false,
+        },
+      },
+    });
+    const recovered = parseRefinementResultFromText(text);
+    if (recovered) {
+      agentDebugLog("H6", "route.ts:recover-generateText", "fallback JSON recovered", {
+        textPreview: text.slice(0, 220),
+      });
+      return recovered;
+    }
+    agentDebugLog("H7", "route.ts:recover-generateText-failed-parse", "fallback JSON parse failed", {
+      textPreview: text.slice(0, 220),
+    });
+  } catch (fallbackErr) {
+    agentDebugLog(
+      "H8",
+      "route.ts:recover-generateText-throw",
+      "fallback generateText threw",
+      serializeErrorForDebug(fallbackErr),
+    );
+  }
+  return null;
 }
 
 /** Best-effort DB write; must never fail the HTTP response after a good model turn. */
@@ -474,6 +608,8 @@ export async function POST(req: Request): Promise<Response> {
     chargedCredit,
   });
 
+  let structuredResult: RefinementConversationResult | null = null;
+
   try {
     const { object } = await generateObject({
       model: openai(modelId),
@@ -499,57 +635,21 @@ export async function POST(req: Request): Promise<Response> {
     });
 
     const coerced = resultSchema.safeParse(object);
-    if (!coerced.success) {
+    if (coerced.success) {
+      structuredResult = coerced.data;
+    } else {
       agentDebugLog("H2", "route.ts:coerce-fail", "resultSchema.safeParse failed", {
         zodIssueMessages: coerced.error.issues
           .slice(0, 10)
           .map((i) => i.message),
       });
-      if (chargedCredit && userIdForBilling) {
-        try {
-          await refundOneClipCredit(supabase, userIdForBilling);
-        } catch (e) {
-          console.error("[refinement-conversation] refund after schema fail", e);
-        }
-      }
-      return Response.json(
-        { error: "Invalid model output. No credits were charged." },
-        { status: 500 },
-      );
-    }
-
-    const filteredPatches: Record<string, string> = {};
-    if (coerced.data.answerPatches) {
-      for (const [k, v] of Object.entries(coerced.data.answerPatches)) {
-        if (!allowedFieldKeys.has(k)) continue;
-        if (typeof v !== "string" || !v.trim()) continue;
-        filteredPatches[k] = v.trim().slice(0, 2000);
-      }
-    }
-
-    const merged: Record<string, string> = {
-      ...answersPartial,
-      ...filteredPatches,
-    };
-    const readyForConfirm = refinementAnswersComplete(steps, merged);
-
-    if (user?.id && sessionId) {
-      persistClipRefinementSessionFireAndForget(supabase, {
-        sessionId,
-        userId: user.id,
-        kind,
-        inputSummary,
-        messages,
-        answersPartial: merged,
+      structuredResult = await recoverStructuredRefinementResult({
+        modelId,
+        system,
+        promptForModel,
+        error: coerced.error,
       });
     }
-
-    return Response.json({
-      assistantMessage: coerced.data.assistantMessage.trim(),
-      answerPatches:
-        Object.keys(filteredPatches).length > 0 ? filteredPatches : undefined,
-      readyForConfirm,
-    });
   } catch (e) {
     console.error("[refinement-conversation] generateObject failed", e);
     agentDebugLog(
@@ -558,19 +658,74 @@ export async function POST(req: Request): Promise<Response> {
       "generateObject try block threw",
       serializeErrorForDebug(e),
     );
+    structuredResult = await recoverStructuredRefinementResult({
+      modelId,
+      system,
+      promptForModel,
+      error: e,
+    });
+    if (!structuredResult) {
+      if (chargedCredit && userIdForBilling) {
+        try {
+          await refundOneClipCredit(supabase, userIdForBilling);
+        } catch (refundErr) {
+          console.error("[refinement-conversation] refund failed", refundErr);
+        }
+      }
+      return Response.json(
+        {
+          error: refinementConversationFailureMessage(e),
+          code: refinementFailureCode(e),
+        },
+        { status: 500 },
+      );
+    }
+  }
+
+  if (!structuredResult) {
     if (chargedCredit && userIdForBilling) {
       try {
         await refundOneClipCredit(supabase, userIdForBilling);
-      } catch (refundErr) {
-        console.error("[refinement-conversation] refund failed", refundErr);
+      } catch (e) {
+        console.error("[refinement-conversation] refund after schema fail", e);
       }
     }
     return Response.json(
-      {
-        error: refinementConversationFailureMessage(e),
-        code: refinementFailureCode(e),
-      },
+      { error: "Invalid model output. No credits were charged." },
       { status: 500 },
     );
   }
+
+  const filteredPatches: Record<string, string> = {};
+  if (structuredResult.answerPatches) {
+    for (const [k, v] of Object.entries(structuredResult.answerPatches)) {
+      if (!allowedFieldKeys.has(k)) continue;
+      if (typeof v !== "string" || !v.trim()) continue;
+      filteredPatches[k] = v.trim().slice(0, 2000);
+    }
+  }
+
+  const merged: Record<string, string> = {
+    ...answersPartial,
+    ...filteredPatches,
+  };
+  const readyForConfirm = refinementAnswersComplete(steps, merged);
+
+  if (user?.id && sessionId) {
+    persistClipRefinementSessionFireAndForget(supabase, {
+      sessionId,
+      userId: user.id,
+      kind,
+      inputSummary,
+      messages,
+      answersPartial: merged,
+    });
+  }
+
+  return Response.json({
+    assistantMessage: structuredResult.assistantMessage.trim(),
+    answerPatches:
+      Object.keys(filteredPatches).length > 0 ? filteredPatches : undefined,
+    readyForConfirm,
+  });
 }
