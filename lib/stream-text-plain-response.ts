@@ -14,6 +14,16 @@ function formatStreamError(error: unknown): string {
 }
 
 export type StreamTextResult = ReturnType<typeof streamText>;
+export type PlainTextStreamOutcome = {
+  sawText: boolean;
+  emittedFailureHint: boolean;
+  streamError?: string;
+};
+
+type PipeStreamTextOptions = {
+  /** Write inline error hints into the plain-text stream (default true). */
+  emitErrorHints?: boolean;
+};
 
 /**
  * Forwards `fullStream` text deltas and error/finish hints to `append`.
@@ -21,7 +31,9 @@ export type StreamTextResult = ReturnType<typeof streamText>;
 export async function pipeStreamTextAsPlainText(
   result: StreamTextResult,
   append: (s: string) => void,
-): Promise<void> {
+  options?: PipeStreamTextOptions,
+): Promise<PlainTextStreamOutcome> {
+  const emitErrorHints = options?.emitErrorHints ?? true;
   let sawText = false;
   let emittedFailureHint = false;
 
@@ -36,8 +48,15 @@ export async function pipeStreamTextAsPlainText(
           break;
         }
         case "error": {
+          const errMsg = formatStreamError(part.error);
+          if (!emitErrorHints) {
+            if (sawText) {
+              return { sawText, emittedFailureHint, streamError: errMsg };
+            }
+            throw new Error(errMsg);
+          }
           emittedFailureHint = true;
-          append(`\n\n[Model error] ${formatStreamError(part.error)}\n\n`);
+          append(`\n\n[Model error] ${errMsg}\n\n`);
           break;
         }
         case "finish": {
@@ -57,16 +76,17 @@ export async function pipeStreamTextAsPlainText(
           break;
       }
     }
-    if (!sawText && !emittedFailureHint) {
-      append(
-        "[No text was generated. Check your API key, model access, or try a shorter input.]",
-      );
-    }
+    if (!sawText && !emittedFailureHint) return { sawText, emittedFailureHint };
   } catch (e: unknown) {
+    if (!emitErrorHints) {
+      throw e;
+    }
     append(
       `\n\n[Stream error] ${e instanceof Error ? e.message : String(e)}\n\n`,
     );
+    emittedFailureHint = true;
   }
+  return { sawText, emittedFailureHint };
 }
 
 /**
@@ -85,7 +105,12 @@ export function streamTextToPlainTextResponse(
         if (s) controller.enqueue(encoder.encode(s));
       };
       try {
-        await pipeStreamTextAsPlainText(result, append);
+        const outcome = await pipeStreamTextAsPlainText(result, append);
+        if (!outcome.sawText && !outcome.emittedFailureHint) {
+          append(
+            "[No text was generated. Check your API key, model access, or try a shorter input.]",
+          );
+        }
       } finally {
         controller.close();
       }
