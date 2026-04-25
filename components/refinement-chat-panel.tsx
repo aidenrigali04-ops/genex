@@ -72,10 +72,6 @@ Tell me in your own words:
 
 I'll reflect back what I understood and we can tweak until you're ready to generate.`;
 
-/** First `/api/refinement-conversation` turn (not shown as a user bubble). */
-const REFINEMENT_CONVERSATION_OPENING_USER =
-  "Opening turn: the creator already submitted their clip request in the workspace (see input summary). Reply as the first assistant message only—briefly reflect what you understood, name two concrete levers you'll use for cut quality, then ask exactly ONE sharp follow-up. Do not ask them to repeat what they typed above.";
-
 export type RefinementChatPanelProps = {
   /** When true, the panel is shown and internal step state resets on activation. */
   active: boolean;
@@ -682,20 +678,25 @@ export function RefinementChatPanel({
     (async () => {
       setConvBusy(true);
       setConvErr(null);
-      setConvMsgs([]);
+      const openingUserLine = inputSummary.trim() || "Please refine this clip request.";
+      setConvMsgs([{ id: newId(), role: "user", text: openingUserLine }]);
       try {
         const { msg, patches } = await callRefinementConversationApi([
-          { role: "user", content: REFINEMENT_CONVERSATION_OPENING_USER },
+          { role: "user", content: openingUserLine },
         ]);
         if (cancelled) return;
-        setConvMsgs([{ id: newId(), role: "assistant", text: msg }]);
+        setConvMsgs((prev) => [
+          ...prev,
+          { id: newId(), role: "assistant", text: msg },
+        ]);
         if (patches && Object.keys(patches).length > 0) {
           setAnswers((prev) => ({ ...prev, ...patches }));
         }
       } catch (e) {
         if (!cancelled) {
           setConvErr(e instanceof Error ? e.message : "Something went wrong");
-          setConvMsgs([
+          setConvMsgs((prev) => [
+            ...prev,
             {
               id: newId(),
               role: "assistant",
@@ -718,6 +719,7 @@ export function RefinementChatPanel({
     remoteLoading,
     remoteError,
     refinementPlanKey,
+    inputSummary,
     callRefinementConversationApi,
   ]);
 

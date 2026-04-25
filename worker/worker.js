@@ -776,8 +776,9 @@ async function planVariationsWithGptOnce(
       !pipelineOpts.skipDurationTotalValidation &&
       (total < minTotal || total > maxTotal)
     ) {
-      throw new Error(
-        `Variations plan: variation ${idx + 1} total clip length ${total.toFixed(1)}s is outside allowed ${minTotal.toFixed(1)}–${maxTotal.toFixed(1)}s for this video.`,
+      log(
+        jobId,
+        `variation ${idx + 1} total length ${total.toFixed(1)}s is outside planner hint ${minTotal.toFixed(1)}–${maxTotal.toFixed(1)}s; continuing without hard-fail.`,
       );
     }
 
@@ -935,6 +936,23 @@ function escapeDrawtext(text) {
     .replace(/=/g, "\\=");
 }
 
+function sanitizeCaptionOverlay(raw) {
+  const text = String(raw ?? "").trim();
+  if (!text) return null;
+  if (text.length <= 220) return text;
+  return `${text.slice(0, 217).trimEnd()}...`;
+}
+
+function captionTextFromPlan(plan) {
+  const own = sanitizeCaptionOverlay(plan?.caption_overlay);
+  if (own) return own;
+  const note = sanitizeCaptionOverlay(plan?.style_note);
+  if (note) return note;
+  const label = sanitizeCaptionOverlay(plan?.label);
+  if (label) return label;
+  return null;
+}
+
 const MIN_FFMPEG_TRIM_SEC = 0.05;
 
 function clampSegmentTrimForFfmpeg(start, end, durationSec) {
@@ -951,7 +969,7 @@ function clampSegmentTrimForFfmpeg(start, end, durationSec) {
   return { start: s, end: e };
 }
 
-function buildFilterGraph(jobId, segments, durationSec, hasAudio, captionOverlay) {
+function buildFilterGraph(jobId, segments, durationSec, hasAudio, captionText) {
   const n = segments.length;
   const vChains = [];
   const vTags = [];
@@ -970,11 +988,11 @@ function buildFilterGraph(jobId, segments, durationSec, hasAudio, captionOverlay
     ";[vcat]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p[vscaled]";
 
   let outVideoTag = "vscaled";
-  if (captionOverlay && String(captionOverlay).trim()) {
+  if (captionText && String(captionText).trim()) {
     const fontfile = pickCaptionFontfile();
     if (fontfile) {
       const escFont = fontfile.replace(/'/g, "'\\''");
-      const text = escapeDrawtext(String(captionOverlay).trim().slice(0, 220));
+      const text = escapeDrawtext(String(captionText).trim());
       const style = process.env.GENEX_CAPTION_STYLE ?? "default";
 
       // Safe zone: keep captions in bottom-third, 80px margin from edge
@@ -1029,12 +1047,13 @@ async function renderVariationWithFfmpeg(jobId, inputMp4, outPath, plan, duratio
       reject(new Error("Variation has no segments to render."));
       return;
     }
+    const captionText = captionTextFromPlan(plan);
     const { graph, outVideoTag, audioLabel } = buildFilterGraph(
       jobId,
       plan.segments,
       durationSec,
       hasAudio,
-      plan.caption_overlay,
+      captionText,
     );
 
     const args = [
@@ -1305,26 +1324,24 @@ async function processJob(job) {
 
     const wordBoundarySample = sampleWordBoundaryTimes(words, durationSec);
     const baseBounds = variationTotalDurationBounds(durationSec);
-    const userLenBounds = clipDurationBoundsFromGenerationContext(job.generation_context, durationSec);
-    const clipMode = String(
-      job.generation_context && job.generation_context.clipLengthMode != null
-        ? job.generation_context.clipLengthMode
-        : "",
-    ).toLowerCase();
-    const skipDurationTotalValidation =
-      clipMode !== "custom" && userLenBounds == null;
+    const userLenBounds = clipDurationBoundsFromGenerationContext(
+      job.generation_context,
+      durationSec,
+    );
+    const skipDurationTotalValidation = true;
     const mergedBounds = userLenBounds
       ? userLenBounds
       : mergePlannerDurationBounds(baseBounds, tightened, durationSec);
     if (userLenBounds) {
       log(
         jobId,
-        `Clip length: using refinement target window ${userLenBounds.minTotal.toFixed(1)}–${userLenBounds.maxTotal.toFixed(1)}s (overrides inferred rubric).`,
+        `Clip length preference noted (${userLenBounds.minTotal.toFixed(1)}–${userLenBounds.maxTotal.toFixed(1)}s), but strict duration validation is disabled.`,
       );
     }
-    if (skipDurationTotalValidation) {
-      log(jobId, "Clip length: auto mode — planner will not hard-fail on exact segment totals.");
-    }
+    log(
+      jobId,
+      "Clip length constraints are advisory only — planner will not hard-fail on total segment duration.",
+    );
     const variationCount = readVariationCountFromGenerationContext(job.generation_context);
     log(jobId, `Planning ${variationCount} variation(s).`);
     const snapCandidates = buildSnapCandidates(sceneCuts, silenceMids, words, durationSec);
