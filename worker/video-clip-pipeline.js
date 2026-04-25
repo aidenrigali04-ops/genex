@@ -538,7 +538,7 @@ export function buildSnapCandidates(sceneCuts, silenceMids, words, durationSec) 
  * @param {number[]} snapCandidates sorted
  * @param {{ start: number, end: number, word: string }[]} words
  * @param {number} durationSec
- * @param {{ minTotal: number, maxTotal: number }} bounds from planner
+ * @param {{ minTotal: number, maxTotal: number } | null | undefined} bounds from planner
  */
 export function postRefineVariationSegments(segments, snapCandidates, words, durationSec, bounds) {
   const d = Number(durationSec);
@@ -562,8 +562,16 @@ export function postRefineVariationSegments(segments, snapCandidates, words, dur
   }
   if (out.length === 0) return segments;
 
+  const hasBounds =
+    bounds != null &&
+    Number.isFinite(Number(bounds.minTotal)) &&
+    Number.isFinite(Number(bounds.maxTotal));
+  if (!hasBounds) {
+    return out;
+  }
+  const minTotal = Number(bounds.minTotal);
+  const maxTotal = Number(bounds.maxTotal);
   let total = out.reduce((acc, x) => acc + (x.end - x.start), 0);
-  const { minTotal, maxTotal } = bounds;
   if (total > maxTotal && out.length) {
     const shrink = total - maxTotal;
     const last = out[out.length - 1];
