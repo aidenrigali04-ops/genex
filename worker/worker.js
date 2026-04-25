@@ -6,9 +6,11 @@
 import path from "node:path";
 import fs from "node:fs";
 import { spawn } from "node:child_process";
+import { pipeline } from "node:stream/promises";
 
 import { createClient } from "@supabase/supabase-js";
 import OpenAI from "openai";
+import ytdl from "ytdl-core";
 
 import { loadGenexWorkerEnv } from "./load-env.js";
 import {
@@ -255,6 +257,10 @@ async function downloadUrlWithYtDlp(jobId, inputUrl, outPath, maxAttempts = 3) {
       extractorArgs: "youtube:player_client=android",
     },
     {
+      label: "youtube player_client=ios",
+      extractorArgs: "youtube:player_client=ios",
+    },
+    {
       label: "youtube player_client=tv_embedded",
       extractorArgs: "youtube:player_client=tv_embedded",
     },
@@ -268,6 +274,15 @@ async function downloadUrlWithYtDlp(jobId, inputUrl, outPath, maxAttempts = 3) {
       args.push("--extractor-args", spec.extractorArgs);
     }
     args.push(
+      "--retries",
+      "3",
+      "--fragment-retries",
+      "3",
+      "--extractor-retries",
+      "3",
+      "--socket-timeout",
+      "20",
+      "--no-progress",
       "-f",
       "bv*+ba/b",
       "--merge-output-format",
@@ -293,7 +308,140 @@ async function downloadUrlWithYtDlp(jobId, inputUrl, outPath, maxAttempts = 3) {
       }
     }
   }
+  if (isYoutubeLikeUrl(inputUrl)) {
+    try {
+      log(jobId, "yt-dlp failed; trying ytdl-core fallback…");
+      await downloadYoutubeWithYtdlCore(jobId, inputUrl, outPath);
+      return;
+    } catch (fallbackErr) {
+      const fallbackMsg =
+        fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+      log(jobId, `ytdl-core fallback failed: ${fallbackMsg}`);
+    }
+  }
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
+function isYoutubeLikeUrl(inputUrl) {
+  try {
+    const u = new URL(inputUrl);
+    const host = u.hostname.toLowerCase();
+    return (
+      host === "youtube.com" ||
+      host === "www.youtube.com" ||
+      host === "m.youtube.com" ||
+      host === "youtu.be" ||
+      host === "www.youtu.be"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function pickBestProgressiveFormat(formats) {
+  const progressive = ytdl
+    .filterFormats(formats, "videoandaudio")
+    .filter((f) => f.hasVideo && f.hasAudio);
+  if (progressive.length === 0) return null;
+  const ranked = [...progressive].sort((a, b) => {
+    const hA = typeof a.height === "number" ? a.height : 0;
+    const hB = typeof b.height === "number" ? b.height : 0;
+    if (hA !== hB) return hB - hA;
+    const brA =
+      typeof a.bitrate === "number"
+        ? a.bitrate
+        : typeof a.averageBitrate === "number"
+          ? a.averageBitrate
+          : 0;
+    const brB =
+      typeof b.bitrate === "number"
+        ? b.bitrate
+        : typeof b.averageBitrate === "number"
+          ? b.averageBitrate
+          : 0;
+    return brB - brA;
+  });
+  const mp4 = ranked.find((f) => f.container === "mp4");
+  return mp4 ?? ranked[0] ?? null;
+}
+
+async function downloadYoutubeWithYtdlCore(jobId, inputUrl, outPath) {
+  if (!ytdl.validateURL(inputUrl)) {
+    throw new Error("ytdl-core cannot parse this YouTube URL");
+  }
+  const info = await ytdl.getInfo(inputUrl);
+  const best = pickBestProgressiveFormat(info.formats);
+  if (!best?.itag) {
+    throw new Error("No progressive audio+video format found");
+  }
+  const ext = best.container === "mp4" ? "mp4" : "webm";
+  const tempPath = `${outPath}.ytdl.${ext}`;
+  const stream = ytdl.downloadFromInfo(info, {
+    quality: String(best.itag),
+    highWaterMark: 1 << 24,
+    requestOptions: {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+      },
+    },
+  });
+  try {
+    await pipeline(stream, fs.createWriteStream(tempPath));
+    if (ext === "mp4") {
+      fs.renameSync(tempPath, outPath);
+      return;
+    }
+    await runSpawn("ffmpeg", [
+      "-y",
+      "-i",
+      tempPath,
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "23",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "128k",
+      "-movflags",
+      "+faststart",
+      outPath,
+    ]);
+    log(jobId, "Downloaded via ytdl-core fallback and transcoded to mp4.");
+  } finally {
+    try {
+      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function remapInputDownloadError(inputUrl, error) {
+  const msg = error instanceof Error ? error.message : String(error);
+  const low = msg.toLowerCase();
+  if (
+    low.includes("yt-dlp exited with code 1") ||
+    low.includes("sign in to confirm") ||
+    low.includes("requested format is not available") ||
+    low.includes("private video") ||
+    low.includes("video unavailable") ||
+    low.includes("login required")
+  ) {
+    return new Error(
+      "Could not download that YouTube video for clipping. The video may be private, age-restricted, region-locked, or protected by anti-bot checks. Try a different URL or upload the source video file directly.",
+    );
+  }
+  if (isYoutubeLikeUrl(inputUrl) && low.includes("status code 429")) {
+    return new Error(
+      "YouTube temporarily rate-limited video download. Please retry in a minute or upload the source file directly.",
+    );
+  }
+  return error instanceof Error ? error : new Error(String(error));
 }
 
 async function downloadUploadToInputMp4(jobId, storagePath, destInputMp4) {
@@ -1047,7 +1195,11 @@ async function processJob(job) {
 
     if (job.input_type === "url") {
       if (!job.input_url) throw new Error("Missing input_url for url job");
-      await downloadUrlWithYtDlp(jobId, job.input_url, inputMp4);
+      try {
+        await downloadUrlWithYtDlp(jobId, job.input_url, inputMp4);
+      } catch (e) {
+        throw remapInputDownloadError(job.input_url, e);
+      }
     } else if (job.input_type === "upload") {
       if (!job.storage_path) throw new Error("Missing storage_path for upload job");
       await downloadUploadToInputMp4(jobId, job.storage_path, inputMp4);
