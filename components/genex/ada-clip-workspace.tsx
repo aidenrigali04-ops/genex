@@ -73,6 +73,7 @@ export type AdaClipWorkspaceProps = {
     inferredPurposeRationale?: string;
   };
   onRefinementOpenTypedAnswer?: (fieldKey: string) => void;
+  onRefinementGenerateIntent?: (line: string) => boolean;
   onExamplePrompt?: (prompt: string, mode: "text" | "url") => void;
   /** Refill composer from a completed turn (e.g. Remix). */
   onRemix?: (prompt: string) => void;
@@ -133,6 +134,7 @@ export function AdaClipWorkspace({
   refinementPersistenceSessionId = "",
   refinementPrefillInference,
   onRefinementOpenTypedAnswer,
+  onRefinementGenerateIntent,
   onExamplePrompt,
   onRemix,
   authUserId,
@@ -412,6 +414,7 @@ export function AdaClipWorkspace({
                 persistenceSessionId={refinementPersistenceSessionId || null}
                 prefillInference={refinementPrefillInference}
                 onOpenTypedAnswer={onRefinementOpenTypedAnswer}
+                onGenerateIntent={onRefinementGenerateIntent}
                 onConfirm={onRefinementConfirm}
                 onCancel={onRefinementCancel}
               />
