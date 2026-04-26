@@ -228,6 +228,11 @@ export function RefinementChatPanel({
 
   const externalConversationalComposer =
     Boolean(conversationalSendRef) && conversationalClip && !unifiedMode;
+  const inlineMainThreadMode =
+    conversationalClip &&
+    externalConversationalComposer &&
+    flatEmbedShell &&
+    !unifiedMode;
 
   const coachGenRef = useRef<GenerationContextV1 | null>(null);
   const coachBriefRef = useRef("");
@@ -970,7 +975,8 @@ export function RefinementChatPanel({
 
       <div
         className={cn(
-          "min-h-0 flex-1 overflow-y-auto py-3",
+          "min-h-0 flex-1 py-3",
+          inlineMainThreadMode ? "overflow-visible" : "overflow-y-auto",
           flatEmbedShell ? "px-0" : "px-4",
         )}
       >
@@ -1266,14 +1272,24 @@ export function RefinementChatPanel({
             </div>
           ) : (
           <div
-            className={cn(
-              "flex max-h-[min(62vh,580px)] flex-col gap-2",
-              externalConversationalComposer || flatEmbedShell
-                ? "min-h-0"
-                : "min-h-[min(36vh,300px)]",
-            )}
+            className={
+              inlineMainThreadMode
+                ? "flex min-h-0 flex-col gap-2"
+                : cn(
+                    "flex max-h-[min(62vh,580px)] flex-col gap-2",
+                    externalConversationalComposer || flatEmbedShell
+                      ? "min-h-0"
+                      : "min-h-[min(36vh,300px)]",
+                  )
+            }
           >
-            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+            <div
+              className={
+                inlineMainThreadMode
+                  ? "space-y-3"
+                  : "min-h-0 flex-1 space-y-3 overflow-y-auto pr-1"
+              }
+            >
               {convMsgs.map((m) =>
                 m.role === "assistant" ? (
                   <div key={m.id} className="flex justify-start">
