@@ -64,6 +64,8 @@ export type AdaClipWorkspaceProps = {
   loading: boolean;
   canSubmit: boolean;
   onSubmit: () => void;
+  /** Direct generation trigger used when refinement is already open. */
+  onGenerate?: () => void;
   onStop: () => void;
   maxUploadMb: number;
   generationSteps: GenerationUiStep[];
@@ -92,6 +94,7 @@ export type AdaClipWorkspaceProps = {
     inferredPurposeRationale?: string;
   };
   onRefinementOpenTypedAnswer?: (fieldKey: string) => void;
+  onRefinementDraftContextChange?: (ctx: GenerationContextV1) => void;
   onExamplePrompt?: (prompt: string, mode: "text" | "url") => void;
   /** Refill composer from a completed turn (e.g. Remix). */
   onRemix?: (prompt: string) => void;
@@ -129,6 +132,7 @@ export function AdaClipWorkspace({
   loading,
   canSubmit,
   onSubmit,
+  onGenerate,
   onStop,
   maxUploadMb,
   generationSteps,
@@ -152,6 +156,7 @@ export function AdaClipWorkspace({
   refinementPersistenceSessionId = "",
   refinementPrefillInference,
   onRefinementOpenTypedAnswer,
+  onRefinementDraftContextChange,
   onExamplePrompt,
   onRemix,
   authUserId,
@@ -230,7 +235,10 @@ export function AdaClipWorkspace({
         onTextChange("");
         onUrlChange("");
         onRefinementCancel?.();
-        onSubmit();
+        const triggerGenerate = onGenerate ?? onSubmit;
+        queueMicrotask(() => {
+          triggerGenerate();
+        });
         return;
       }
 
@@ -251,6 +259,7 @@ export function AdaClipWorkspace({
     onTextChange,
     onUrlChange,
     onRefinementCancel,
+    onGenerate,
     onSubmit,
   ]);
 
@@ -444,6 +453,7 @@ export function AdaClipWorkspace({
                 persistenceSessionId={refinementPersistenceSessionId || null}
                 prefillInference={refinementPrefillInference}
                 onOpenTypedAnswer={onRefinementOpenTypedAnswer}
+                onDraftContextChange={onRefinementDraftContextChange}
                 onConfirm={onRefinementConfirm}
                 onCancel={onRefinementCancel}
               />
