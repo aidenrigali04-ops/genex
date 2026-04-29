@@ -87,6 +87,8 @@ import { autoTitle, cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 
 const CLIP_PLATFORMS: PlatformId[] = ["clip_package"];
+const GENERATE_TRIGGER_RE =
+  /\b(generate|run it|start (?:job|generation)|go ahead|create it|make it)\b/i;
 
 function projectSessionToClipPackageItem(
   s: ProjectSession,
@@ -356,6 +358,7 @@ export function HomeWorkspace({
     useState("");
   const [refinementPersistenceSessionId, setRefinementPersistenceSessionId] =
     useState("");
+  const refinementAutoStartedRef = useRef(false);
 
   function looksTextualUpload(file: File): boolean {
     if (file.type.startsWith("text/")) return true;
@@ -524,6 +527,7 @@ export function HomeWorkspace({
     setRefinementPersistenceSessionId(crypto.randomUUID());
 
     setRefinementRetry(0);
+    refinementAutoStartedRef.current = false;
     setClipRefinementRemote({ phase: "loading" });
     setRefinementPlanInference(null);
     setRefinementOpen(true);
@@ -531,6 +535,23 @@ export function HomeWorkspace({
     setUrl("");
     setUploadFile(null);
   }, [inputMode, text, url, uploadFile]);
+
+  const handleRefinementGenerateIntent = useCallback(
+    (line: string): boolean => {
+      const t = line.trim();
+      if (!t || refinementAutoStartedRef.current) return false;
+      const lower = t.toLowerCase();
+      const isGenerateIntent =
+        lower === "generate" ||
+        lower === "start job" ||
+        /^(please\s+)?(generate|start|run|create)(\s+now)?[.!?]*$/i.test(t) ||
+        GENERATE_TRIGGER_RE.test(t);
+      if (!isGenerateIntent) return false;
+      refinementAutoStartedRef.current = true;
+      return true;
+    },
+    [],
+  );
 
   const handleRefinementOpenTypedAnswer = useCallback(
     (fieldKey: string) => {
@@ -1864,6 +1885,7 @@ export function HomeWorkspace({
                     refinementPlanInference ?? undefined
                   }
                   onRefinementOpenTypedAnswer={handleRefinementOpenTypedAnswer}
+                  onRefinementGenerateIntent={handleRefinementGenerateIntent}
                   refinementPlatformIds={CLIP_PLATFORMS}
                   refinementInputSummary={
                     pendingInputSummaryRef.current || "Text / idea"

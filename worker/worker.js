@@ -668,6 +668,124 @@ function variationTotalDurationBounds(durationSec) {
   return { minTotal, maxTotal };
 }
 
+function normalizeVariationArray(list, variationCount) {
+  const out = Array.isArray(list) ? list.slice(0, variationCount) : [];
+  while (out.length < variationCount) out.push({});
+  return out;
+}
+
+function heuristicLabelForVariation(index) {
+  const labels = [
+    "Hook-first cut",
+    "Story arc cut",
+    "Value-focused cut",
+    "POV punch cut",
+    "Proof-first cut",
+    "CTA-focused cut",
+  ];
+  return labels[index % labels.length];
+}
+
+function heuristicSegmentsForVariation(
+  transcriptSegments,
+  durationSec,
+  index,
+  variationCount,
+  bounds,
+) {
+  const d = Number(durationSec);
+  const cap = Number.isFinite(d) && d > 0 ? d : 30;
+  const valid = (Array.isArray(transcriptSegments) ? transcriptSegments : [])
+    .map((s) => ({
+      start: Math.max(0, Math.min(Number(s.start) || 0, cap)),
+      end: Math.max(0, Math.min(Number(s.end) || 0, cap)),
+      text: typeof s.text === "string" ? s.text : "",
+    }))
+    .filter((s) => Number.isFinite(s.start) && Number.isFinite(s.end) && s.end - s.start >= 0.3);
+
+  const minTotal =
+    bounds && Number.isFinite(Number(bounds.minTotal))
+      ? Math.max(1.5, Number(bounds.minTotal))
+      : Math.max(6, Math.min(18, cap * 0.24));
+  const maxTotal =
+    bounds && Number.isFinite(Number(bounds.maxTotal))
+      ? Math.max(minTotal + 1, Number(bounds.maxTotal))
+      : Math.max(minTotal + 1, Math.min(40, cap * 0.45));
+
+  if (valid.length === 0) {
+    const base = (cap * index) / Math.max(1, variationCount);
+    const len = Math.max(5, Math.min(20, minTotal));
+    const end = Math.min(cap, base + len);
+    const start = Math.max(0, Math.min(base, Math.max(0, end - 0.5)));
+    return [{ start, end }];
+  }
+
+  const bucketStart = (cap * index) / Math.max(1, variationCount);
+  const bucketEnd = (cap * (index + 1)) / Math.max(1, variationCount);
+  const bucketMid = (bucketStart + bucketEnd) / 2;
+
+  let candidates = valid.filter((s) => {
+    const c = (s.start + s.end) / 2;
+    return c >= bucketStart && c <= bucketEnd;
+  });
+  if (candidates.length === 0) {
+    candidates = [...valid]
+      .sort((a, b) => {
+        const ca = Math.abs((a.start + a.end) / 2 - bucketMid);
+        const cb = Math.abs((b.start + b.end) / 2 - bucketMid);
+        return ca - cb;
+      })
+      .slice(0, 10);
+  }
+
+  const ordered = [...candidates].sort((a, b) => a.start - b.start);
+  const out = [];
+  let total = 0;
+  for (const seg of ordered) {
+    if (out.length >= 4) break;
+    const segLen = Math.max(0, seg.end - seg.start);
+    if (segLen < 0.35) continue;
+    if (total >= maxTotal && out.length > 0) break;
+    const nextEnd =
+      total + segLen > maxTotal && out.length > 0
+        ? Math.min(seg.end, seg.start + Math.max(0.5, maxTotal - total))
+        : seg.end;
+    if (nextEnd - seg.start < 0.35) continue;
+    out.push({ start: seg.start, end: nextEnd });
+    total += nextEnd - seg.start;
+    if (total >= minTotal && out.length >= 2) break;
+  }
+
+  if (out.length > 0) return out;
+  const pick = ordered[0] ?? valid[0];
+  return [{ start: pick.start, end: Math.max(pick.end, pick.start + 0.5) }];
+}
+
+function buildHeuristicVariationPlan(
+  transcriptSegments,
+  durationSec,
+  variationCount,
+  bounds,
+) {
+  const out = [];
+  for (let idx = 0; idx < variationCount; idx++) {
+    out.push({
+      variation_number: idx + 1,
+      label: heuristicLabelForVariation(idx),
+      segments: heuristicSegmentsForVariation(
+        transcriptSegments,
+        durationSec,
+        idx,
+        variationCount,
+        bounds,
+      ),
+      caption_overlay: null,
+      style_note: "Fallback edit plan based on transcript timeline.",
+    });
+  }
+  return out;
+}
+
 async function planVariationsWithGptOnce(
   prompt,
   transcriptSegments,
@@ -726,12 +844,7 @@ async function planVariationsWithGptOnce(
   } else {
     throw new Error("Variations plan: missing or non-array 'variations' (could not parse JSON).");
   }
-  if (list.length > variationCount) list = list.slice(0, variationCount);
-  if (list.length !== variationCount) {
-    throw new Error(
-      `Variations plan: expected ${variationCount} variations, got ${list.length} (after trimming to max ${variationCount}).`,
-    );
-  }
+  list = normalizeVariationArray(list, variationCount);
 
   const out = [];
   for (let idx = 0; idx < variationCount; idx++) {
@@ -740,7 +853,10 @@ async function planVariationsWithGptOnce(
       variationCount,
       Math.max(1, Math.round(Number(v.variation_number ?? idx + 1))),
     );
-    const label = typeof v.label === "string" ? v.label : `Variation ${n}`;
+    const label =
+      typeof v.label === "string" && v.label.trim()
+        ? v.label.trim().slice(0, 80)
+        : heuristicLabelForVariation(idx);
     const segsIn = Array.isArray(v.segments) ? v.segments : [];
     let segments = segsIn
       .map((s) => ({
@@ -750,7 +866,13 @@ async function planVariationsWithGptOnce(
       .filter((s) => Number.isFinite(s.start) && Number.isFinite(s.end) && s.end > s.start);
 
     if (segments.length === 0) {
-      throw new Error(`Variations plan: variation ${idx + 1} has no valid segments.`);
+      segments = heuristicSegmentsForVariation(
+        transcriptSegments,
+        durationSec,
+        idx,
+        variationCount,
+        { minTotal, maxTotal },
+      );
     }
 
     // Validate totals on refined segments (snapping can shrink; grow pass can fix short plans).
@@ -762,7 +884,13 @@ async function planVariationsWithGptOnce(
       { minTotal, maxTotal },
     );
     if (!Array.isArray(segments) || segments.length === 0) {
-      throw new Error(`Variations plan: variation ${idx + 1} has no valid segments after refinement.`);
+      segments = heuristicSegmentsForVariation(
+        transcriptSegments,
+        durationSec,
+        idx,
+        variationCount,
+        { minTotal, maxTotal },
+      );
     }
 
     let total = 0;
@@ -897,7 +1025,16 @@ async function planVariationsWithGpt(jobId, prompt, transcriptSegments, duration
       log(jobId, `Variations plan attempt ${attempt + 1} failed: ${lastErr.message}`);
     }
   }
-  throw lastErr;
+  log(
+    jobId,
+    `Planning variations failed after retries (${lastErr.message}); using heuristic fallback plan.`,
+  );
+  return buildHeuristicVariationPlan(
+    transcriptSegments,
+    durationSec,
+    nVar,
+    { minTotal, maxTotal },
+  );
 }
 
 function pickCaptionFontfile() {

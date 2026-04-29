@@ -105,6 +105,8 @@ export type RefinementChatPanelProps = {
    * Use for tooling (e.g. clip coach) before confirm; omit if not needed.
    */
   onDraftContextChange?: (ctx: GenerationContextV1) => void;
+  /** Optional host hook to widen "generate now" intent detection. */
+  onGenerateIntent?: (message: string) => boolean;
   /**
    * When true (default: same as `embedInChat`), show "Ask Ada" to call `/api/refinement-thread`
    * for clarifications. Uses one chat-style credit per request when signed in.
@@ -188,6 +190,7 @@ export function RefinementChatPanel({
   prefillInference,
   onOpenTypedAnswer,
   onDraftContextChange,
+  onGenerateIntent,
   llmAssist: llmAssistProp,
   unifiedClipCoach = false,
   refinementActive = true,
@@ -294,6 +297,25 @@ export function RefinementChatPanel({
   const refinementOpeningInflightKeyRef = useRef<string | null>(null);
   const answersRef = useRef(answers);
   answersRef.current = answers;
+  const convAutoStartedRef = useRef(false);
+
+  const confirmGenerationFromAnswers = useCallback(
+    (nextAnswers: Record<string, string>) => {
+      onConfirm(
+        sanitizeGenerationContextForTransport(
+          buildInterimContext(
+            kind,
+            platformIds,
+            summaryNiche.trim()
+              ? { ...nextAnswers, nicheTheme: summaryNiche.trim() }
+              : nextAnswers,
+            prefillInference,
+          ),
+        ),
+      );
+    },
+    [onConfirm, kind, platformIds, summaryNiche, prefillInference],
+  );
 
   useEffect(() => {
     if (!active) return;
@@ -314,6 +336,7 @@ export function RefinementChatPanel({
         setConvBusy(false);
       } else {
         setConvInput("");
+        convAutoStartedRef.current = false;
       }
       if (conversationalClip && unifiedMode && refinementActive) {
         setConvMsgs([
@@ -355,6 +378,7 @@ export function RefinementChatPanel({
         setConvInput("");
         setConvErr(null);
         setConvBusy(false);
+        convAutoStartedRef.current = false;
       });
     }
     prevRefinementActive.current = refinementActive;
@@ -595,11 +619,29 @@ export function RefinementChatPanel({
     async (line: string) => {
       const t = line.trim();
       if (!t || convBusy || !conversationalClip) return;
+      const lower = t.toLowerCase();
+      const hasGenerateIntent =
+        lower === "generate" ||
+        lower === "start job" ||
+        /\b(generate|run it|start (?:job|generation)|go ahead|create it|make it)\b/i.test(
+          t,
+        ) ||
+        onGenerateIntent?.(t) === true;
+      const wasComplete = refinementAnswersComplete(effectiveSteps, answersRef.current);
       const userLine: ConversationalRefinementMsg = {
         id: newId(),
         role: "user",
         text: t,
       };
+      if (wasComplete && hasGenerateIntent && !convAutoStartedRef.current) {
+        setConvMsgs((prev) => [...prev, userLine]);
+        setConvErr(null);
+        convAutoStartedRef.current = true;
+        queueMicrotask(() => {
+          confirmGenerationFromAnswers(answersRef.current);
+        });
+        return;
+      }
       const history: { role: "user" | "assistant"; content: string }[] = [
         ...convMsgs.map((m) => ({ role: m.role, content: m.text })),
         { role: "user", content: t },
@@ -613,8 +655,20 @@ export function RefinementChatPanel({
           ...prev,
           { id: newId(), role: "assistant", text: msg },
         ]);
+        const nextAnswers =
+          patches && Object.keys(patches).length > 0
+            ? { ...answersRef.current, ...patches }
+            : answersRef.current;
         if (patches && Object.keys(patches).length > 0) {
-          setAnswers((prev) => ({ ...prev, ...patches }));
+          setAnswers(nextAnswers);
+        }
+        const becameComplete =
+          !wasComplete && refinementAnswersComplete(effectiveSteps, nextAnswers);
+        if (!convAutoStartedRef.current && (becameComplete || hasGenerateIntent)) {
+          convAutoStartedRef.current = true;
+          queueMicrotask(() => {
+            confirmGenerationFromAnswers(nextAnswers);
+          });
         }
       } catch (e) {
         setConvErr(e instanceof Error ? e.message : "Something went wrong");
@@ -627,6 +681,9 @@ export function RefinementChatPanel({
       conversationalClip,
       convMsgs,
       callRefinementConversationApi,
+      effectiveSteps,
+      onGenerateIntent,
+      confirmGenerationFromAnswers,
     ],
   );
 
