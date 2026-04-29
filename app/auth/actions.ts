@@ -100,6 +100,7 @@ export async function signUpWithEmail(formData: FormData) {
   );
 
   const qNext = `next=${encodeURIComponent(next)}`;
+  const loginHrefWithNext = `/auth/login?${qNext}`;
 
   if (!termsAccepted) {
     redirect(
@@ -134,6 +135,16 @@ export async function signUpWithEmail(formData: FormData) {
   });
 
   if (error) {
+    const message = error.message.toLowerCase();
+    if (
+      message.includes("already registered") ||
+      message.includes("already exists") ||
+      message.includes("user already")
+    ) {
+      redirect(
+        `${loginHrefWithNext}&authSuccess=${encodeURIComponent("Account already exists. Please sign in to continue.")}`,
+      );
+    }
     redirect(
       `/auth/sign-up?authError=${encodeURIComponent(error.message)}&${qNext}`,
     );
@@ -149,7 +160,7 @@ export async function signUpWithEmail(formData: FormData) {
   }
 
   redirect(
-    `/auth/sign-up?authSuccess=${encodeURIComponent("Check your inbox to confirm your email.")}&${qNext}`,
+    `${loginHrefWithNext}&authSuccess=${encodeURIComponent("Check your inbox for a confirmation link, then sign in.")}`,
   );
 }
 

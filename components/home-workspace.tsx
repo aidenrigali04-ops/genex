@@ -2001,6 +2001,7 @@ export function HomeWorkspace({
               <AdaLoginPanel
                 next={signInNext}
                 authError={authError ?? null}
+                authSuccess={authSuccess ?? null}
                 onDismiss={() => {
                   setSignInOpen(false);
                   if (authError ?? authSuccess) router.replace("/");
