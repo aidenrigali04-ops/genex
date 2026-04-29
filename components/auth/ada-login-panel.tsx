@@ -4,7 +4,6 @@ import Link from "next/link";
 import { ChevronLeft, Lock, Mail, UserPlus } from "lucide-react";
 
 import { signInWithEmail, signInWithGoogle } from "@/app/auth/actions";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 const MAGENTA_GRAD =
@@ -46,11 +45,17 @@ const backButtonClass =
 export type AdaLoginPanelProps = {
   next: string;
   authError?: string | null;
+  authSuccess?: string | null;
   /** When set (overlay), back control dismisses instead of navigating home. */
   onDismiss?: () => void;
 };
 
-export function AdaLoginPanel({ next, authError, onDismiss }: AdaLoginPanelProps) {
+export function AdaLoginPanel({
+  next,
+  authError,
+  authSuccess,
+  onDismiss,
+}: AdaLoginPanelProps) {
   const qNext = encodeURIComponent(next);
   const signUpHref = `/auth/sign-up?next=${qNext}`;
 
@@ -100,6 +105,14 @@ export function AdaLoginPanel({ next, authError, onDismiss }: AdaLoginPanelProps
             {authError}
           </p>
         ) : null}
+        {authSuccess ? (
+          <p
+            className="w-full max-w-[400px] rounded-lg border border-emerald-400/40 bg-emerald-500/10 px-3 py-2 text-center text-sm text-emerald-200"
+            role="status"
+          >
+            {authSuccess}
+          </p>
+        ) : null}
 
         <form
           action={signInWithEmail}
@@ -125,7 +138,7 @@ export function AdaLoginPanel({ next, authError, onDismiss }: AdaLoginPanelProps
             autoComplete="current-password"
             required
           />
-          <Button
+          <button
             type="submit"
             className={cn(
               "mt-2 h-auto w-full max-w-[400px] rounded-[32px] border-0 px-4 py-2 font-[family-name:var(--font-instrument-sans)] text-sm font-medium leading-6 tracking-[0.14px] text-white",
@@ -133,7 +146,7 @@ export function AdaLoginPanel({ next, authError, onDismiss }: AdaLoginPanelProps
             )}
           >
             Sign in
-          </Button>
+          </button>
         </form>
 
         <form
@@ -141,13 +154,12 @@ export function AdaLoginPanel({ next, authError, onDismiss }: AdaLoginPanelProps
           className="flex w-full max-w-[400px] flex-col gap-2"
         >
           <input type="hidden" name="next" value={next} />
-          <Button
+          <button
             type="submit"
-            variant="outline"
-            className="h-auto w-full rounded-[32px] border-white/32 bg-white/5 py-2 font-[family-name:var(--font-instrument-sans)] text-sm text-white hover:bg-white/10"
+            className="h-auto w-full rounded-[32px] border border-white/32 bg-white/5 py-2 font-[family-name:var(--font-instrument-sans)] text-sm text-white transition-colors hover:bg-white/10"
           >
             Continue with Google
-          </Button>
+          </button>
         </form>
 
         <div className="flex w-full max-w-[400px] flex-col items-center border-t border-white pt-5">

@@ -9,6 +9,7 @@ import { AdaFigmaAmbientBackground } from "@/components/genex/ada-figma-dashboar
 export function AdaLoginView() {
   const searchParams = useSearchParams();
   const authError = searchParams.get("authError");
+  const authSuccess = searchParams.get("authSuccess");
   const next = searchParams.get("next") ?? "/";
 
   return (
@@ -17,7 +18,11 @@ export function AdaLoginView() {
 
       <div className="relative z-[1] flex min-h-dvh flex-col lg:flex-row">
         <div className="flex w-full flex-1 flex-col items-center gap-8 px-6 py-10 sm:px-10 lg:max-w-[756px] lg:justify-center lg:py-10">
-          <AdaLoginPanel next={next} authError={authError} />
+          <AdaLoginPanel
+            next={next}
+            authError={authError}
+            authSuccess={authSuccess}
+          />
         </div>
 
         <AdaMarketingPanel />

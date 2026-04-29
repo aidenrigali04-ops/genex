@@ -16,7 +16,6 @@ import {
 
 import { signInWithGoogle, signUpWithEmail } from "@/app/auth/actions";
 import { AdaFigmaAmbientBackground } from "@/components/genex/ada-figma-dashboard";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 const MAGENTA_GRAD =
@@ -139,6 +138,7 @@ export function AdaMarketingPanel({ className }: { className?: string }) {
 export function AdaSignUpView() {
   const searchParams = useSearchParams();
   const authError = searchParams.get("authError");
+  const authSuccess = searchParams.get("authSuccess");
   const next = searchParams.get("next") ?? "/";
 
   return (
@@ -182,13 +182,12 @@ export function AdaSignUpView() {
                 className="flex w-full max-w-[400px] flex-col gap-2"
               >
                 <input type="hidden" name="next" value={next} />
-                <Button
+                <button
                   type="submit"
-                  variant="outline"
-                  className="h-auto w-full rounded-[32px] border-white/32 bg-white/5 py-2.5 font-[family-name:var(--font-instrument-sans)] text-sm text-white hover:bg-white/10"
+                  className="h-auto w-full rounded-[32px] border border-white/32 bg-white/5 py-2.5 font-[family-name:var(--font-instrument-sans)] text-sm text-white transition-colors hover:bg-white/10"
                 >
                   Continue with Google
-                </Button>
+                </button>
               </form>
 
               <p className="w-full max-w-[400px] text-center font-[family-name:var(--font-instrument-sans)] text-xs text-white/45">
@@ -207,6 +206,14 @@ export function AdaSignUpView() {
                     role="alert"
                   >
                     {authError}
+                  </p>
+                ) : null}
+                {authSuccess ? (
+                  <p
+                    className="w-full max-w-[400px] rounded-lg border border-emerald-400/40 bg-emerald-500/10 px-3 py-2 text-center text-sm text-emerald-200"
+                    role="status"
+                  >
+                    {authSuccess}
                   </p>
                 ) : null}
 
@@ -273,7 +280,7 @@ export function AdaSignUpView() {
                   </label>
                 </div>
 
-                <Button
+                <button
                   type="submit"
                   className={cn(
                     "h-auto w-full max-w-[400px] rounded-[32px] border-0 px-4 py-2 font-[family-name:var(--font-instrument-sans)] text-sm font-medium leading-6 tracking-[0.14px] text-white",
@@ -281,7 +288,7 @@ export function AdaSignUpView() {
                   )}
                 >
                   Create new account
-                </Button>
+                </button>
               </form>
 
               <div
