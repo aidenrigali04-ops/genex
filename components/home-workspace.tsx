@@ -1879,7 +1879,9 @@ export function HomeWorkspace({
                     pendingGenerationContextRef.current = ctxWithModel;
                     setLastClipGenerationContext(ctxWithModel);
                     setRefinementOpen(false);
-                    void runGeneration();
+                    queueMicrotask(() => {
+                      void runGeneration();
+                    });
                   }}
                   onRefinementCancel={() => setRefinementOpen(false)}
                   emptyStateIsAuthenticated={!!user}

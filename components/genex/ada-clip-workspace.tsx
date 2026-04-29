@@ -27,6 +27,25 @@ import {
   type VoiceProfileData,
 } from "@/components/genex/ada-voice-profile-modal";
 
+const GENERATE_COMMANDS = [
+  "generate",
+  "go",
+  "just generate",
+  "generate now",
+  "do it",
+  "just do it",
+  "skip",
+  "start",
+  "run",
+  "create",
+  "make it",
+  "submit",
+  "done",
+  "finish",
+  "continue",
+  "proceed",
+];
+
 export type AdaClipWorkspaceProps = {
   turns: ClipTurn[];
   liveTurnSnapshot: LiveClipTurnSnapshot | null;
@@ -200,13 +219,25 @@ export function AdaClipWorkspace({
 
   const handleComposerSubmit = useCallback(() => {
     if (refinementOpen && !loading) {
-      if (refinementSendRef.current) {
-        const line = text.trim() || url.trim();
-        if (!line || refinementConvBusy) return;
-        void refinementSendRef.current(line);
+      const rawLine = text.trim() || url.trim();
+      const line = rawLine.toLowerCase();
+      const isGenerateCommand = GENERATE_COMMANDS.some(
+        (cmd) =>
+          line === cmd || line.startsWith(`${cmd} `) || line.endsWith(` ${cmd}`),
+      );
+
+      if (isGenerateCommand) {
         onTextChange("");
         onUrlChange("");
+        onRefinementCancel?.();
+        onSubmit();
         return;
+      }
+
+      if (refinementSendRef.current && line && !refinementConvBusy) {
+        void refinementSendRef.current(rawLine);
+        onTextChange("");
+        onUrlChange("");
       }
       return;
     }
@@ -219,6 +250,7 @@ export function AdaClipWorkspace({
     refinementConvBusy,
     onTextChange,
     onUrlChange,
+    onRefinementCancel,
     onSubmit,
   ]);
 
@@ -484,6 +516,11 @@ export function AdaClipWorkspace({
             variant={variant}
             refinementActive={refinementOpen}
             refinementCanSend={refinementCanSend}
+            composerPlaceholder={
+              refinementOpen && refinementRemoteReady
+                ? "Message Ada, or type 'generate' to create now…"
+                : undefined
+            }
           />
           <p
             className={cn(
