@@ -48,6 +48,7 @@ export type AdaComposerProps = {
   refinementActive?: boolean;
   /** When refinement is active, allow submit from the main bar (host wires send). */
   refinementCanSend?: boolean;
+  composerPlaceholder?: string;
 };
 
 export function AdaComposer({
@@ -71,6 +72,7 @@ export function AdaComposer({
   variant = "default",
   refinementActive = false,
   refinementCanSend = false,
+  composerPlaceholder,
 }: AdaComposerProps) {
   const kit = variant === "adaKit";
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -106,7 +108,7 @@ export function AdaComposer({
     }
   };
 
-  const placeholder = PLACEHOLDERS[phIndex % PLACEHOLDERS.length];
+  const placeholder = composerPlaceholder ?? PLACEHOLDERS[phIndex % PLACEHOLDERS.length];
 
   return (
     <div className="space-y-2">
