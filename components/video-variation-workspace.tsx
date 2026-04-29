@@ -124,6 +124,25 @@ const VIDEO_REFINEMENT_PLATFORMS: PlatformId[] = [
   "clip_package",
 ];
 
+const REFINEMENT_GENERATE_COMMANDS = [
+  "generate",
+  "go",
+  "just generate",
+  "generate now",
+  "do it",
+  "just do it",
+  "skip",
+  "start",
+  "run",
+  "create",
+  "make it",
+  "submit",
+  "done",
+  "finish",
+  "continue",
+  "proceed",
+];
+
 /** Figma 82-2990 — video hub suggestion tiles (gradient “thumbnails” + prompt). */
 const VIDEO_HUB_CAROUSEL_CARDS: { prompt: string; thumb: string }[] = [
   {
@@ -855,10 +874,33 @@ export const VideoVariationWorkspace = forwardRef<
     }
     if (refinementOpen && !submitting) {
       if (unifiedClipCoachActive) return;
+      const rawLine = prompt.trim();
+      const normalizedLine = rawLine.toLowerCase();
+      const isGenerateCommand = REFINEMENT_GENERATE_COMMANDS.some(
+        (cmd) =>
+          normalizedLine === cmd ||
+          normalizedLine.startsWith(`${cmd} `) ||
+          normalizedLine.endsWith(` ${cmd}`),
+      );
+      if (isGenerateCommand) {
+        setRefinementOpen(false);
+        setPrompt("");
+        queueMicrotask(() => {
+          void submitWithRefinementContext(
+            refinementDraftContext ?? {
+              version: 1,
+              kind: "video_variations",
+              platforms: VIDEO_REFINEMENT_PLATFORMS,
+              answers: {},
+              confirmedAt: new Date().toISOString(),
+            },
+          );
+        });
+        return;
+      }
       if (refinementSendRef.current) {
-        const line = prompt.trim();
-        if (!line || refinementConvBusy) return;
-        void refinementSendRef.current(line);
+        if (!rawLine || refinementConvBusy) return;
+        void refinementSendRef.current(rawLine);
         setPrompt("");
         return;
       }
@@ -1970,7 +2012,7 @@ export const VideoVariationWorkspace = forwardRef<
               ) : null}
             </div>
 
-            {user && hasInput ? (
+            {user && hasInput && !refinementOpen ? (
               <details className="mt-3 rounded-xl border border-white/12 bg-white/[0.04] px-3 py-2 text-left text-white/90">
                 <summary className="cursor-pointer select-none text-xs font-medium text-white/80">
                   Advanced clip options

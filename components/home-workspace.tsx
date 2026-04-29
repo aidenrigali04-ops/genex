@@ -1883,6 +1883,9 @@ export function HomeWorkspace({
                       void runGeneration();
                     });
                   }}
+                  onGenerate={() => {
+                    void runGeneration();
+                  }}
                   onRefinementCancel={() => setRefinementOpen(false)}
                   emptyStateIsAuthenticated={!!user}
                   emptyStateHasGenerated={clips.length > 0 || totalClipCount > 0}
