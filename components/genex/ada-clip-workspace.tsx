@@ -343,7 +343,7 @@ export function AdaClipWorkspace({
         <div
           className={cn(
             "mx-auto w-full max-w-3xl space-y-8 px-4 py-6",
-            "pb-[180px]",
+            refinementOpen ? "pb-[100px]" : "pb-[180px]",
           )}
         >
           {turns.length === 0 && !loading && !refinementOpen ? (
@@ -517,7 +517,7 @@ export function AdaClipWorkspace({
             refinementActive={refinementOpen}
             refinementCanSend={refinementCanSend}
             composerPlaceholder={
-              refinementOpen && refinementRemoteReady
+              refinementCanSend
                 ? "Message Ada, or type 'generate' to create now…"
                 : undefined
             }

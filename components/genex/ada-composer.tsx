@@ -112,7 +112,7 @@ export function AdaComposer({
 
   return (
     <div className="space-y-2">
-      {!loading ? (
+      {!loading && !refinementActive ? (
         <div className="flex flex-wrap gap-1.5 px-1">
           {PRESET_CHIPS.map(({ id, label, emoji }) => (
             <button
@@ -141,6 +141,10 @@ export function AdaComposer({
         className={cn(
           "rounded-[16px] border bg-[var(--ada-bg-card)] transition-colors",
           kit && "bg-white/[0.06]",
+          refinementActive &&
+            !kit &&
+            "border-[var(--ada-border)] bg-[var(--ada-bg-card)]/60",
+          refinementActive && kit && "border-white/10 bg-white/[0.04]",
           loading
             ? kit
               ? "border-white/35"
@@ -150,7 +154,7 @@ export function AdaComposer({
               : "border-[var(--ada-border)] focus-within:border-[var(--ada-border-active)]",
         )}
       >
-        {inputMode === "url" ? (
+        {!refinementActive && inputMode === "url" ? (
           <div
             className={cn(
               "flex items-center gap-2 border-b px-4 py-2.5",
@@ -190,7 +194,7 @@ export function AdaComposer({
           </div>
         ) : null}
 
-        {inputMode === "file" && uploadFile ? (
+        {!refinementActive && inputMode === "file" && uploadFile ? (
           <div
             className={cn(
               "flex items-center gap-2 border-b px-4 py-2.5",
@@ -229,141 +233,161 @@ export function AdaComposer({
           </div>
         ) : null}
 
-        <div className="flex items-end gap-2 px-4 py-3">
-          <textarea
-            ref={textareaRef}
-            rows={1}
-            value={text}
-            onChange={(e) => onTextChange(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={
-              inputMode === "url" ? "Add context (optional)…" : placeholder
-            }
-            disabled={loading}
-            className={cn(
-              "min-h-[24px] flex-1 resize-none overflow-hidden bg-transparent text-sm leading-6 outline-none disabled:opacity-50 placeholder:text-[var(--ada-text-disabled)]",
-              kit ? "text-white placeholder:text-white/40" : "text-[var(--ada-text-primary)]",
-            )}
-          />
+        <div className="px-4 py-3">
+          {refinementActive ? (
+            <span
+              className={cn(
+                "mb-0.5 block text-[10px] font-medium tracking-widest uppercase",
+                kit ? "text-white/35" : "text-[var(--ada-text-disabled)]",
+              )}
+              aria-hidden
+            >
+              Reply
+            </span>
+          ) : null}
+          <div className="flex items-end gap-2">
+            <textarea
+              ref={textareaRef}
+              rows={1}
+              value={text}
+              onChange={(e) => onTextChange(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={
+                inputMode === "url" ? "Add context (optional)…" : placeholder
+              }
+              disabled={loading}
+              className={cn(
+                "min-h-[24px] flex-1 resize-none overflow-hidden bg-transparent text-sm leading-6 outline-none disabled:opacity-50 placeholder:text-[var(--ada-text-disabled)]",
+                kit
+                  ? "text-white placeholder:text-white/40"
+                  : "text-[var(--ada-text-primary)]",
+              )}
+            />
 
-          <button
-            type="button"
-            onClick={loading ? onStop : onSubmit}
-            disabled={!loading && !canSendFromBar}
-            className={cn(
-              "mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all",
-              loading
-                ? kit
-                  ? "bg-red-500/90 text-white hover:opacity-90"
-                  : "bg-[var(--ada-error)] text-white hover:opacity-80"
-                : canSendFromBar
+            <button
+              type="button"
+              onClick={loading ? onStop : onSubmit}
+              disabled={!loading && !canSendFromBar}
+              aria-label={
+                refinementActive ? "Send reply" : "Generate clip package"
+              }
+              className={cn(
+                "mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all",
+                loading
                   ? kit
-                    ? "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] text-white shadow-md hover:scale-105"
-                    : "bg-gradient-to-br from-[#7B5CFA] to-[#9B6FFF] text-white shadow-md shadow-[#7B5CFA33] hover:scale-105"
-                  : kit
-                    ? "cursor-not-allowed bg-white/10 text-white/35"
-                    : "cursor-not-allowed bg-[var(--ada-border)] text-[var(--ada-text-disabled)]",
-            )}
-          >
-            {loading ? (
-              <StopCircle className="h-4 w-4" />
-            ) : (
-              <ArrowUp className="h-4 w-4" />
-            )}
-          </button>
+                    ? "bg-red-500/90 text-white hover:opacity-90"
+                    : "bg-[var(--ada-error)] text-white hover:opacity-80"
+                  : canSendFromBar
+                    ? kit
+                      ? "bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] text-white shadow-md hover:scale-105"
+                      : "bg-gradient-to-br from-[#7B5CFA] to-[#9B6FFF] text-white shadow-md shadow-[#7B5CFA33] hover:scale-105"
+                    : kit
+                      ? "cursor-not-allowed bg-white/10 text-white/35"
+                      : "cursor-not-allowed bg-[var(--ada-border)] text-[var(--ada-text-disabled)]",
+              )}
+            >
+              {loading ? (
+                <StopCircle className="h-4 w-4" />
+              ) : (
+                <ArrowUp className="h-4 w-4" />
+              )}
+            </button>
+          </div>
         </div>
 
-        <div
-          className={cn(
-            "flex items-center justify-between gap-2 border-t px-3 py-2",
-            kit ? "border-white/10" : "border-[var(--ada-border)]",
-          )}
-        >
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={() => onInputModeChange("url")}
-              disabled={loading}
-              className={cn(
-                "flex items-center gap-1.5 rounded-[6px] px-2 py-1 text-xs transition-colors",
-                inputMode === "url"
-                  ? kit
-                    ? "bg-white/12 text-[#E8B4FF]"
-                    : "bg-[var(--ada-accent-subtle)] text-[var(--ada-accent-hover)]"
-                  : kit
-                    ? "text-white/45 hover:text-white/75"
-                    : "text-[var(--ada-text-disabled)] hover:text-[var(--ada-text-secondary)]",
-              )}
-            >
-              <Link2 className="h-3.5 w-3.5" />
-              URL
-            </button>
-            <button
-              type="button"
-              onClick={() => fileRef.current?.click()}
-              disabled={loading}
-              className={cn(
-                "flex items-center gap-1.5 rounded-[6px] px-2 py-1 text-xs transition-colors",
-                inputMode === "file"
-                  ? kit
-                    ? "bg-white/12 text-[#E8B4FF]"
-                    : "bg-[var(--ada-accent-subtle)] text-[var(--ada-accent-hover)]"
-                  : kit
-                    ? "text-white/45 hover:text-white/75"
-                    : "text-[var(--ada-text-disabled)] hover:text-[var(--ada-text-secondary)]",
-              )}
-            >
-              <Upload className="h-3.5 w-3.5" />
-              File
-            </button>
-            <input
-              ref={fileRef}
-              type="file"
-              className="sr-only"
-              accept=".flac,.m4a,.mp3,.mp4,.mpeg,.mpga,.mov,.m4v,.oga,.ogg,.wav,.webm,.txt,.md,.csv,.srt,.vtt,.json"
-              disabled={loading}
-              onChange={(e) => {
-                const f = e.target.files?.[0] ?? null;
-                if (f) {
-                  onFileChange(f);
-                  onInputModeChange("file");
-                }
-              }}
-            />
-          </div>
-
-          <span
+        {!refinementActive ? (
+          <div
             className={cn(
-              "hidden text-[10px] sm:inline",
-              kit ? "text-white/35" : "text-[var(--ada-text-disabled)]",
+              "flex items-center justify-between gap-2 border-t px-3 py-2",
+              kit ? "border-white/10" : "border-[var(--ada-border)]",
             )}
           >
-            Max {maxUploadMb} MB
-          </span>
-
-          <div className="flex items-center gap-0.5 sm:gap-1">
-            {MODELS.map((m) => (
+            <div className="flex items-center gap-1">
               <button
-                key={m.id}
                 type="button"
-                onClick={() => onModelChange(m.id)}
+                onClick={() => onInputModeChange("url")}
                 disabled={loading}
                 className={cn(
-                  "rounded-[6px] px-1.5 py-1 text-[10px] font-medium transition-colors sm:px-2",
-                  selectedModel === m.id
+                  "flex items-center gap-1.5 rounded-[6px] px-2 py-1 text-xs transition-colors",
+                  inputMode === "url"
                     ? kit
-                      ? "bg-white/20 text-white"
-                      : "bg-[var(--ada-accent)] text-white"
+                      ? "bg-white/12 text-[#E8B4FF]"
+                      : "bg-[var(--ada-accent-subtle)] text-[var(--ada-accent-hover)]"
                     : kit
                       ? "text-white/45 hover:text-white/75"
                       : "text-[var(--ada-text-disabled)] hover:text-[var(--ada-text-secondary)]",
                 )}
               >
-                {m.label}
+                <Link2 className="h-3.5 w-3.5" />
+                URL
               </button>
-            ))}
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                disabled={loading}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-[6px] px-2 py-1 text-xs transition-colors",
+                  inputMode === "file"
+                    ? kit
+                      ? "bg-white/12 text-[#E8B4FF]"
+                      : "bg-[var(--ada-accent-subtle)] text-[var(--ada-accent-hover)]"
+                    : kit
+                      ? "text-white/45 hover:text-white/75"
+                      : "text-[var(--ada-text-disabled)] hover:text-[var(--ada-text-secondary)]",
+                )}
+              >
+                <Upload className="h-3.5 w-3.5" />
+                File
+              </button>
+              <input
+                ref={fileRef}
+                type="file"
+                className="sr-only"
+                accept=".flac,.m4a,.mp3,.mp4,.mpeg,.mpga,.mov,.m4v,.oga,.ogg,.wav,.webm,.txt,.md,.csv,.srt,.vtt,.json"
+                disabled={loading}
+                onChange={(e) => {
+                  const f = e.target.files?.[0] ?? null;
+                  if (f) {
+                    onFileChange(f);
+                    onInputModeChange("file");
+                  }
+                }}
+              />
+            </div>
+
+            <span
+              className={cn(
+                "hidden text-[10px] sm:inline",
+                kit ? "text-white/35" : "text-[var(--ada-text-disabled)]",
+              )}
+            >
+              Max {maxUploadMb} MB
+            </span>
+
+            <div className="flex items-center gap-0.5 sm:gap-1">
+              {MODELS.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => onModelChange(m.id)}
+                  disabled={loading}
+                  className={cn(
+                    "rounded-[6px] px-1.5 py-1 text-[10px] font-medium transition-colors sm:px-2",
+                    selectedModel === m.id
+                      ? kit
+                        ? "bg-white/20 text-white"
+                        : "bg-[var(--ada-accent)] text-white"
+                      : kit
+                        ? "text-white/45 hover:text-white/75"
+                        : "text-[var(--ada-text-disabled)] hover:text-[var(--ada-text-secondary)]",
+                  )}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        ) : null}
       </div>
     </div>
   );
