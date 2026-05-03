@@ -1381,7 +1381,10 @@ export function HomeWorkspace({
     setStreamedText("");
     setGenerationSteps([]);
     setLiveTurnSnapshot(null);
+    setRefinementOpen(false);
+    setClipRefinementRemote(undefined);
     setError(null);
+    setLastClipGenerationContext(null);
     setInputMode("text");
     setWorkspaceTab("clip");
     setMobileNavOpen(false);
@@ -1538,15 +1541,15 @@ export function HomeWorkspace({
   const figmaRecentSection =
     sidebarRecentItems.length === 0 ? (
       <p className="px-3 text-xs text-white/45">
-        No saved generations yet. Run a clip or chat to build your history.
+        No saved clips yet. Generate one to build memory.
       </p>
     ) : (
       <>
         <p className="px-3 pb-1 text-[10px] font-medium uppercase tracking-widest text-white/40">
-          Recents
+          Saved
         </p>
         <p className="px-3 pb-2 text-[10px] leading-snug text-white/35">
-          Past generated content — tap to open in Write Content.
+          Prior clip chats and generations — tap to reopen.
         </p>
         <div className="flex max-h-[min(42vh,22rem)] flex-col gap-1 overflow-y-auto pr-1">
           {(() => {
@@ -1592,7 +1595,7 @@ export function HomeWorkspace({
         className="inline-flex items-center gap-2 rounded-[32px] border border-white/48 py-2 pl-3 pr-4 text-sm font-medium tracking-[0.14px] text-white transition-colors hover:bg-white/10 font-[family-name:var(--font-instrument-sans)]"
       >
         <Clock className="size-4 shrink-0 text-white" aria-hidden />
-        Recents
+        Saved
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"
@@ -1600,7 +1603,7 @@ export function HomeWorkspace({
       >
         {sidebarRecentItems.length === 0 ? (
           <div className="px-3 py-2 text-sm text-ada-secondary">
-            No saved generations yet.
+            No saved clips yet.
           </div>
         ) : (
           (() => {
@@ -1688,6 +1691,7 @@ export function HomeWorkspace({
           <AdaFigmaSidebarNav
             activeMain={figmaActiveMain}
             onSelectMain={handleFigmaMainNav}
+            onNewClip={handleNewProject}
             onUpgrade={() => openUpgrade("manual")}
             onSettings={openWorkspaceSettings}
             onAccount={handleFigmaAccount}
@@ -1711,6 +1715,10 @@ export function HomeWorkspace({
               activeMain={figmaActiveMain}
               onSelectMain={(id) => {
                 handleFigmaMainNav(id);
+                setMobileNavOpen(false);
+              }}
+              onNewClip={() => {
+                handleNewProject();
                 setMobileNavOpen(false);
               }}
               onUpgrade={() => {
