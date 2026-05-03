@@ -11,6 +11,7 @@ import {
   Flame,
   Mic,
   Paperclip,
+  PlusCircle,
   Settings,
   Sparkles,
   User,
@@ -52,6 +53,7 @@ export type FigmaMainNavId = "clip" | "video";
 export type AdaFigmaSidebarNavProps = {
   activeMain: FigmaMainNavId;
   onSelectMain: (id: FigmaMainNavId) => void;
+  onNewClip?: () => void;
   onUpgrade: () => void;
   onSettings: () => void;
   onAccount: () => void;
@@ -74,6 +76,7 @@ const MAIN_NAV: {
 export function AdaFigmaSidebarNav({
   activeMain,
   onSelectMain,
+  onNewClip,
   onUpgrade,
   onSettings,
   onAccount,
@@ -122,6 +125,20 @@ export function AdaFigmaSidebarNav({
 
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-3 pb-5 pt-5">
         <div className="flex flex-col gap-3">
+          {onNewClip ? (
+            <button
+              type="button"
+              onClick={onNewClip}
+              className={cn(
+                "flex w-full items-center gap-3 rounded-[32px] py-1 pl-4 pr-4 text-left text-base leading-9 text-white",
+                MAGENTA_GRAD,
+              )}
+              style={{ fontWeight: 400 }}
+            >
+              <PlusCircle className="size-5 shrink-0 text-white" aria-hidden />
+              <span className="min-w-0 flex-1 truncate">New Clip</span>
+            </button>
+          ) : null}
           {MAIN_NAV.map(({ id, label, icon: Icon }) => {
             const active = activeMain === id;
             return (
