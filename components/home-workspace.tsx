@@ -1792,6 +1792,11 @@ export function HomeWorkspace({
                   onOpenSignIn={() => setSignInOpen(true)}
                   onWorkspaceSettings={openWorkspaceSettings}
                   onWorkspaceAccount={handleFigmaAccount}
+                  onSidebarNavigate={() => {
+                    setWorkspaceTab("clip");
+                    setMobileNavOpen(false);
+                    handleNewProject();
+                  }}
                   headerTrailing={
                     <div className="flex items-center gap-2">
                       {figmaCreditsPill}

@@ -18,6 +18,7 @@ import {
   Menu,
   Mic,
   Paperclip,
+  PlusCircle,
   Pause,
   Play,
   RefreshCw,
@@ -241,12 +242,14 @@ function ElapsedTimer({ startedAt }: { startedAt: string }): JSX.Element {
 type AdaVideoSidebarProps = {
   activeTab: AdaVideoShellNavId;
   onTabChange: (id: AdaVideoShellNavId) => void;
+  onNewClip?: () => void;
   className?: string;
 };
 
 function AdaVideoSidebar({
   activeTab,
   onTabChange,
+  onNewClip,
   className,
 }: AdaVideoSidebarProps): JSX.Element {
   return (
@@ -278,6 +281,18 @@ function AdaVideoSidebar({
         aria-label="Video workspace"
       >
         <ul className="flex flex-col gap-3 px-3">
+          {onNewClip ? (
+            <li>
+              <button
+                type="button"
+                onClick={onNewClip}
+                className="flex w-full items-center gap-3 rounded-[32px] bg-[linear-gradient(5deg,#D31CD7_0%,#8800DC_100%)] px-4 py-1 text-left text-base font-normal leading-[36px] text-white shadow-[0_0_20px_rgba(203,45,206,0.24)]"
+              >
+                <PlusCircle className="h-5 w-5 shrink-0" aria-hidden />
+                <span>New Clip</span>
+              </button>
+            </li>
+          ) : null}
           {VIDEO_WORKSPACE_NAV.map((item) => {
             const active = activeTab === item.id;
             const Icon = item.Icon;
@@ -302,6 +317,19 @@ function AdaVideoSidebar({
           })}
         </ul>
       </nav>
+      <div className="border-t border-white/20 px-3 py-4">
+        <button
+          type="button"
+          onClick={onNewClip}
+          className={cn(
+            "w-full truncate rounded-lg px-3 py-2 text-left text-sm text-white/80 transition-colors hover:bg-white/10",
+            !onNewClip && "pointer-events-none opacity-50",
+          )}
+          disabled={!onNewClip}
+        >
+          New Clip starts a fresh chat
+        </button>
+      </div>
     </aside>
   );
 }
@@ -344,7 +372,7 @@ function AdaVideoHeader({
             className="flex items-center gap-2 rounded-[32px] border border-white/48 px-3 py-2 text-[14px] font-medium leading-[24px] tracking-[0.14px] text-white transition-colors hover:bg-white/8"
           >
             <Clock className="h-5 w-5" aria-hidden />
-            Recent
+            Saved
           </button>
         ) : null}
         {headerTrailing}
@@ -872,14 +900,11 @@ export function AdaVideoWorkspace({
   onGuestExhausted,
   onOpenSignIn,
   headerTrailing,
-  onSidebarNavigate: _onSidebarNavigate,
-  onWorkspaceSettings: _onWorkspaceSettings,
-  onWorkspaceAccount: _onWorkspaceAccount,
+  onSidebarNavigate,
+  onWorkspaceSettings,
+  onWorkspaceAccount,
   variant = "default",
 }: AdaVideoWorkspaceProps): JSX.Element {
-  void _onSidebarNavigate;
-  void _onWorkspaceSettings;
-  void _onWorkspaceAccount;
   const kit = variant === "adaKit";
   const [kitVideoMode, setKitVideoMode] = useState<
     "source_clip" | "stock_script"
@@ -1255,6 +1280,18 @@ export function AdaVideoWorkspace({
   const resultsStateB =
     activeJob !== null || jobHistory.length > 0;
 
+  const handleNewClip = useCallback(() => {
+    onSidebarNavigate?.("clip_my_video");
+    setKitVideoMode("source_clip");
+    setInputMode("url");
+    setUrlValue("");
+    setTextValue("");
+    setPreflightStagedScript(null);
+    setSubmitError(null);
+    setRecentOpen(false);
+    setShellMenuOpen(false);
+  }, [onSidebarNavigate]);
+
   const sidebarProps: AdaVideoSidebarProps = {
     activeTab:
       kitVideoMode === "source_clip" ? "clip_my_video" : "stock_from_script",
@@ -1262,6 +1299,7 @@ export function AdaVideoWorkspace({
       handleShellNav(id);
       setShellMenuOpen(false);
     },
+    onNewClip: handleNewClip,
   };
 
   const examplePromptsRowRef = useRef<HTMLDivElement>(null);
@@ -1465,7 +1503,7 @@ export function AdaVideoWorkspace({
         {kitVideoMode === "stock_script" && recentOpen ? (
           <div className="absolute right-6 top-[88px] z-20 max-h-72 w-72 overflow-y-auto rounded-2xl border border-white/16 bg-[#0A050F]/95 p-2 shadow-xl backdrop-blur-md">
             {jobHistory.length === 0 ? (
-              <p className="px-2 py-3 text-sm text-white/50">No clips yet.</p>
+              <p className="px-2 py-3 text-sm text-white/50">No saved clips yet.</p>
             ) : (
               <ul className="flex flex-col gap-1">
                 {jobHistory.map((j) => (
@@ -1473,7 +1511,11 @@ export function AdaVideoWorkspace({
                     <button
                       type="button"
                       className="w-full truncate rounded-lg px-3 py-2 text-left text-sm text-white/80 hover:bg-white/10"
-                      onClick={() => setRecentOpen(false)}
+                      onClick={() => {
+                        setRecentOpen(false);
+                        setActiveJobData(j);
+                        setSubmitError(null);
+                      }}
                     >
                       {j.script.slice(0, 80)}
                       {j.script.length > 80 ? "…" : ""}
