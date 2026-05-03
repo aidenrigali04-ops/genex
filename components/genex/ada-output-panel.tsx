@@ -494,6 +494,7 @@ export function AdaOutputPanel({
               <GenerationFeedbackPanel
                 mode="clip"
                 variant={kit ? "adaKit" : "default"}
+                compact
                 originalPrompt={originalPrompt || "Clip package"}
                 generationContext={generationContext}
                 variationsOutput={streamedText}

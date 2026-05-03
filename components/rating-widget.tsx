@@ -6,13 +6,18 @@ export function RatingWidget({
   jobId,
   generationId,
   kind,
+  variant = "default",
+  compact = false,
 }: {
   jobId?: string;
   generationId?: string;
   kind: "video" | "text";
+  variant?: "default" | "adaKit";
+  compact?: boolean;
 }) {
   const [rated, setRated] = useState<"up" | "down" | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const kit = variant === "adaKit";
 
   const submit = async (rating: "up" | "down") => {
     if (rated || submitting) return;
@@ -34,15 +39,21 @@ export function RatingWidget({
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-3 text-sm text-white/40">
-      <span>Was this useful?</span>
+    <div
+      className={`flex flex-wrap items-center gap-2 ${compact ? "text-xs" : "text-sm"} ${
+        kit ? "text-white/45" : "text-ada-secondary"
+      }`}
+    >
+      <span>Useful?</span>
       <button
         type="button"
         onClick={() => void submit("up")}
         className={`rounded-lg px-3 py-1.5 border transition-colors ${
           rated === "up"
             ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-400"
-            : "border-white/10 hover:border-white/20 hover:text-white/60"
+            : kit
+              ? "border-white/10 hover:border-white/20 hover:text-white/70"
+              : "border-ada-border hover:border-ada-border-active hover:text-ada-primary"
         }`}
         disabled={!!rated || submitting}
       >
@@ -54,14 +65,18 @@ export function RatingWidget({
         className={`rounded-lg px-3 py-1.5 border transition-colors ${
           rated === "down"
             ? "border-red-500/40 bg-red-500/15 text-red-400"
-            : "border-white/10 hover:border-white/20 hover:text-white/60"
+            : kit
+              ? "border-white/10 hover:border-white/20 hover:text-white/70"
+              : "border-ada-border hover:border-ada-border-active hover:text-ada-primary"
         }`}
         disabled={!!rated || submitting}
       >
         👎
       </button>
       {rated ? (
-        <span className="text-white/30">Thanks — this helps improve outputs</span>
+        <span className={kit ? "text-white/35" : "text-ada-disabled"}>
+          Thanks — this helps improve outputs
+        </span>
       ) : null}
     </div>
   );
