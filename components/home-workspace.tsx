@@ -231,6 +231,8 @@ export function HomeWorkspace({
   const [refinementRetry, setRefinementRetry] = useState(0);
   const [lastClipGenerationContext, setLastClipGenerationContext] =
     useState<GenerationContextV1 | null>(null);
+  const [draftClipGenerationContext, setDraftClipGenerationContext] =
+    useState<GenerationContextV1 | null>(null);
   const [currentStreak, setCurrentStreak] = useState(initialCurrentStreak);
   const [showFirstGenCelebration, setShowFirstGenCelebration] =
     useState(false);
@@ -555,6 +557,8 @@ export function HomeWorkspace({
       setRefinementSessionPlanKey("");
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setRefinementPersistenceSessionId("");
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setDraftClipGenerationContext(null);
       return;
     }
 
@@ -1864,6 +1868,9 @@ export function HomeWorkspace({
                     refinementPlanInference ?? undefined
                   }
                   onRefinementOpenTypedAnswer={handleRefinementOpenTypedAnswer}
+                  onRefinementDraftContextChange={(ctx) => {
+                    setDraftClipGenerationContext(ctx);
+                  }}
                   refinementPlatformIds={CLIP_PLATFORMS}
                   refinementInputSummary={
                     pendingInputSummaryRef.current || "Text / idea"
@@ -1884,7 +1891,17 @@ export function HomeWorkspace({
                     });
                   }}
                   onGenerate={() => {
-                    void runGeneration();
+                    if (draftClipGenerationContext) {
+                      const sanitized =
+                        sanitizeGenerationContextForTransport(
+                          draftClipGenerationContext,
+                        );
+                      pendingGenerationContextRef.current = sanitized;
+                      setLastClipGenerationContext(sanitized);
+                    }
+                    queueMicrotask(() => {
+                      void runGeneration();
+                    });
                   }}
                   onRefinementCancel={() => setRefinementOpen(false)}
                   emptyStateIsAuthenticated={!!user}
