@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -42,6 +42,12 @@ const VIDEO_CHIPS = [
   "What hashtags should I use for this niche?",
 ];
 
+function promptPreview(prompt: string): string {
+  const clean = prompt.trim();
+  if (!clean) return "No prompt provided.";
+  return clean.length > 180 ? `${clean.slice(0, 180)}…` : clean;
+}
+
 export function GenerationFeedbackPanel({
   mode,
   variant = "default",
@@ -66,6 +72,28 @@ export function GenerationFeedbackPanel({
     generationContext && isGenerationContextV1(generationContext)
       ? buildSummaryFromContext(generationContext)
       : "";
+  const resultSummary = useMemo(() => {
+    if (mode === "video") {
+      const variationCount = (variationsOutput.match(/Variation\s+\d+:/g) ?? [])
+        .length;
+      if (variationCount > 0) {
+        return `${variationCount} variation result${variationCount === 1 ? "" : "s"} ready`;
+      }
+      return "Video result ready";
+    }
+    const chars = variationsOutput.trim().length;
+    if (chars > 0) {
+      const words = Math.max(
+        1,
+        variationsOutput
+          .trim()
+          .split(/\s+/)
+          .filter(Boolean).length,
+      );
+      return `${words} words generated`;
+    }
+    return "Clip package ready";
+  }, [mode, variationsOutput]);
 
   const sendFeedback = useCallback(
     async (text: string) => {
@@ -222,7 +250,7 @@ export function GenerationFeedbackPanel({
           : "rounded-ada-card border-ada-border bg-ada-card",
       )}
     >
-      <div>
+      <div className={cn(compact ? "space-y-1.5" : "space-y-2")}>
         {compact ? (
           <p
             className={cn(
@@ -251,26 +279,48 @@ export function GenerationFeedbackPanel({
             users).
           </p>
         ) : null}
+        <div
+          className={cn(
+            "rounded-xl border px-3 py-2 text-xs",
+            kit
+              ? "border-white/12 bg-black/25 text-white/75"
+              : "border-[#E8E4F8] bg-[#F7F6FF]/70 text-muted-foreground dark:border-white/10 dark:bg-zinc-900/40",
+          )}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className={cn("font-medium", kit ? "text-white/90" : "text-[#0F0A1E] dark:text-zinc-100")}>
+              Goal + result
+            </span>
+            <span className={cn("text-[11px]", kit ? "text-white/55" : "text-muted-foreground")}>
+              {resultSummary}
+            </span>
+          </div>
+          <p className={cn("mt-1 line-clamp-2", kit ? "text-white/70" : "text-muted-foreground")}>
+            {promptPreview(originalPrompt)}
+          </p>
+        </div>
         {ctxSummary ? (
-          <p
+          <details
             className={cn(
-              "rounded-xl border px-3 py-2 text-xs",
+              "rounded-xl border text-xs",
               compact ? "mt-1.5" : "mt-2",
               kit
-                ? "border-white/16 bg-black/30 text-white/75"
-                : "text-muted-foreground border-[#E8E4F8] bg-[#F0EFFE]/60 dark:border-white/10 dark:bg-zinc-900/40",
+                ? "border-white/12 bg-black/20 text-white/75"
+                : "text-muted-foreground border-[#E8E4F8] bg-[#F0EFFE]/50 dark:border-white/10 dark:bg-zinc-900/30",
             )}
           >
-            <span
+            <summary
               className={cn(
-                "font-medium",
-                kit ? "text-white/90" : "text-[#0F0A1E] dark:text-zinc-100",
+                "cursor-pointer px-3 py-2 font-medium",
+                kit ? "text-white/80" : "text-[#0F0A1E] dark:text-zinc-100",
               )}
             >
-              Refinement used:{" "}
-            </span>
-            {ctxSummary}
-          </p>
+              Refinement context
+            </summary>
+            <p className="border-t border-current/10 px-3 py-2 text-[11px] leading-relaxed">
+              {ctxSummary}
+            </p>
+          </details>
         ) : null}
       </div>
 
@@ -313,12 +363,7 @@ export function GenerationFeedbackPanel({
         )}
       </div>
 
-      <div
-        className={cn(
-          "flex gap-2",
-          compact ? "max-w-full flex-nowrap overflow-x-auto pb-1" : "flex-wrap",
-        )}
-      >
+      <div className={cn("flex gap-2", compact ? "max-w-full flex-nowrap overflow-x-auto pb-1" : "flex-wrap")}>
         {chips.map((c) => (
           <Button
             key={c}
@@ -355,6 +400,11 @@ export function GenerationFeedbackPanel({
               type="button"
               size="sm"
               variant="secondary"
+              className={cn(
+                kit
+                  ? "border-white/16 bg-white/10 text-white hover:bg-white/15"
+                  : undefined,
+              )}
               disabled={forking != null || streaming}
               onClick={() => void forkVariation(n)}
             >
@@ -364,12 +414,12 @@ export function GenerationFeedbackPanel({
         </div>
       ) : null}
 
-      <div className="space-y-2">
+      <div className={cn(compact ? "space-y-1.5" : "space-y-2")}>
         <Label
           htmlFor="feedback-input"
           className={cn(kit ? "text-white/65" : undefined, compact && "text-xs")}
         >
-          Ask AI about these results…
+          Ask AI about this result…
         </Label>
         <textarea
           id="feedback-input"

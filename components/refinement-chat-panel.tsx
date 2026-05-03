@@ -443,9 +443,9 @@ export function RefinementChatPanel({
       const st = buildSummaryFromContext(interim);
       const tail =
         kind === "video_variations"
-          ? "Ready to start this job?"
-          : "Ready to generate?";
-      const body = `Generating for ${platformLabels(platformIds)}${st ? `\n\n${st}` : ""}\n\n${tail}`;
+          ? "Review and confirm when you're ready."
+          : "Review and confirm to generate.";
+      const body = `Target: ${platformLabels(platformIds)}${st ? `\n\n${st}` : ""}\n\n${tail}`;
       return {
         id: newId(),
         role: "assistant" as const,
