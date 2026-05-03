@@ -15,7 +15,6 @@ import type { ReactNode } from "react";
 import { toast } from "sonner";
 
 import { GenerationFeedbackPanel } from "@/components/generation-feedback-panel";
-import { RatingWidget } from "@/components/rating-widget";
 import { LazyVideoPlayer } from "@/components/lazy-video-player";
 import { SettingsRail } from "@/components/genex/settings-rail";
 import { RefinementChatPanel } from "@/components/refinement-chat-panel";
@@ -1723,13 +1722,9 @@ export const VideoVariationWorkspace = forwardRef<
                                 </div>
                               ) : null}
 
-                              {jobId ? (
-                                <div className="rounded-xl bg-black/50 px-4 py-3 ring-1 ring-white/10">
-                                  <RatingWidget kind="video" jobId={jobId} />
-                                </div>
-                              ) : null}
                               <GenerationFeedbackPanel
                                 mode="video"
+                                compact
                                 videoJobId={jobId}
                                 originalPrompt={
                                   lastSubmittedPrompt.trim() ||
